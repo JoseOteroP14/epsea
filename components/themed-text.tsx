@@ -1,6 +1,10 @@
+import { Fonts } from '@/constants/theme';
+import { responsiveFont } from '@/utils/responsive';
 import { StyleSheet, Text, type TextProps } from 'react-native';
 
 import { useThemeColor } from '@/hooks/use-theme-color';
+
+
 
 export type ThemedTextProps = TextProps & {
   lightColor?: string;
@@ -35,26 +39,37 @@ export function ThemedText({
 
 const styles = StyleSheet.create({
   default: {
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: responsiveFont(17),
+    lineHeight: responsiveFont(26),
+    fontFamily: Fonts.rounded,
+    letterSpacing: -responsiveFont(0.4),
+    fontWeight: '500',
   },
   defaultSemiBold: {
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: '600',
+    fontSize: responsiveFont(17),
+    lineHeight: responsiveFont(26),
+    fontWeight: '700',
+    fontFamily: Fonts.rounded,
+    letterSpacing: -responsiveFont(0.4),
   },
   title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    lineHeight: 32,
+    fontSize: responsiveFont(34),
+    fontWeight: '900',
+    lineHeight: responsiveFont(38),
+    fontFamily: Fonts.rounded,
+    letterSpacing: -responsiveFont(1.0),
   },
   subtitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: responsiveFont(24),
+    fontWeight: '800',
+    fontFamily: Fonts.rounded,
+    letterSpacing: -responsiveFont(0.6),
   },
   link: {
-    lineHeight: 30,
-    fontSize: 16,
+    lineHeight: responsiveFont(30),
+    fontSize: responsiveFont(17),
     color: '#0a7ea4',
+    fontFamily: Fonts.rounded,
+    letterSpacing: -responsiveFont(0.4),
   },
 });

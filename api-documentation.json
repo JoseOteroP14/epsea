@@ -1,0 +1,2383 @@
+{
+  "apiDocumentation": {
+    "title": "EPSEA API Documentation",
+    "version": "1.0.0",
+    "description": "Documentación completa de la API para la aplicación móvil EPSEA - Sistema de Extensión y Productores Agropecuarios",
+    "baseUrl": "{{host}}",
+    "authentication": {
+      "type": "Bearer Token",
+      "header": "Authorization",
+      "format": "Bearer {{access_token}}",
+      "note": "Obtener token mediante endpoint /auth/login"
+    },
+    "modules": {
+      "auth": {
+        "name": "Autenticación",
+        "description": "Endpoints para autenticación de usuarios",
+        "endpoints": [
+          {
+            "name": "login",
+            "method": "POST",
+            "path": "/auth/login",
+            "description": "Iniciar sesión de usuario",
+            "contentType": "multipart/form-data",
+            "requestExample": {
+              "username": "usuario@ejemplo.com",
+              "password": "miPassword123"
+            },
+            "responseExample": {
+              "code": "SUCCESS",
+              "message": "Usuario autenticado satisfactoriamente",
+              "status": 200,
+              "data": {
+                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "token_type": "bearer",
+                "user": {
+                  "user_id": 1,
+                  "username": "usuario@ejemplo.com",
+                  "roles": [
+                    {
+                      "id": 13,
+                      "role_id": 1,
+                      "user_id": 1,
+                      "project_id": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "name": "login_extensionist",
+            "method": "POST",
+            "path": "/auth/login",
+            "description": "Iniciar sesión de extensionista",
+            "contentType": "multipart/form-data",
+            "requestExample": {
+              "username": "andresortiz",
+              "password": "12345678"
+            },
+            "responseExample": {
+              "code": "SUCCESS",
+              "message": "Usuario autenticado satisfactoriamente",
+              "status": 200,
+              "data": {
+                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "token_type": "bearer",
+                "user": {
+                  "user_id": 5,
+                  "username": "andresortiz",
+                  "roles": [
+                    {
+                      "id": 20,
+                      "role_id": 2,
+                      "user_id": 5,
+                      "project_id": 1
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "name": "health",
+            "method": "GET",
+            "path": "/health",
+            "description": "Verificar estado del servidor",
+            "requestExample": null,
+            "responseExample": {
+              "status": "ok",
+              "timestamp": "2024-01-15T10:30:00Z"
+            }
+          }
+        ]
+      },
+      "users": {
+        "name": "Usuarios",
+        "description": "CRUD completo de usuarios del sistema",
+        "endpoints": [
+          {
+            "name": "list",
+            "method": "GET",
+            "path": "/users",
+            "description": "Listar usuarios con paginación",
+            "queryParams": {
+              "page": "number (default: 1)",
+              "limit": "number (default: 5)"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Usuarios obtenidos exitosamente",
+              "status": 200,
+              "data": [
+                {
+                  "id": 1,
+                  "username": "juanperez",
+                  "identification": "1234567890",
+                  "first_name": "Juan",
+                  "last_name": "Pérez",
+                  "email": "juan@ejemplo.com",
+                  "phone": "3001234567",
+                  "is_active": true,
+                  "created_at": "2024-01-10T08:00:00Z"
+                },
+                {
+                  "id": 2,
+                  "username": "mariagonzalez",
+                  "identification": "9876543210",
+                  "first_name": "María",
+                  "last_name": "González",
+                  "email": "maria@ejemplo.com",
+                  "phone": "3009876543",
+                  "is_active": true,
+                  "created_at": "2024-01-11T09:00:00Z"
+                }
+              ],
+              "meta": {
+                "total": 50,
+                "page": 1,
+                "limit": 5
+              }
+            }
+          },
+          {
+            "name": "read",
+            "method": "GET",
+            "path": "/users/:id",
+            "description": "Obtener usuario por ID",
+            "pathParams": {
+              "id": "number - ID del usuario"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Usuario obtenido exitosamente",
+              "status": 200,
+              "data": {
+                "id": 1,
+                "username": "juanperez",
+                "identification": "1234567890",
+                "first_name": "Juan",
+                "last_name": "Pérez",
+                "email": "juan@ejemplo.com",
+                "phone": "3001234567",
+                "is_active": true,
+                "created_at": "2024-01-10T08:00:00Z",
+                "updated_at": "2024-01-12T10:00:00Z"
+              }
+            }
+          },
+          {
+            "name": "create",
+            "method": "POST",
+            "path": "/users",
+            "description": "Crear nuevo usuario",
+            "contentType": "application/json",
+            "requestExample": {
+              "username": "nuevouser",
+              "password": "Password123!",
+              "identification": "9876543210",
+              "first_name": "María",
+              "last_name": "García",
+              "email": "maria@ejemplo.com",
+              "phone": "3009876543"
+            },
+            "responseExample": {
+              "code": "CREATED",
+              "message": "Usuario creado exitosamente",
+              "status": 201,
+              "data": {
+                "id": 2,
+                "username": "nuevouser",
+                "identification": "9876543210",
+                "first_name": "María",
+                "last_name": "García",
+                "email": "maria@ejemplo.com",
+                "phone": "3009876543",
+                "is_active": true,
+                "created_at": "2024-01-15T10:30:00Z"
+              }
+            }
+          },
+          {
+            "name": "update",
+            "method": "PUT",
+            "path": "/users/:id",
+            "description": "Actualizar usuario existente",
+            "pathParams": {
+              "id": "number - ID del usuario"
+            },
+            "contentType": "application/json",
+            "requestExample": {
+              "username": "juanperez_updated",
+              "password": "NewPassword456!",
+              "identification": "1234567890",
+              "first_name": "Juan Carlos",
+              "last_name": "Pérez López",
+              "email": "juancarlos@ejemplo.com",
+              "phone": "3001112233",
+              "is_active": true
+            },
+            "responseExample": {
+              "code": "OK",
+              "message": "Usuario actualizado exitosamente",
+              "status": 200,
+              "data": {
+                "id": 1,
+                "username": "juanperez_updated",
+                "identification": "1234567890",
+                "first_name": "Juan Carlos",
+                "last_name": "Pérez López",
+                "email": "juancarlos@ejemplo.com",
+                "phone": "3001112233",
+                "is_active": true,
+                "updated_at": "2024-01-15T11:00:00Z"
+              }
+            }
+          },
+          {
+            "name": "delete",
+            "method": "DELETE",
+            "path": "/users/:id",
+            "description": "Eliminar usuario",
+            "pathParams": {
+              "id": "number - ID del usuario"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Usuario eliminado exitosamente",
+              "status": 200,
+              "data": null
+            }
+          },
+          {
+            "name": "filter",
+            "method": "POST",
+            "path": "/users/filter",
+            "description": "Filtrar usuarios por criterios",
+            "queryParams": {
+              "page": "number",
+              "limit": "number"
+            },
+            "contentType": "application/json",
+            "requestExample": {
+              "identification": "123",
+              "first_name": "Juan",
+              "last_name": "Pérez",
+              "email": "juan"
+            },
+            "responseExample": {
+              "code": "OK",
+              "message": "Usuarios filtrados exitosamente",
+              "status": 200,
+              "data": [
+                {
+                  "id": 1,
+                  "username": "juanperez",
+                  "identification": "1234567890",
+                  "first_name": "Juan",
+                  "last_name": "Pérez",
+                  "email": "juan@ejemplo.com",
+                  "phone": "3001234567",
+                  "is_active": true
+                }
+              ],
+              "meta": {
+                "total": 1,
+                "page": 1,
+                "limit": 10
+              }
+            }
+          }
+        ]
+      },
+      "userRoles": {
+        "name": "Roles de Usuario",
+        "description": "Gestión de roles asignados a usuarios en proyectos",
+        "endpoints": [
+          {
+            "name": "create",
+            "method": "POST",
+            "path": "/user-roles",
+            "description": "Asignar rol a usuario en un proyecto",
+            "contentType": "application/json",
+            "requestExample": {
+              "user_id": 5,
+              "role_id": 2,
+              "project_id": 1,
+              "principal_user_id": 3
+            },
+            "responseExample": {
+              "code": "CREATED",
+              "message": "Rol asignado exitosamente",
+              "status": 201,
+              "data": {
+                "id": 10,
+                "user_id": 5,
+                "role_id": 2,
+                "project_id": 1,
+                "principal_user_id": 3,
+                "created_at": "2024-01-15T10:30:00Z"
+              }
+            }
+          },
+          {
+            "name": "update",
+            "method": "PUT",
+            "path": "/user-roles/:user_role_id",
+            "description": "Actualizar rol de usuario",
+            "pathParams": {
+              "user_role_id": "number - ID del user_role"
+            },
+            "contentType": "application/json",
+            "requestExample": {
+              "user_id": 5,
+              "role_id": 3,
+              "project_id": 1
+            },
+            "responseExample": {
+              "code": "OK",
+              "message": "Rol actualizado exitosamente",
+              "status": 200,
+              "data": {
+                "id": 10,
+                "user_id": 5,
+                "role_id": 3,
+                "project_id": 1,
+                "updated_at": "2024-01-15T11:00:00Z"
+              }
+            }
+          },
+          {
+            "name": "delete",
+            "method": "DELETE",
+            "path": "/user-roles/:id",
+            "description": "Eliminar rol de usuario",
+            "pathParams": {
+              "id": "number - ID del user_role"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Rol eliminado exitosamente",
+              "status": 200,
+              "data": null
+            }
+          },
+          {
+            "name": "withoutRoleAdmin",
+            "method": "GET",
+            "path": "/user-roles/without-role-admin",
+            "description": "Listar usuarios sin rol de administrador",
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Usuarios obtenidos exitosamente",
+              "status": 200,
+              "data": [
+                {
+                  "id": 5,
+                  "username": "extensionista1",
+                  "first_name": "Carlos",
+                  "last_name": "Rodríguez",
+                  "email": "carlos@ejemplo.com",
+                  "is_active": true
+                },
+                {
+                  "id": 6,
+                  "username": "extensionista2",
+                  "first_name": "Ana",
+                  "last_name": "Martínez",
+                  "email": "ana@ejemplo.com",
+                  "is_active": true
+                }
+              ]
+            }
+          },
+          {
+            "name": "listUsersByProject",
+            "method": "GET",
+            "path": "/projects/:id/users",
+            "description": "Listar usuarios asignados a un proyecto",
+            "pathParams": {
+              "id": "number - ID del proyecto"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Usuarios del proyecto obtenidos",
+              "status": 200,
+              "data": [
+                {
+                  "id": 1,
+                  "user_id": 5,
+                  "role_id": 2,
+                  "role_name": "Extensionista",
+                  "user": {
+                    "id": 5,
+                    "first_name": "Carlos",
+                    "last_name": "Rodríguez",
+                    "email": "carlos@ejemplo.com"
+                  }
+                },
+                {
+                  "id": 2,
+                  "user_id": 6,
+                  "role_id": 2,
+                  "role_name": "Extensionista",
+                  "user": {
+                    "id": 6,
+                    "first_name": "Ana",
+                    "last_name": "Martínez",
+                    "email": "ana@ejemplo.com"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "projects": {
+        "name": "Proyectos",
+        "description": "CRUD completo de proyectos",
+        "endpoints": [
+          {
+            "name": "list",
+            "method": "GET",
+            "path": "/projects",
+            "description": "Listar proyectos con paginación",
+            "queryParams": {
+              "page": "number",
+              "limit": "number"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Proyectos obtenidos exitosamente",
+              "status": 200,
+              "data": [
+                {
+                  "id": 1,
+                  "type_id": 1,
+                  "name": "Proyecto Agrícola 2024",
+                  "description": "Proyecto de extensión agrícola para pequeños productores",
+                  "type": {
+                    "id": 1,
+                    "name": "Extensión Agrícola"
+                  },
+                  "created_at": "2024-01-01T00:00:00Z"
+                },
+                {
+                  "id": 2,
+                  "type_id": 2,
+                  "name": "Proyecto Ganadero Córdoba",
+                  "description": "Asistencia técnica ganadera",
+                  "type": {
+                    "id": 2,
+                    "name": "Extensión Ganadera"
+                  },
+                  "created_at": "2024-01-05T00:00:00Z"
+                }
+              ],
+              "meta": {
+                "total": 25,
+                "page": 1,
+                "limit": 5
+              }
+            }
+          },
+          {
+            "name": "read",
+            "method": "GET",
+            "path": "/projects/:id",
+            "description": "Obtener proyecto por ID",
+            "pathParams": {
+              "id": "number - ID del proyecto"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Proyecto obtenido exitosamente",
+              "status": 200,
+              "data": {
+                "id": 1,
+                "type_id": 1,
+                "name": "Proyecto Agrícola 2024",
+                "description": "Proyecto de extensión agrícola para pequeños productores",
+                "type": {
+                  "id": 1,
+                  "name": "Extensión Agrícola"
+                },
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-10T00:00:00Z"
+              }
+            }
+          },
+          {
+            "name": "create",
+            "method": "POST",
+            "path": "/projects",
+            "description": "Crear nuevo proyecto",
+            "contentType": "application/json",
+            "requestExample": {
+              "type_id": 1,
+              "name": "Nuevo Proyecto Ganadero",
+              "description": "Proyecto de asistencia técnica ganadera para la región"
+            },
+            "responseExample": {
+              "code": "CREATED",
+              "message": "Proyecto creado exitosamente",
+              "status": 201,
+              "data": {
+                "id": 3,
+                "type_id": 1,
+                "name": "Nuevo Proyecto Ganadero",
+                "description": "Proyecto de asistencia técnica ganadera para la región",
+                "created_at": "2024-01-15T10:30:00Z"
+              }
+            }
+          },
+          {
+            "name": "update",
+            "method": "PUT",
+            "path": "/projects/:id",
+            "description": "Actualizar proyecto",
+            "pathParams": {
+              "id": "number - ID del proyecto"
+            },
+            "contentType": "application/json",
+            "requestExample": {
+              "type_id": 2,
+              "name": "Proyecto Agrícola 2024 - Actualizado",
+              "description": "Descripción actualizada del proyecto con nuevos objetivos"
+            },
+            "responseExample": {
+              "code": "OK",
+              "message": "Proyecto actualizado exitosamente",
+              "status": 200,
+              "data": {
+                "id": 1,
+                "type_id": 2,
+                "name": "Proyecto Agrícola 2024 - Actualizado",
+                "description": "Descripción actualizada del proyecto con nuevos objetivos",
+                "updated_at": "2024-01-15T11:00:00Z"
+              }
+            }
+          },
+          {
+            "name": "delete",
+            "method": "DELETE",
+            "path": "/projects/:id",
+            "description": "Eliminar proyecto",
+            "pathParams": {
+              "id": "number - ID del proyecto"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Proyecto eliminado exitosamente",
+              "status": 200,
+              "data": null
+            }
+          },
+          {
+            "name": "findByUserId",
+            "method": "GET",
+            "path": "/users/:id/projects",
+            "description": "Obtener proyectos asignados a un usuario",
+            "pathParams": {
+              "id": "number - ID del usuario"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Proyectos del usuario obtenidos",
+              "status": 200,
+              "data": [
+                {
+                  "id": 1,
+                  "name": "Proyecto Agrícola 2024",
+                  "description": "Proyecto de extensión agrícola",
+                  "role": "Extensionista",
+                  "role_id": 2
+                },
+                {
+                  "id": 2,
+                  "name": "Proyecto Ganadero Córdoba",
+                  "description": "Asistencia técnica ganadera",
+                  "role": "Coordinador",
+                  "role_id": 3
+                }
+              ]
+            }
+          },
+          {
+            "name": "types",
+            "method": "GET",
+            "path": "/projects/types",
+            "description": "Listar tipos de proyectos disponibles",
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Tipos de proyecto obtenidos",
+              "status": 200,
+              "data": [
+                {
+                  "id": 1,
+                  "name": "Extensión Agrícola"
+                },
+                {
+                  "id": 2,
+                  "name": "Extensión Ganadera"
+                },
+                {
+                  "id": 3,
+                  "name": "Asistencia Técnica"
+                },
+                {
+                  "id": 4,
+                  "name": "Capacitación"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "producers": {
+        "name": "Productores",
+        "description": "CRUD completo de productores agropecuarios",
+        "endpoints": [
+          {
+            "name": "list",
+            "method": "GET",
+            "path": "/producers",
+            "description": "Listar productores con paginación",
+            "queryParams": {
+              "page": "number",
+              "limit": "number"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Productores obtenidos exitosamente",
+              "status": 200,
+              "data": [
+                {
+                  "id": 1,
+                  "identification": "12345678",
+                  "first_name": "Pedro",
+                  "middle_name": "Antonio",
+                  "first_surname": "Martínez",
+                  "last_surname": "López",
+                  "birthdate": "1980-05-15",
+                  "sex_id": 1,
+                  "municipality_code": "23001",
+                  "phone": "3101234567",
+                  "email": "pedro@ejemplo.com"
+                },
+                {
+                  "id": 2,
+                  "identification": "87654321",
+                  "first_name": "María",
+                  "middle_name": "Elena",
+                  "first_surname": "González",
+                  "last_surname": "Ruiz",
+                  "birthdate": "1985-08-20",
+                  "sex_id": 2,
+                  "municipality_code": "23001",
+                  "phone": "3209876543",
+                  "email": "maria.gonzalez@ejemplo.com"
+                }
+              ],
+              "meta": {
+                "total": 150,
+                "page": 1,
+                "limit": 5
+              }
+            }
+          },
+          {
+            "name": "read",
+            "method": "GET",
+            "path": "/producers/:id",
+            "description": "Obtener productor por ID",
+            "pathParams": {
+              "id": "number - ID del productor"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Productor obtenido exitosamente",
+              "status": 200,
+              "data": {
+                "id": 1,
+                "identification": "12345678",
+                "first_name": "Pedro",
+                "middle_name": "Antonio",
+                "first_surname": "Martínez",
+                "last_surname": "López",
+                "birthdate": "1980-05-15",
+                "sex_id": 1,
+                "sex": {
+                  "id": 1,
+                  "name": "Masculino"
+                },
+                "municipality_code": "23001",
+                "municipality": {
+                  "code": "23001",
+                  "name": "Montería",
+                  "department_code": "23",
+                  "department_name": "Córdoba"
+                },
+                "phone": "3101234567",
+                "document_type_id": 1,
+                "document_type": {
+                  "id": 1,
+                  "name": "Cédula de Ciudadanía"
+                },
+                "email": "pedro@ejemplo.com",
+                "disability_id": null,
+                "disability": null,
+                "level_of_education_id": 3,
+                "level_of_education": {
+                  "id": 3,
+                  "name": "Secundaria"
+                },
+                "ethnic_group_id": 1,
+                "ethnic_group": {
+                  "id": 1,
+                  "name": "Ninguno"
+                },
+                "created_at": "2024-01-10T08:00:00Z"
+              }
+            }
+          },
+          {
+            "name": "create",
+            "method": "POST",
+            "path": "/producers",
+            "description": "Crear nuevo productor",
+            "contentType": "application/json",
+            "requestExample": {
+              "identification": "87654321",
+              "first_name": "María",
+              "middle_name": "Elena",
+              "first_surname": "González",
+              "last_surname": "Ruiz",
+              "birthdate": "1985-08-20",
+              "sex_id": 2,
+              "municipality_code": "23001",
+              "phone": "3209876543",
+              "document_type_id": 1,
+              "email": "maria.gonzalez@ejemplo.com",
+              "disability_id": null,
+              "level_of_education_id": 4,
+              "ethnic_group_id": 1
+            },
+            "responseExample": {
+              "code": "CREATED",
+              "message": "Productor creado exitosamente",
+              "status": 201,
+              "data": {
+                "id": 2,
+                "identification": "87654321",
+                "first_name": "María",
+                "middle_name": "Elena",
+                "first_surname": "González",
+                "last_surname": "Ruiz",
+                "birthdate": "1985-08-20",
+                "sex_id": 2,
+                "municipality_code": "23001",
+                "phone": "3209876543",
+                "document_type_id": 1,
+                "email": "maria.gonzalez@ejemplo.com",
+                "disability_id": null,
+                "level_of_education_id": 4,
+                "ethnic_group_id": 1,
+                "created_at": "2024-01-15T10:30:00Z"
+              }
+            }
+          },
+          {
+            "name": "update",
+            "method": "PUT",
+            "path": "/producers/:id",
+            "description": "Actualizar productor",
+            "pathParams": {
+              "id": "number - ID del productor"
+            },
+            "contentType": "application/json",
+            "requestExample": {
+              "identification": "12345678",
+              "first_name": "Pedro",
+              "middle_name": "Antonio",
+              "first_surname": "Martínez",
+              "last_surname": "López",
+              "birthdate": "1980-05-15",
+              "sex_id": 1,
+              "municipality_code": "23417",
+              "phone": "3101234568",
+              "document_type_id": 1,
+              "email": "pedro.nuevo@ejemplo.com",
+              "disability_id": null,
+              "level_of_education_id": 4,
+              "ethnic_group_id": 1
+            },
+            "responseExample": {
+              "code": "OK",
+              "message": "Productor actualizado exitosamente",
+              "status": 200,
+              "data": {
+                "id": 1,
+                "identification": "12345678",
+                "first_name": "Pedro",
+                "middle_name": "Antonio",
+                "first_surname": "Martínez",
+                "last_surname": "López",
+                "phone": "3101234568",
+                "email": "pedro.nuevo@ejemplo.com",
+                "municipality_code": "23417",
+                "updated_at": "2024-01-15T11:00:00Z"
+              }
+            }
+          },
+          {
+            "name": "delete",
+            "method": "DELETE",
+            "path": "/producers/:id",
+            "description": "Eliminar productor",
+            "pathParams": {
+              "id": "number - ID del productor"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Productor eliminado exitosamente",
+              "status": 200,
+              "data": null
+            }
+          },
+          {
+            "name": "filter",
+            "method": "POST",
+            "path": "/producers/filter",
+            "description": "Filtrar productores por criterios",
+            "queryParams": {
+              "page": "number",
+              "limit": "number"
+            },
+            "contentType": "application/json",
+            "requestExample": {
+              "identification": "123",
+              "first_name": "Pedro",
+              "first_surname": "Martínez",
+              "middle_name": "",
+              "last_surname": ""
+            },
+            "responseExample": {
+              "code": "OK",
+              "message": "Productores filtrados exitosamente",
+              "status": 200,
+              "data": [
+                {
+                  "id": 1,
+                  "identification": "12345678",
+                  "first_name": "Pedro",
+                  "middle_name": "Antonio",
+                  "first_surname": "Martínez",
+                  "last_surname": "López",
+                  "phone": "3101234567",
+                  "email": "pedro@ejemplo.com"
+                }
+              ],
+              "meta": {
+                "total": 1,
+                "page": 1,
+                "limit": 10
+              }
+            }
+          }
+        ]
+      },
+      "projectParticipants": {
+        "name": "Participantes de Proyecto (Productores en Proyectos)",
+        "description": "Gestión de productores participantes en proyectos",
+        "endpoints": [
+          {
+            "name": "list",
+            "method": "GET",
+            "path": "/project-participants/:project_id",
+            "description": "Listar productores participantes de un proyecto",
+            "pathParams": {
+              "project_id": "number - ID del proyecto"
+            },
+            "queryParams": {
+              "page": "number",
+              "limit": "number"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Participantes obtenidos exitosamente",
+              "status": 200,
+              "data": [
+                {
+                  "id": 1,
+                  "producer_id": 5,
+                  "project_id": 1,
+                  "producer": {
+                    "id": 5,
+                    "first_name": "Pedro",
+                    "middle_name": "Antonio",
+                    "first_surname": "Martínez",
+                    "last_surname": "López",
+                    "identification": "12345678",
+                    "phone": "3101234567"
+                  },
+                  "created_at": "2024-01-10T08:00:00Z"
+                },
+                {
+                  "id": 2,
+                  "producer_id": 6,
+                  "project_id": 1,
+                  "producer": {
+                    "id": 6,
+                    "first_name": "María",
+                    "middle_name": "Elena",
+                    "first_surname": "González",
+                    "last_surname": "Ruiz",
+                    "identification": "87654321",
+                    "phone": "3209876543"
+                  },
+                  "created_at": "2024-01-11T09:00:00Z"
+                }
+              ],
+              "meta": {
+                "total": 30,
+                "page": 1,
+                "limit": 10
+              }
+            }
+          },
+          {
+            "name": "create",
+            "method": "POST",
+            "path": "/project-participants",
+            "description": "Agregar productor a proyecto",
+            "contentType": "application/json",
+            "requestExample": {
+              "producer_id": 5,
+              "project_id": 1
+            },
+            "responseExample": {
+              "code": "CREATED",
+              "message": "Participante agregado exitosamente",
+              "status": 201,
+              "data": {
+                "id": 10,
+                "producer_id": 5,
+                "project_id": 1,
+                "created_at": "2024-01-15T10:30:00Z"
+              }
+            }
+          },
+          {
+            "name": "delete",
+            "method": "DELETE",
+            "path": "/project-participants/:id",
+            "description": "Eliminar productor de proyecto",
+            "pathParams": {
+              "id": "number - ID del registro de participante"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Participante eliminado exitosamente",
+              "status": 200,
+              "data": null
+            }
+          }
+        ]
+      },
+      "producerAssignedToExtensionist": {
+        "name": "Productores Asignados a Extensionista",
+        "description": "Gestión de asignaciones de productores a extensionistas",
+        "endpoints": [
+          {
+            "name": "create",
+            "method": "POST",
+            "path": "/producer-assigned-to-extensionist",
+            "description": "Asignar un productor a un extensionista",
+            "contentType": "application/json",
+            "requestExample": {
+              "producer_id": 5,
+              "extensionist_id": 3,
+              "project_id": 1
+            },
+            "responseExample": {
+              "code": "CREATED",
+              "message": "Asignación creada exitosamente",
+              "status": 201,
+              "data": {
+                "id": 15,
+                "producer_id": 5,
+                "extensionist_id": 3,
+                "project_id": 1,
+                "created_at": "2024-01-15T10:30:00Z"
+              }
+            }
+          },
+          {
+            "name": "createBulk",
+            "method": "POST",
+            "path": "/producer-assigned-to-extensionist/bulk",
+            "description": "Asignar múltiples productores a un extensionista",
+            "contentType": "application/json",
+            "requestExample": {
+              "producers": [
+                {"id": 5},
+                {"id": 6},
+                {"id": 7}
+              ],
+              "extensionist_id": 3,
+              "project_id": 1
+            },
+            "responseExample": {
+              "code": "CREATED",
+              "message": "Asignaciones creadas exitosamente",
+              "status": 201,
+              "data": {
+                "created_count": 3,
+                "assignments": [
+                  {"id": 15, "producer_id": 5, "extensionist_id": 3, "project_id": 1},
+                  {"id": 16, "producer_id": 6, "extensionist_id": 3, "project_id": 1},
+                  {"id": 17, "producer_id": 7, "extensionist_id": 3, "project_id": 1}
+                ]
+              }
+            }
+          },
+          {
+            "name": "listByExtensionistId",
+            "method": "GET",
+            "path": "/producer-assigned-to-extensionist/:project_id/:extensionist_id",
+            "description": "Listar productores asignados a un extensionista en un proyecto",
+            "pathParams": {
+              "project_id": "number - ID del proyecto",
+              "extensionist_id": "number - ID del extensionista"
+            },
+            "queryParams": {
+              "page": "number",
+              "limit": "number"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Productores asignados obtenidos",
+              "status": 200,
+              "data": [
+                {
+                  "id": 15,
+                  "producer_id": 5,
+                  "extensionist_id": 3,
+                  "project_id": 1,
+                  "producer": {
+                    "id": 5,
+                    "first_name": "Pedro",
+                    "middle_name": "Antonio",
+                    "first_surname": "Martínez",
+                    "last_surname": "López",
+                    "identification": "12345678",
+                    "phone": "3101234567"
+                  }
+                },
+                {
+                  "id": 16,
+                  "producer_id": 6,
+                  "extensionist_id": 3,
+                  "project_id": 1,
+                  "producer": {
+                    "id": 6,
+                    "first_name": "María",
+                    "middle_name": "Elena",
+                    "first_surname": "González",
+                    "last_surname": "Ruiz",
+                    "identification": "87654321",
+                    "phone": "3209876543"
+                  }
+                }
+              ],
+              "meta": {
+                "total": 20,
+                "page": 1,
+                "limit": 10
+              }
+            }
+          },
+          {
+            "name": "listProducersByProject",
+            "method": "GET",
+            "path": "/producer-assigned-to-extensionist/:project_id/producers",
+            "description": "Listar productores del extensionista autenticado en un proyecto",
+            "pathParams": {
+              "project_id": "number - ID del proyecto"
+            },
+            "queryParams": {
+              "page": "number",
+              "limit": "number"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Productores obtenidos",
+              "status": 200,
+              "data": [
+                {
+                  "id": 5,
+                  "first_name": "Pedro",
+                  "middle_name": "Antonio",
+                  "first_surname": "Martínez",
+                  "last_surname": "López",
+                  "identification": "12345678",
+                  "phone": "3101234567",
+                  "email": "pedro@ejemplo.com"
+                },
+                {
+                  "id": 6,
+                  "first_name": "María",
+                  "middle_name": "Elena",
+                  "first_surname": "González",
+                  "last_surname": "Ruiz",
+                  "identification": "87654321",
+                  "phone": "3209876543",
+                  "email": "maria@ejemplo.com"
+                }
+              ],
+              "meta": {
+                "total": 15,
+                "page": 1,
+                "limit": 10
+              }
+            }
+          },
+          {
+            "name": "delete",
+            "method": "DELETE",
+            "path": "/producer-assigned-to-extensionist/:id",
+            "description": "Eliminar asignación de productor a extensionista",
+            "pathParams": {
+              "id": "number - ID de la asignación"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Asignación eliminada exitosamente",
+              "status": 200,
+              "data": null
+            }
+          }
+        ]
+      },
+      "components": {
+        "name": "Componentes",
+        "description": "CRUD de componentes para caracterización",
+        "endpoints": [
+          {
+            "name": "list",
+            "method": "GET",
+            "path": "/components",
+            "description": "Listar todos los componentes",
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Componentes obtenidos exitosamente",
+              "status": 200,
+              "data": [
+                {
+                  "id": 1,
+                  "name": "Información Personal",
+                  "created_at": "2024-01-01T00:00:00Z"
+                },
+                {
+                  "id": 2,
+                  "name": "Información Productiva",
+                  "created_at": "2024-01-01T00:00:00Z"
+                },
+                {
+                  "id": 3,
+                  "name": "Información Socioeconómica",
+                  "created_at": "2024-01-01T00:00:00Z"
+                }
+              ]
+            }
+          },
+          {
+            "name": "read",
+            "method": "GET",
+            "path": "/components/:id",
+            "description": "Obtener componente por ID",
+            "pathParams": {
+              "id": "number - ID del componente"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Componente obtenido exitosamente",
+              "status": 200,
+              "data": {
+                "id": 1,
+                "name": "Información Personal",
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-10T00:00:00Z"
+              }
+            }
+          },
+          {
+            "name": "create",
+            "method": "POST",
+            "path": "/components",
+            "description": "Crear nuevo componente",
+            "contentType": "application/json",
+            "requestExample": {
+              "name": "Información Ambiental"
+            },
+            "responseExample": {
+              "code": "CREATED",
+              "message": "Componente creado exitosamente",
+              "status": 201,
+              "data": {
+                "id": 4,
+                "name": "Información Ambiental",
+                "created_at": "2024-01-15T10:30:00Z"
+              }
+            }
+          },
+          {
+            "name": "update",
+            "method": "PUT",
+            "path": "/components/:id",
+            "description": "Actualizar componente",
+            "pathParams": {
+              "id": "number - ID del componente"
+            },
+            "contentType": "application/json",
+            "requestExample": {
+              "name": "Información Personal Actualizada"
+            },
+            "responseExample": {
+              "code": "OK",
+              "message": "Componente actualizado exitosamente",
+              "status": 200,
+              "data": {
+                "id": 1,
+                "name": "Información Personal Actualizada",
+                "updated_at": "2024-01-15T11:00:00Z"
+              }
+            }
+          },
+          {
+            "name": "delete",
+            "method": "DELETE",
+            "path": "/components/:id",
+            "description": "Eliminar componente",
+            "pathParams": {
+              "id": "number - ID del componente"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Componente eliminado exitosamente",
+              "status": 200,
+              "data": null
+            }
+          }
+        ]
+      },
+      "assistants": {
+        "name": "Datos Auxiliares",
+        "description": "Endpoints para obtener datos de referencia del sistema",
+        "endpoints": [
+          {
+            "name": "getDepartments",
+            "method": "GET",
+            "path": "/assistants/departments",
+            "description": "Obtener lista de departamentos",
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Departamentos obtenidos",
+              "status": 200,
+              "data": [
+                {"code": "05", "name": "Antioquia"},
+                {"code": "08", "name": "Atlántico"},
+                {"code": "11", "name": "Bogotá D.C."},
+                {"code": "13", "name": "Bolívar"},
+                {"code": "23", "name": "Córdoba"},
+                {"code": "25", "name": "Cundinamarca"},
+                {"code": "44", "name": "La Guajira"},
+                {"code": "47", "name": "Magdalena"}
+              ]
+            }
+          },
+          {
+            "name": "getMunicipalities",
+            "method": "GET",
+            "path": "/assistants/municipalities/:department_code",
+            "description": "Obtener municipios por código de departamento",
+            "pathParams": {
+              "department_code": "string - Código del departamento (ej: 05, 23)"
+            },
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Municipios obtenidos",
+              "status": 200,
+              "data": [
+                {"code": "23001", "name": "Montería"},
+                {"code": "23068", "name": "Ayapel"},
+                {"code": "23079", "name": "Buenavista"},
+                {"code": "23090", "name": "Canalete"},
+                {"code": "23162", "name": "Cereté"},
+                {"code": "23417", "name": "Lorica"},
+                {"code": "23466", "name": "Montelíbano"},
+                {"code": "23570", "name": "Planeta Rica"}
+              ]
+            }
+          },
+          {
+            "name": "getSexes",
+            "method": "GET",
+            "path": "/assistants/sexes",
+            "description": "Obtener tipos de sexo",
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Sexos obtenidos",
+              "status": 200,
+              "data": [
+                {"id": 1, "name": "Masculino"},
+                {"id": 2, "name": "Femenino"},
+                {"id": 3, "name": "Otro"}
+              ]
+            }
+          },
+          {
+            "name": "getDocumentTypes",
+            "method": "GET",
+            "path": "/assistants/document-types",
+            "description": "Obtener tipos de documento de identidad",
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Tipos de documento obtenidos",
+              "status": 200,
+              "data": [
+                {"id": 1, "name": "Cédula de Ciudadanía"},
+                {"id": 2, "name": "Cédula de Extranjería"},
+                {"id": 3, "name": "Tarjeta de Identidad"},
+                {"id": 4, "name": "Pasaporte"},
+                {"id": 5, "name": "NIT"}
+              ]
+            }
+          },
+          {
+            "name": "getEthnicGroups",
+            "method": "GET",
+            "path": "/assistants/ethnic-groups",
+            "description": "Obtener grupos étnicos",
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Grupos étnicos obtenidos",
+              "status": 200,
+              "data": [
+                {"id": 1, "name": "Ninguno"},
+                {"id": 2, "name": "Indígena"},
+                {"id": 3, "name": "Afrocolombiano"},
+                {"id": 4, "name": "Raizal"},
+                {"id": 5, "name": "Rom"},
+                {"id": 6, "name": "Palenquero"}
+              ]
+            }
+          },
+          {
+            "name": "getDisabilities",
+            "method": "GET",
+            "path": "/assistants/disabilities",
+            "description": "Obtener tipos de discapacidad",
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Discapacidades obtenidas",
+              "status": 200,
+              "data": [
+                {"id": 1, "name": "Ninguna"},
+                {"id": 2, "name": "Visual"},
+                {"id": 3, "name": "Auditiva"},
+                {"id": 4, "name": "Motriz"},
+                {"id": 5, "name": "Cognitiva"},
+                {"id": 6, "name": "Múltiple"}
+              ]
+            }
+          },
+          {
+            "name": "getEducationLevels",
+            "method": "GET",
+            "path": "/assistants/level-of-education",
+            "description": "Obtener niveles de educación",
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Niveles de educación obtenidos",
+              "status": 200,
+              "data": [
+                {"id": 1, "name": "Ninguno"},
+                {"id": 2, "name": "Primaria Incompleta"},
+                {"id": 3, "name": "Primaria Completa"},
+                {"id": 4, "name": "Secundaria Incompleta"},
+                {"id": 5, "name": "Secundaria Completa"},
+                {"id": 6, "name": "Técnico"},
+                {"id": 7, "name": "Tecnológico"},
+                {"id": 8, "name": "Universitario"},
+                {"id": 9, "name": "Posgrado"}
+              ]
+            }
+          },
+          {
+            "name": "getInnovaFields",
+            "method": "GET",
+            "path": "/assistants/innova-fields",
+            "description": "Obtener campos de innovación para mapeo con sistema INNOVA",
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Campos de innovación obtenidos",
+              "status": 200,
+              "data": [
+                {"id": 1, "name": "Nombre del productor"},
+                {"id": 2, "name": "Área de la finca"},
+                {"id": 3, "name": "Tipo de cultivo"},
+                {"id": 4, "name": "Producción mensual"}
+              ]
+            }
+          },
+          {
+            "name": "getRoles",
+            "method": "GET",
+            "path": "/assistants/roles",
+            "description": "Obtener roles disponibles en el sistema",
+            "requestExample": null,
+            "responseExample": {
+              "code": "OK",
+              "message": "Roles obtenidos",
+              "status": 200,
+              "data": [
+                {"id": 1, "name": "Administrador"},
+                {"id": 2, "name": "Extensionista"},
+                {"id": 3, "name": "Coordinador"},
+                {"id": 4, "name": "Supervisor"}
+              ]
+            }
+          }
+        ]
+      },
+      "characterization": {
+        "name": "Caracterización",
+        "description": "Gestión de preguntas de caracterización para productores",
+        "submodules": {
+          "questions": {
+            "name": "Preguntas Generales",
+            "endpoints": [
+              {
+                "name": "list",
+                "method": "GET",
+                "path": "/questions",
+                "description": "Listar todas las preguntas con paginación",
+                "queryParams": {
+                  "page": "number",
+                  "limit": "number"
+                },
+                "requestExample": null,
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Preguntas obtenidas exitosamente",
+                  "status": 200,
+                  "data": [
+                    {
+                      "id": 1,
+                      "type": "text",
+                      "description": "¿Cuál es el nombre de su finca?",
+                      "component_id": 1,
+                      "component": {
+                        "id": 1,
+                        "name": "Información Personal"
+                      },
+                      "active": true,
+                      "required": true,
+                      "maxlength": 150
+                    },
+                    {
+                      "id": 2,
+                      "type": "numeric",
+                      "description": "¿Cuántas hectáreas tiene su finca?",
+                      "component_id": 2,
+                      "component": {
+                        "id": 2,
+                        "name": "Información Productiva"
+                      },
+                      "active": true,
+                      "required": true,
+                      "maxlength": 10
+                    },
+                    {
+                      "id": 3,
+                      "type": "bool",
+                      "description": "¿Tiene acceso a riego?",
+                      "component_id": 2,
+                      "component": {
+                        "id": 2,
+                        "name": "Información Productiva"
+                      },
+                      "active": true,
+                      "required": true
+                    },
+                    {
+                      "id": 4,
+                      "type": "list",
+                      "description": "¿Cuál es su principal actividad productiva?",
+                      "component_id": 2,
+                      "component": {
+                        "id": 2,
+                        "name": "Información Productiva"
+                      },
+                      "active": true,
+                      "required": true,
+                      "items": [
+                        {"id": 1, "name": "Agricultura", "value": "agricultura"},
+                        {"id": 2, "name": "Ganadería", "value": "ganaderia"},
+                        {"id": 3, "name": "Porcicultura", "value": "porcicultura"}
+                      ]
+                    }
+                  ],
+                  "meta": {
+                    "total": 50,
+                    "page": 1,
+                    "limit": 5
+                  }
+                }
+              },
+              {
+                "name": "read",
+                "method": "GET",
+                "path": "/questions/:id",
+                "description": "Obtener pregunta por ID",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "requestExample": null,
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta obtenida exitosamente",
+                  "status": 200,
+                  "data": {
+                    "id": 1,
+                    "type": "text",
+                    "description": "¿Cuál es el nombre de su finca?",
+                    "component_id": 1,
+                    "component": {
+                      "id": 1,
+                      "name": "Información Personal"
+                    },
+                    "active": true,
+                    "required": true,
+                    "maxlength": 150,
+                    "field_innova_id": 1,
+                    "field_innova": {
+                      "id": 1,
+                      "name": "Nombre del productor"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "delete",
+                "method": "DELETE",
+                "path": "/questions/:id",
+                "description": "Eliminar pregunta",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "requestExample": null,
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta eliminada exitosamente",
+                  "status": 200,
+                  "data": null
+                }
+              },
+              {
+                "name": "types",
+                "method": "GET",
+                "path": "/questions/types",
+                "description": "Obtener tipos de preguntas disponibles",
+                "requestExample": null,
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Tipos de preguntas obtenidos",
+                  "status": 200,
+                  "data": [
+                    {"type": "text", "name": "Texto", "description": "Respuesta de texto libre"},
+                    {"type": "numeric", "name": "Numérico", "description": "Solo números"},
+                    {"type": "date", "name": "Fecha", "description": "Selector de fecha"},
+                    {"type": "bool", "name": "Sí/No", "description": "Respuesta booleana"},
+                    {"type": "list", "name": "Lista de opciones", "description": "Selección de opciones predefinidas"}
+                  ]
+                }
+              }
+            ]
+          },
+          "questionsText": {
+            "name": "Preguntas de Texto",
+            "endpoints": [
+              {
+                "name": "create",
+                "method": "POST",
+                "path": "/questions-text",
+                "description": "Crear pregunta de tipo texto",
+                "contentType": "application/json",
+                "requestExample": {
+                  "component_id": 1,
+                  "description": "¿Cuál es el nombre de su finca?",
+                  "active": true,
+                  "required": true,
+                  "maxlength": 150,
+                  "field_innova_id": 1
+                },
+                "responseExample": {
+                  "code": "CREATED",
+                  "message": "Registro creado satisfactoriamente",
+                  "status": 201,
+                  "data": {
+                    "id": 10,
+                    "type": "text",
+                    "component_id": 1,
+                    "description": "¿Cuál es el nombre de su finca?",
+                    "active": true,
+                    "required": true,
+                    "maxlength": 150,
+                    "field_innova_id": 1,
+                    "created_at": "2024-01-15T10:30:00Z"
+                  }
+                }
+              },
+              {
+                "name": "update",
+                "method": "PUT",
+                "path": "/questions-text/:id",
+                "description": "Actualizar pregunta de texto",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "contentType": "application/json",
+                "requestExample": {
+                  "component_id": 1,
+                  "description": "¿Cuál es el nombre de su finca? (actualizado)",
+                  "active": true,
+                  "required": false,
+                  "maxlength": 200,
+                  "field_innova_id": 1
+                },
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta actualizada exitosamente",
+                  "status": 200,
+                  "data": {
+                    "id": 10,
+                    "type": "text",
+                    "description": "¿Cuál es el nombre de su finca? (actualizado)",
+                    "maxlength": 200,
+                    "required": false,
+                    "updated_at": "2024-01-15T11:00:00Z"
+                  }
+                }
+              },
+              {
+                "name": "delete",
+                "method": "DELETE",
+                "path": "/questions-text/:id",
+                "description": "Eliminar pregunta de texto",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "requestExample": null,
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta eliminada exitosamente",
+                  "status": 200,
+                  "data": null
+                }
+              },
+              {
+                "name": "answer",
+                "method": "POST",
+                "path": "/questions-text/answer",
+                "description": "Responder preguntas de texto (múltiples respuestas)",
+                "contentType": "application/json",
+                "requestExample": [
+                  {
+                    "question_id": 10,
+                    "value": "Finca La Esperanza"
+                  },
+                  {
+                    "question_id": 11,
+                    "value": "Vereda El Progreso"
+                  }
+                ],
+                "responseExample": {
+                  "code": "CREATED",
+                  "message": "Respuestas guardadas exitosamente",
+                  "status": 201,
+                  "data": {
+                    "saved_count": 2,
+                    "answers": [
+                      {"id": 100, "question_id": 10, "value": "Finca La Esperanza", "created_at": "2024-01-15T10:30:00Z"},
+                      {"id": 101, "question_id": 11, "value": "Vereda El Progreso", "created_at": "2024-01-15T10:30:00Z"}
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "questionsNumeric": {
+            "name": "Preguntas Numéricas",
+            "endpoints": [
+              {
+                "name": "create",
+                "method": "POST",
+                "path": "/questions-numeric",
+                "description": "Crear pregunta de tipo numérico",
+                "contentType": "application/json",
+                "requestExample": {
+                  "component_id": 2,
+                  "description": "¿Cuántas hectáreas tiene su finca?",
+                  "active": true,
+                  "required": true,
+                  "maxlength": 10,
+                  "field_innova_id": 2
+                },
+                "responseExample": {
+                  "code": "CREATED",
+                  "message": "Registro creado satisfactoriamente",
+                  "status": 201,
+                  "data": {
+                    "id": 20,
+                    "type": "numeric",
+                    "component_id": 2,
+                    "description": "¿Cuántas hectáreas tiene su finca?",
+                    "active": true,
+                    "required": true,
+                    "maxlength": 10,
+                    "field_innova_id": 2,
+                    "created_at": "2024-01-15T10:30:00Z"
+                  }
+                }
+              },
+              {
+                "name": "update",
+                "method": "PUT",
+                "path": "/questions-numeric/:id",
+                "description": "Actualizar pregunta numérica",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "contentType": "application/json",
+                "requestExample": {
+                  "component_id": 2,
+                  "description": "¿Cuántas hectáreas productivas tiene?",
+                  "active": true,
+                  "required": true,
+                  "maxlength": 15,
+                  "field_innova_id": 2
+                },
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta actualizada exitosamente",
+                  "status": 200,
+                  "data": {
+                    "id": 20,
+                    "type": "numeric",
+                    "description": "¿Cuántas hectáreas productivas tiene?",
+                    "maxlength": 15,
+                    "updated_at": "2024-01-15T11:00:00Z"
+                  }
+                }
+              },
+              {
+                "name": "delete",
+                "method": "DELETE",
+                "path": "/questions-numeric/:id",
+                "description": "Eliminar pregunta numérica",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "requestExample": null,
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta eliminada exitosamente",
+                  "status": 200,
+                  "data": null
+                }
+              },
+              {
+                "name": "answer",
+                "method": "POST",
+                "path": "/questions-numeric/answer",
+                "description": "Responder preguntas numéricas",
+                "contentType": "application/json",
+                "requestExample": [
+                  {
+                    "question_id": 20,
+                    "value": 15.5
+                  },
+                  {
+                    "question_id": 21,
+                    "value": 100
+                  }
+                ],
+                "responseExample": {
+                  "code": "CREATED",
+                  "message": "Respuestas guardadas exitosamente",
+                  "status": 201,
+                  "data": {
+                    "saved_count": 2,
+                    "answers": [
+                      {"id": 200, "question_id": 20, "value": 15.5},
+                      {"id": 201, "question_id": 21, "value": 100}
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "questionsDate": {
+            "name": "Preguntas de Fecha",
+            "endpoints": [
+              {
+                "name": "create",
+                "method": "POST",
+                "path": "/questions-date",
+                "description": "Crear pregunta de tipo fecha",
+                "contentType": "application/json",
+                "requestExample": {
+                  "component_id": 1,
+                  "description": "¿Desde cuándo es propietario de la finca?",
+                  "active": true,
+                  "required": true,
+                  "maxlength": 10,
+                  "field_innova_id": 3
+                },
+                "responseExample": {
+                  "code": "CREATED",
+                  "message": "Registro creado satisfactoriamente",
+                  "status": 201,
+                  "data": {
+                    "id": 30,
+                    "type": "date",
+                    "component_id": 1,
+                    "description": "¿Desde cuándo es propietario de la finca?",
+                    "active": true,
+                    "required": true,
+                    "field_innova_id": 3,
+                    "created_at": "2024-01-15T10:30:00Z"
+                  }
+                }
+              },
+              {
+                "name": "update",
+                "method": "PUT",
+                "path": "/questions-date/:id",
+                "description": "Actualizar pregunta de fecha",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "contentType": "application/json",
+                "requestExample": {
+                  "component_id": 1,
+                  "description": "¿Cuál es la fecha de inicio de actividades?",
+                  "active": true,
+                  "required": false,
+                  "maxlength": 10,
+                  "field_innova_id": 3
+                },
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta actualizada exitosamente",
+                  "status": 200,
+                  "data": {
+                    "id": 30,
+                    "type": "date",
+                    "description": "¿Cuál es la fecha de inicio de actividades?",
+                    "required": false,
+                    "updated_at": "2024-01-15T11:00:00Z"
+                  }
+                }
+              },
+              {
+                "name": "delete",
+                "method": "DELETE",
+                "path": "/questions-date/:id",
+                "description": "Eliminar pregunta de fecha",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "requestExample": null,
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta eliminada exitosamente",
+                  "status": 200,
+                  "data": null
+                }
+              },
+              {
+                "name": "answer",
+                "method": "POST",
+                "path": "/questions-date/answer",
+                "description": "Responder preguntas de fecha",
+                "contentType": "application/json",
+                "requestExample": [
+                  {
+                    "question_id": 30,
+                    "value": "2015-03-20"
+                  },
+                  {
+                    "question_id": 31,
+                    "value": "2020-01-15"
+                  }
+                ],
+                "responseExample": {
+                  "code": "CREATED",
+                  "message": "Respuestas guardadas exitosamente",
+                  "status": 201,
+                  "data": {
+                    "saved_count": 2,
+                    "answers": [
+                      {"id": 300, "question_id": 30, "value": "2015-03-20"},
+                      {"id": 301, "question_id": 31, "value": "2020-01-15"}
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "questionsBool": {
+            "name": "Preguntas Booleanas (Sí/No)",
+            "endpoints": [
+              {
+                "name": "create",
+                "method": "POST",
+                "path": "/questions-bool",
+                "description": "Crear pregunta de tipo booleano (Sí/No)",
+                "contentType": "application/json",
+                "requestExample": {
+                  "component_id": 2,
+                  "description": "¿Tiene acceso a riego en su finca?",
+                  "active": true,
+                  "required": true,
+                  "field_innova_id": 4
+                },
+                "responseExample": {
+                  "code": "CREATED",
+                  "message": "Registro creado satisfactoriamente",
+                  "status": 201,
+                  "data": {
+                    "id": 40,
+                    "type": "bool",
+                    "component_id": 2,
+                    "description": "¿Tiene acceso a riego en su finca?",
+                    "active": true,
+                    "required": true,
+                    "field_innova_id": 4,
+                    "created_at": "2024-01-15T10:30:00Z"
+                  }
+                }
+              },
+              {
+                "name": "update",
+                "method": "PUT",
+                "path": "/questions-bool/:id",
+                "description": "Actualizar pregunta booleana",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "contentType": "application/json",
+                "requestExample": {
+                  "component_id": 2,
+                  "description": "¿Cuenta con sistema de riego tecnificado?",
+                  "active": true,
+                  "required": false,
+                  "field_innova_id": 4
+                },
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta actualizada exitosamente",
+                  "status": 200,
+                  "data": {
+                    "id": 40,
+                    "type": "bool",
+                    "description": "¿Cuenta con sistema de riego tecnificado?",
+                    "required": false,
+                    "updated_at": "2024-01-15T11:00:00Z"
+                  }
+                }
+              },
+              {
+                "name": "delete",
+                "method": "DELETE",
+                "path": "/questions-bool/:id",
+                "description": "Eliminar pregunta booleana",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "requestExample": null,
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta eliminada exitosamente",
+                  "status": 200,
+                  "data": null
+                }
+              },
+              {
+                "name": "answer",
+                "method": "POST",
+                "path": "/questions-bool/answer",
+                "description": "Responder preguntas booleanas",
+                "contentType": "application/json",
+                "requestExample": [
+                  {
+                    "question_id": 40,
+                    "value": true
+                  },
+                  {
+                    "question_id": 41,
+                    "value": false
+                  }
+                ],
+                "responseExample": {
+                  "code": "CREATED",
+                  "message": "Respuestas guardadas exitosamente",
+                  "status": 201,
+                  "data": {
+                    "saved_count": 2,
+                    "answers": [
+                      {"id": 400, "question_id": 40, "value": true},
+                      {"id": 401, "question_id": 41, "value": false}
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "questionsList": {
+            "name": "Preguntas de Lista (Selección)",
+            "endpoints": [
+              {
+                "name": "create",
+                "method": "POST",
+                "path": "/questions-list",
+                "description": "Crear pregunta de tipo lista con opciones",
+                "contentType": "application/json",
+                "requestExample": {
+                  "component_id": 2,
+                  "description": "¿Cuál es su principal actividad productiva?",
+                  "active": true,
+                  "required": true,
+                  "maxlength": 100,
+                  "items": [
+                    {"name": "Agricultura", "value": "agricultura"},
+                    {"name": "Ganadería", "value": "ganaderia"},
+                    {"name": "Porcicultura", "value": "porcicultura"},
+                    {"name": "Avicultura", "value": "avicultura"},
+                    {"name": "Piscicultura", "value": "piscicultura"}
+                  ],
+                  "field_innova_id": 5
+                },
+                "responseExample": {
+                  "code": "CREATED",
+                  "message": "Registro creado satisfactoriamente",
+                  "status": 201,
+                  "data": {
+                    "id": 50,
+                    "type": "list",
+                    "component_id": 2,
+                    "description": "¿Cuál es su principal actividad productiva?",
+                    "active": true,
+                    "required": true,
+                    "items": [
+                      {"id": 1, "name": "Agricultura", "value": "agricultura"},
+                      {"id": 2, "name": "Ganadería", "value": "ganaderia"},
+                      {"id": 3, "name": "Porcicultura", "value": "porcicultura"},
+                      {"id": 4, "name": "Avicultura", "value": "avicultura"},
+                      {"id": 5, "name": "Piscicultura", "value": "piscicultura"}
+                    ],
+                    "field_innova_id": 5,
+                    "created_at": "2024-01-15T10:30:00Z"
+                  }
+                }
+              },
+              {
+                "name": "read",
+                "method": "GET",
+                "path": "/questions-list/:id",
+                "description": "Obtener pregunta de lista por ID con sus opciones",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "requestExample": null,
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta obtenida exitosamente",
+                  "status": 200,
+                  "data": {
+                    "id": 50,
+                    "type": "list",
+                    "description": "¿Cuál es su principal actividad productiva?",
+                    "component_id": 2,
+                    "component": {
+                      "id": 2,
+                      "name": "Información Productiva"
+                    },
+                    "active": true,
+                    "required": true,
+                    "items": [
+                      {"id": 1, "name": "Agricultura", "value": "agricultura"},
+                      {"id": 2, "name": "Ganadería", "value": "ganaderia"},
+                      {"id": 3, "name": "Porcicultura", "value": "porcicultura"},
+                      {"id": 4, "name": "Avicultura", "value": "avicultura"},
+                      {"id": 5, "name": "Piscicultura", "value": "piscicultura"}
+                    ],
+                    "field_innova_id": 5
+                  }
+                }
+              },
+              {
+                "name": "update",
+                "method": "PUT",
+                "path": "/questions-list/:id",
+                "description": "Actualizar pregunta de lista y sus opciones",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "contentType": "application/json",
+                "requestExample": {
+                  "component_id": 2,
+                  "description": "¿Cuál es su actividad productiva principal?",
+                  "active": true,
+                  "required": true,
+                  "maxlength": 100,
+                  "items": [
+                    {"id": 1, "name": "Agricultura", "value": "agricultura"},
+                    {"id": 2, "name": "Ganadería Bovina", "value": "ganaderia_bovina"},
+                    {"name": "Apicultura", "value": "apicultura"}
+                  ],
+                  "field_innova_id": 5
+                },
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta actualizada exitosamente",
+                  "status": 200,
+                  "data": {
+                    "id": 50,
+                    "type": "list",
+                    "description": "¿Cuál es su actividad productiva principal?",
+                    "items": [
+                      {"id": 1, "name": "Agricultura", "value": "agricultura"},
+                      {"id": 2, "name": "Ganadería Bovina", "value": "ganaderia_bovina"},
+                      {"id": 6, "name": "Apicultura", "value": "apicultura"}
+                    ],
+                    "updated_at": "2024-01-15T11:00:00Z"
+                  }
+                }
+              },
+              {
+                "name": "delete",
+                "method": "DELETE",
+                "path": "/questions-list/:id",
+                "description": "Eliminar pregunta de lista",
+                "pathParams": {
+                  "id": "number - ID de la pregunta"
+                },
+                "requestExample": null,
+                "responseExample": {
+                  "code": "OK",
+                  "message": "Pregunta eliminada exitosamente",
+                  "status": 200,
+                  "data": null
+                }
+              },
+              {
+                "name": "answer",
+                "method": "POST",
+                "path": "/questions-list/answer",
+                "description": "Responder preguntas de lista (selección)",
+                "contentType": "application/json",
+                "requestExample": [
+                  {
+                    "question_id": 50,
+                    "value": "agricultura"
+                  },
+                  {
+                    "question_id": 51,
+                    "value": "ganaderia"
+                  }
+                ],
+                "responseExample": {
+                  "code": "CREATED",
+                  "message": "Respuestas guardadas exitosamente",
+                  "status": 201,
+                  "data": {
+                    "saved_count": 2,
+                    "answers": [
+                      {"id": 500, "question_id": 50, "value": "agricultura", "item_id": 1},
+                      {"id": 501, "question_id": 51, "value": "ganaderia", "item_id": 2}
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "commonResponses": {
+      "success": {
+        "200": {
+          "description": "Operación exitosa",
+          "example": {
+            "code": "OK",
+            "message": "Operación realizada exitosamente",
+            "status": 200,
+            "data": {}
+          }
+        },
+        "201": {
+          "description": "Recurso creado exitosamente",
+          "example": {
+            "code": "CREATED",
+            "message": "Registro creado satisfactoriamente",
+            "status": 201,
+            "data": {}
+          }
+        }
+      },
+      "errors": {
+        "400": {
+          "description": "Solicitud incorrecta - Datos inválidos",
+          "example": {
+            "code": "BAD_REQUEST",
+            "message": "Los datos proporcionados son inválidos",
+            "status": 400,
+            "errors": [
+              {"field": "email", "message": "El email no es válido"},
+              {"field": "phone", "message": "El teléfono debe tener 10 dígitos"}
+            ]
+          }
+        },
+        "401": {
+          "description": "No autorizado - Token inválido o expirado",
+          "example": {
+            "code": "UNAUTHORIZED",
+            "message": "Token de acceso inválido o expirado",
+            "status": 401
+          }
+        },
+        "403": {
+          "description": "Prohibido - Sin permisos suficientes",
+          "example": {
+            "code": "FORBIDDEN",
+            "message": "No tiene permisos para realizar esta acción",
+            "status": 403
+          }
+        },
+        "404": {
+          "description": "Recurso no encontrado",
+          "example": {
+            "code": "NOT_FOUND",
+            "message": "El recurso solicitado no existe",
+            "status": 404
+          }
+        },
+        "422": {
+          "description": "Error de validación",
+          "example": {
+            "code": "VALIDATION_ERROR",
+            "message": "Error de validación",
+            "status": 422,
+            "errors": [
+              {"field": "identification", "message": "La identificación ya existe en el sistema"}
+            ]
+          }
+        },
+        "500": {
+          "description": "Error interno del servidor",
+          "example": {
+            "code": "INTERNAL_ERROR",
+            "message": "Error interno del servidor",
+            "status": 500
+          }
+        }
+      }
+    },
+    "pagination": {
+      "description": "La mayoría de endpoints de listado soportan paginación",
+      "queryParams": {
+        "page": "Número de página (default: 1)",
+        "limit": "Cantidad de items por página (default: 5-10)"
+      },
+      "responseFormat": {
+        "data": "Array de items",
+        "meta": {
+          "total": "Total de items en la base de datos",
+          "page": "Página actual",
+          "limit": "Items por página"
+        }
+      },
+      "example": {
+        "url": "/users?page=2&limit=10",
+        "response": {
+          "code": "OK",
+          "message": "Usuarios obtenidos exitosamente",
+          "status": 200,
+          "data": ["...array de usuarios..."],
+          "meta": {
+            "total": 150,
+            "page": 2,
+            "limit": 10
+          }
+        }
+      }
+    },
+    "summary": {
+      "totalModules": 11,
+      "totalEndpoints": 72,
+      "modules": [
+        {"name": "Auth", "endpoints": 3},
+        {"name": "Users", "endpoints": 6},
+        {"name": "User Roles", "endpoints": 5},
+        {"name": "Projects", "endpoints": 7},
+        {"name": "Producers", "endpoints": 6},
+        {"name": "Project Participants", "endpoints": 3},
+        {"name": "Producer Assigned to Extensionist", "endpoints": 5},
+        {"name": "Components", "endpoints": 5},
+        {"name": "Assistants", "endpoints": 9},
+        {"name": "Characterization - Questions", "endpoints": 4},
+        {"name": "Characterization - Questions Text", "endpoints": 4},
+        {"name": "Characterization - Questions Numeric", "endpoints": 4},
+        {"name": "Characterization - Questions Date", "endpoints": 4},
+        {"name": "Characterization - Questions Bool", "endpoints": 4},
+        {"name": "Characterization - Questions List", "endpoints": 5}
+      ]
+    },
+    "generatedAt": "2024-01-15T12:00:00Z"
+  }
+}
