@@ -1,4 +1,5 @@
 import { ThemedText } from "@/components/themed-text";
+import { useAlert } from "@/components/ui/custom-alert";
 import {
   ACTIVITY_IDS,
   ACTIVITY_TYPE_LABELS,
@@ -33,7 +34,6 @@ import React, {
 } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   Modal,
   ScrollView,
@@ -372,6 +372,7 @@ export function ProductiveLinesTab({
   projectId,
 }: ProductiveLinesTabProps) {
   const [activityType, setActivityType] = useState<ActivityType>("agricola");
+  const { showAlert } = useAlert();
   const [lineOptions, setLineOptions] = useState<ProductiveLine[]>([]);
   const [allLineOptions, setAllLineOptions] = useState<ProductiveLine[]>([]);
   const [loadingOptions, setLoadingOptions] = useState(false);
@@ -517,10 +518,11 @@ export function ProductiveLinesTab({
       const currentForms =
         activityType === "agricola" ? agriFormLines : livestockFormLines;
       if (currentForms.length > 0) {
-        Alert.alert(
-          "Cambiar tipo",
-          "Cambiar el tipo eliminará las líneas en el formulario. ¿Desea continuar?",
-          [
+        showAlert({
+          title: "Cambiar tipo",
+          message: "Cambiar el tipo eliminará las líneas en el formulario. ¿Desea continuar?",
+          type: "warning",
+          buttons: [
             { text: "Cancelar", style: "cancel" },
             {
               text: "Continuar",
@@ -533,12 +535,12 @@ export function ProductiveLinesTab({
               },
             },
           ],
-        );
+        });
       } else {
         setActivityType(newType);
       }
     },
-    [activityType, agriFormLines, livestockFormLines],
+    [activityType, agriFormLines, livestockFormLines, showAlert],
   );
 
   const handleCreate = useCallback(() => {
@@ -624,7 +626,7 @@ export function ProductiveLinesTab({
             date: formatDateForApi(f.date),
           }));
         if (lines.length === 0) {
-          Alert.alert("Error", "Debe seleccionar al menos una línea productiva.");
+          showAlert({ title: "Error", message: "Debe seleccionar al menos una línea productiva.", type: "error" });
           setSaving(false);
           return;
         }
@@ -652,7 +654,7 @@ export function ProductiveLinesTab({
             };
           });
         if (lines.length === 0) {
-          Alert.alert("Error", "Debe seleccionar al menos una línea productiva.");
+          showAlert({ title: "Error", message: "Debe seleccionar al menos una línea productiva.", type: "error" });
           setSaving(false);
           return;
         }
@@ -665,9 +667,8 @@ export function ProductiveLinesTab({
       setShowSheet(false);
       setAgriFormLines([]);
       setLivestockFormLines([]);
-      Alert.alert(
-        "Guardado",
-        "Las líneas productivas se guardaron correctamente.",
+      showAlert(
+        { title: "Guardado", message: "Las líneas productivas se guardaron correctamente.", type: "success" },
       );
 
       // Refresh existing lines
@@ -686,11 +687,11 @@ export function ProductiveLinesTab({
       }
     } catch (e: any) {
       console.error("Failed to save productive lines:", e);
-      Alert.alert("Error", e?.message ?? "No se pudieron guardar las líneas productivas.");
+      showAlert({ title: "Error", message: e?.message ?? "No se pudieron guardar las líneas productivas.", type: "error" });
     } finally {
       setSaving(false);
     }
-  }, [producerId, projectId, activityType, agriFormLines, livestockFormLines]);
+  }, [producerId, projectId, activityType, agriFormLines, livestockFormLines, showAlert]);
 
   const formLines =
     activityType === "agricola" ? agriFormLines : livestockFormLines;

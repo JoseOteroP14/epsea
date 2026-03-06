@@ -1,26 +1,26 @@
 import StandardView from "@/components/standard-view";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
+import { useAlert } from "@/components/ui/custom-alert";
 import { useNetwork } from "@/hooks/use-network";
 import { useSyncStore } from "@/store/useSyncStore";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
-  AlertCircle,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  CheckCircle2,
-  Clock,
-  Cloud,
-  CloudOff,
-  RefreshCw,
+    AlertCircle,
+    ArrowDownToLine,
+    ArrowUpFromLine,
+    CheckCircle2,
+    Clock,
+    Cloud,
+    CloudOff,
+    RefreshCw,
 } from "lucide-react-native";
 import React, { useCallback, useEffect } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  StyleSheet,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    StyleSheet,
+    TouchableOpacity,
+    View,
 } from "react-native";
 
 function formatDate(iso: string | null): string {
@@ -50,6 +50,7 @@ export default function SyncScreen() {
   } = useSyncStore();
 
   const { isConnected } = useNetwork();
+  const { showAlert } = useAlert();
   const isBusy = isDownloading || isUploading;
 
   useEffect(() => {
@@ -58,42 +59,47 @@ export default function SyncScreen() {
 
   const handleDownload = useCallback(async () => {
     if (!isConnected) {
-      Alert.alert(
-        "Sin conexion",
-        "Necesitas conexion a internet para descargar datos.",
-      );
+      showAlert({
+        title: "Sin conexión",
+        message: "Necesitas conexión a internet para descargar datos.",
+        type: "warning",
+      });
       return;
     }
     try {
       await startDownload();
-      Alert.alert("Descarga completa", "Todos los datos han sido descargados.");
+      showAlert({ title: "Descarga completa", message: "Todos los datos han sido descargados.", type: "success" });
     } catch (e) {
-      Alert.alert(
-        "Error",
-        e instanceof Error ? e.message : "Error durante la descarga",
-      );
+      showAlert({
+        title: "Error",
+        message: e instanceof Error ? e.message : "Error durante la descarga",
+        type: "error",
+      });
     }
   }, [isConnected, startDownload]);
 
   const handleUpload = useCallback(async () => {
     if (!isConnected) {
-      Alert.alert(
-        "Sin conexion",
-        "Necesitas conexion a internet para subir datos.",
-      );
+      showAlert({
+        title: "Sin conexión",
+        message: "Necesitas conexión a internet para subir datos.",
+        type: "warning",
+      });
       return;
     }
     try {
       const result = await startUpload();
-      Alert.alert(
-        "Subida completa",
-        `${result.uploaded} enviados, ${result.failed} fallidos.`,
-      );
+      showAlert({
+        title: "Subida completa",
+        message: `${result.uploaded} enviados, ${result.failed} fallidos.`,
+        type: "success",
+      });
     } catch (e) {
-      Alert.alert(
-        "Error",
-        e instanceof Error ? e.message : "Error durante la subida",
-      );
+      showAlert({
+        title: "Error",
+        message: e instanceof Error ? e.message : "Error durante la subida",
+        type: "error",
+      });
     }
   }, [isConnected, startUpload]);
 

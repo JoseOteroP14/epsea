@@ -1,0 +1,197 @@
+{
+  "title": "API Visita 1 - Documentación para equipo Mobile (Expo SDK 54)",
+  "version": "1.0",
+  "base_url": "{{VITE_API_URL}}",
+  "authentication": {
+    "type": "Bearer Token",
+    "header": "Authorization",
+    "value": "Bearer {{access_token}}"
+  },
+
+  "endpoints": {
+    "get_visit1": {
+      "description": "Obtener la visita 1 de un productor en un proyecto. Retorna null/404 si no existe.",
+      "method": "GET",
+      "url": "/visit-1/project/{projectId}/producer/{producerId}",
+      "path_params": {
+        "projectId": { "type": "number", "description": "ID del proyecto" },
+        "producerId": { "type": "number", "description": "ID del productor" }
+      },
+      "response": {
+        "code": "string",
+        "message": "string",
+        "status": "number",
+        "data": {
+          "id": "number",
+          "project_id": "number",
+          "producer_id": "number",
+          "objetive": "string",
+          "diagnosis": "string",
+          "recommendations": "string",
+          "observations": "string",
+          "compliance_recommendation_id": "number",
+          "compliance_recommendation_name": "string | undefined",
+          "registration_date": "string (YYYY-MM-DD)",
+          "attendance_id": "number",
+          "attendance_name": "string | null",
+          "option_attendance_name": "string | undefined",
+          "origin": "string ('web' | 'app')",
+          "created_by": "number | undefined",
+          "updated_by": "number | undefined",
+          "created_at": "string | undefined",
+          "updated_at": "string | undefined",
+          "images": [
+            { "id": "number", "filename": "string" }
+          ]
+        }
+      }
+    },
+
+    "create_visit1_json": {
+      "description": "Crear visita 1 SIN imágenes. Envía JSON puro.",
+      "method": "POST",
+      "url": "/visit-1",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer {{access_token}}"
+      },
+      "body": {
+        "project_id": { "type": "number", "required": true, "example": 5 },
+        "producer_id": { "type": "number", "required": true, "example": 123 },
+        "objetive": { "type": "string", "required": true, "example": "Realizar caracterización y diagnóstico inicial del sistema productivo" },
+        "diagnosis": { "type": "string", "required": true, "example": "El predio cuenta con 2 hectáreas de cultivo de café variedad Castillo..." },
+        "recommendations": { "type": "string", "required": true, "example": "Se recomienda implementar plan de fertilización orgánica..." },
+        "observations": { "type": "string", "required": false, "example": "El productor muestra interés en técnicas de agricultura sostenible" },
+        "compliance_recommendation_id": { "type": "number", "required": true, "example": 3, "note": "En la primera visita siempre se envía 3 ('No aplica')" },
+        "registration_date": { "type": "string", "required": true, "format": "YYYY-MM-DD", "example": "2026-03-06" },
+        "attendance_id": { "type": "number", "required": true, "example": 1 },
+        "attendance_name": { "type": "string | null", "required": true, "example": null, "note": "null cuando attendance_id=1, obligatorio para otros valores" },
+        "origin": { "type": "string", "required": true, "value_for_mobile": "app", "enum": ["web", "app"] }
+      },
+      "example_request_body": {
+        "project_id": 5,
+        "producer_id": 123,
+        "objetive": "Realizar caracterización y diagnóstico inicial del sistema productivo",
+        "diagnosis": "El predio cuenta con 2 hectáreas de cultivo de café variedad Castillo",
+        "recommendations": "Se recomienda implementar plan de fertilización orgánica",
+        "observations": "El productor muestra interés en técnicas sostenibles",
+        "compliance_recommendation_id": 3,
+        "registration_date": "2026-03-06",
+        "attendance_id": 1,
+        "attendance_name": null,
+        "origin": "app"
+      }
+    },
+
+    "create_visit1_with_images": {
+      "description": "Crear visita 1 CON imágenes en un solo request. Usa multipart/form-data. Máximo 3 imágenes.",
+      "method": "POST",
+      "url": "/visit-1",
+      "headers": {
+        "Content-Type": "multipart/form-data",
+        "Authorization": "Bearer {{access_token}}"
+      },
+      "timeout": "60000ms (60 segundos)",
+      "body_formdata_fields": {
+        "project_id": { "type": "string (number as text)", "required": true, "example": "5" },
+        "producer_id": { "type": "string (number as text)", "required": true, "example": "123" },
+        "objetive": { "type": "string", "required": true },
+        "diagnosis": { "type": "string", "required": true },
+        "recommendations": { "type": "string", "required": true },
+        "observations": { "type": "string", "required": false, "default": "" },
+        "compliance_recommendation_id": { "type": "string (number as text)", "required": true, "example": "3" },
+        "registration_date": { "type": "string", "required": true, "format": "YYYY-MM-DD", "example": "2026-03-06" },
+        "attendance_id": { "type": "string (number as text)", "required": true, "example": "1" },
+        "attendance_name": { "type": "string", "required": true, "note": "Enviar string vacío '' si attendance_id=1" },
+        "origin": { "type": "string", "required": true, "value_for_mobile": "app" },
+        "images": { "type": "File[]", "required": false, "note": "Repetir el campo 'images' por cada archivo. Máximo 3.", "example": "[foto1.jpg, foto2.jpg]" }
+      },
+      "expo_example_code": "Usar FormData nativo de React Native. Cada imagen se agrega con: formData.append('images', { uri, name, type: 'image/jpeg' })"
+    },
+
+    "update_visit1": {
+      "description": "Actualizar visita 1 existente. Solo envía JSON (los campos de texto). Las imágenes se suben por separado.",
+      "method": "PUT",
+      "url": "/visit-1/{visitId}",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer {{access_token}}"
+      },
+      "path_params": {
+        "visitId": { "type": "number", "description": "ID de la visita a actualizar" }
+      },
+      "body": "Mismo schema que create_visit1_json.body"
+    },
+
+    "upload_images_to_existing_visit": {
+      "description": "Subir imágenes a una visita ya creada (se usa al editar para agregar fotos nuevas).",
+      "method": "POST",
+      "url": "/visit-1/{visitId}/images",
+      "headers": {
+        "Content-Type": "multipart/form-data",
+        "Authorization": "Bearer {{access_token}}"
+      },
+      "timeout": "60000ms",
+      "path_params": {
+        "visitId": { "type": "number", "description": "ID de la visita" }
+      },
+      "body_formdata_fields": {
+        "images": { "type": "File[]", "required": true, "note": "Repetir campo 'images' por cada archivo" }
+      }
+    },
+
+    "delete_visit_image": {
+      "description": "Eliminar una imagen específica de la visita.",
+      "method": "DELETE",
+      "url": "/visit-1/images/{imageId}",
+      "path_params": {
+        "imageId": { "type": "number", "description": "ID de la imagen a eliminar" }
+      }
+    },
+
+    "get_visit_image": {
+      "description": "Obtener/visualizar una imagen por su ID. Requiere token de autorización.",
+      "method": "GET",
+      "url": "/visit-1/images/{imageId}",
+      "path_params": {
+        "imageId": { "type": "number", "description": "ID de la imagen" }
+      },
+      "note": "Retorna el binario de la imagen. En mobile, usar fetch con header Authorization y convertir a blob/base64."
+    }
+  },
+
+  "business_rules": {
+    "attendance_id_values": {
+      "1": "Usuario Productor (attendance_name debe ser null)",
+      "2": "Trabajador UP (attendance_name obligatorio)",
+      "3": "Persona del núcleo familiar (attendance_name obligatorio)",
+      "4": "Otro (attendance_name obligatorio)"
+    },
+    "compliance_recommendation_id": "Siempre enviar 3 ('No aplica') en la primera visita",
+    "origin": "Desde mobile siempre enviar 'app'",
+    "max_images": 3,
+    "validations_required": [
+      "objetive no puede estar vacío",
+      "diagnosis no puede estar vacío",
+      "recommendations no puede estar vacío",
+      "attendance_id es obligatorio",
+      "attendance_name es obligatorio cuando attendance_id != 1",
+      "registration_date es obligatorio (formato YYYY-MM-DD)"
+    ],
+    "observations": "Campo opcional, puede estar vacío"
+  },
+
+  "flow_create": {
+    "step_1": "Validar campos requeridos en el form",
+    "step_2a": "SI hay fotos → POST /visit-1 con multipart/form-data (campos + images)",
+    "step_2b": "SI NO hay fotos → POST /visit-1 con JSON",
+    "step_3": "Leer el 'id' de la respuesta para futuras operaciones"
+  },
+
+  "flow_update": {
+    "step_1": "Validar campos requeridos",
+    "step_2": "PUT /visit-1/{visitId} con JSON (solo campos de texto)",
+    "step_3": "Si hay fotos NUEVAS → POST /visit-1/{visitId}/images con multipart",
+    "step_4": "Si el usuario eliminó una foto existente → DELETE /visit-1/images/{imageId}"
+  }
+}

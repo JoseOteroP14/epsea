@@ -1,31 +1,38 @@
-import { apiFetch } from "@/utils/api";
+import type { Question } from "@/schemas/characterization";
+import type { Project } from "@/schemas/project";
 import { useAuthStore } from "@/store/useAuthStore";
+import { apiFetch } from "@/utils/api";
 import {
-  upsertProjects,
-  deleteProjectsNotIn,
-} from "@/utils/database/repositories/project-repository";
-import {
-  upsertProducers,
-  upsertProducerDetail,
-  deleteProducersNotIn,
-} from "@/utils/database/repositories/producer-repository";
-import {
-  upsertComponents,
-  upsertQuestionTypes,
-  upsertQuestions,
-  upsertQuestionDetail,
-  upsertInnovaFields,
+    upsertComponents,
+    upsertInnovaFields,
+    upsertQuestionDetail,
+    upsertQuestionTypes,
+    upsertQuestions,
 } from "@/utils/database/repositories/characterization-repository";
 import {
-  getPending,
-  markCompleted,
-  markFailed,
-  setMetadata,
+    deleteProducersNotIn,
+    upsertProducers
+} from "@/utils/database/repositories/producer-repository";
+import {
+    deleteProjectsNotIn,
+    upsertProjects,
+} from "@/utils/database/repositories/project-repository";
+import {
+    getPending,
+    markCompleted,
+    markFailed,
+    setMetadata,
 } from "@/utils/database/repositories/sync-repository";
-import type { Project } from "@/schemas/project";
-import type { Question } from "@/schemas/characterization";
 
-// Map type names to endpoints
+// Map type names to GET-capable detail endpoints.
+// Only "list" type questions support GET /questions-list/:id (returns options).
+// text, date, bool, numeric endpoints do NOT support GET — they only have POST/PUT/DELETE.
+const QUESTION_DETAIL_ENDPOINTS: Record<string, string> = {
+  list: "/questions-list",
+  lista: "/questions-list",
+};
+
+// Full map of type names to their base endpoints (used for answer submission)
 const QUESTION_TYPE_ENDPOINTS: Record<string, string> = {
   text: "/questions-text",
   texto: "/questions-text",
@@ -206,19 +213,22 @@ export async function downloadAllData(
     }
   }
 
-  // 7. Question details
-  for (let i = 0; i < allQuestions.length; i++) {
-    const q = allQuestions[i];
+  // 7. Question details — only for types that support GET (list)
+  const listQuestions = allQuestions.filter((q) => {
+    const typeName = typeNameById[q.question_type_id];
+    return typeName ? !!QUESTION_DETAIL_ENDPOINTS[typeName] : false;
+  });
+
+  for (let i = 0; i < listQuestions.length; i++) {
+    const q = listQuestions[i];
     report(
       `Detalles de preguntas`,
       i,
-      allQuestions.length,
+      listQuestions.length,
     );
 
-    const typeName = typeNameById[q.question_type_id];
-    if (!typeName) continue;
-    const endpoint = QUESTION_TYPE_ENDPOINTS[typeName];
-    if (!endpoint) continue;
+    const typeName = typeNameById[q.question_type_id]!;
+    const endpoint = QUESTION_DETAIL_ENDPOINTS[typeName]!;
 
     try {
       const response = await apiFetch<any>(`${endpoint}/${q.id}`, {
@@ -227,6 +237,8 @@ export async function downloadAllData(
       const detail = response?.data ?? response;
       await upsertQuestionDetail(q.id, typeName, detail);
     } catch (e) {
+      // 404 means the question was deleted on the server — skip silently
+      if (e instanceof Error && e.message.includes("404")) continue;
       console.error(`Failed to download question detail ${q.id}:`, e);
     }
   }

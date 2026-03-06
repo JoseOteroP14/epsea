@@ -1,36 +1,36 @@
 import { ThemedText } from "@/components/themed-text";
+import { useAlert } from "@/components/ui/custom-alert";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useSyncStore } from "@/store/useSyncStore";
 import { apiFetch } from "@/utils/api";
 import {
-  heightPercent,
-  responsiveFont,
-  verticalScale,
-  widthScale,
+    heightPercent,
+    responsiveFont,
+    verticalScale,
+    widthScale,
 } from "@/utils/responsive";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  TouchableWithoutFeedback,
-  View,
+    ActivityIndicator,
+    Image,
+    Keyboard,
+    KeyboardAvoidingView,
+    ScrollView,
+    StyleSheet,
+    TextInput,
+    TouchableOpacity,
+    TouchableWithoutFeedback,
+    View
 } from "react-native";
 import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSpring,
-  withTiming,
+    Easing,
+    useAnimatedStyle,
+    useSharedValue,
+    withRepeat,
+    withSpring,
+    withTiming,
 } from "react-native-reanimated";
 
 export default function LoginScreen() {
@@ -39,6 +39,7 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const { login } = useAuthStore();
+  const { showAlert } = useAlert();
   const passwordRef = useRef<TextInput>(null);
 
   // Animaciones
@@ -72,7 +73,7 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!username || !password) {
-      Alert.alert("Error", "Por favor ingresa usuario y contraseña");
+      showAlert({ title: "Error", message: "Por favor ingresa usuario y contraseña", type: "error" });
       return;
     }
 
@@ -113,13 +114,14 @@ export default function LoginScreen() {
         // Background sync: login confirms connectivity, kick off download immediately
         useSyncStore.getState().startDownload().catch(console.error);
       } else {
-        Alert.alert("Error", response.message || "Credenciales inválidas");
+        showAlert({ title: "Error", message: response.message || "Credenciales inválidas", type: "error" });
       }
     } catch (error: any) {
-      Alert.alert(
-        "Error",
-        error.message || "No se pudo conectar con el servidor",
-      );
+      showAlert({
+        title: "Error",
+        message: error.message || "No se pudo conectar con el servidor",
+        type: "error",
+      });
     } finally {
       setLoading(false);
       scale.value = withSpring(1);
@@ -178,13 +180,22 @@ export default function LoginScreen() {
 
             {/* Logo/Title Section */}
             <View style={styles.logoSection}>
-              <View style={styles.logoContainer}>
-                <LinearGradient
-                  colors={["#1a7a3a", "#156b33"]}
-                  style={styles.logoGradient}
-                >
-                  <ThemedText style={styles.logoText}>🌱</ThemedText>
-                </LinearGradient>
+              <View style={styles.logosRow}>
+                <Image
+                  source={require("@/assets/images/logo-unicordoba.jpeg")}
+                  style={styles.logoImage}
+                  resizeMode="contain"
+                />
+                <Image
+                  source={require("@/assets/images/Logo_Ministerio_de_Agricultura_2022_2026_.png")}
+                  style={styles.logoImageCenter}
+                  resizeMode="contain"
+                />
+                <Image
+                  source={require("@/assets/images/logo_mini.png")}
+                  style={styles.logoImage}
+                  resizeMode="contain"
+                />
               </View>
               <ThemedText style={styles.appTitle}>EPSEA</ThemedText>
               <ThemedText style={styles.appSubtitle}>
@@ -303,23 +314,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: verticalScale(40),
   },
-  logoContainer: {
+  logosRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: widthScale(16),
     marginBottom: verticalScale(16),
   },
-  logoGradient: {
-    width: widthScale(80),
-    height: widthScale(80),
-    borderRadius: widthScale(40),
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#1a7a3a",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+  logoImage: {
+    width: widthScale(70),
+    height: widthScale(70),
   },
-  logoText: {
-    fontSize: responsiveFont(40),
+  logoImageCenter: {
+    width: widthScale(90),
+    height: widthScale(90),
   },
   appTitle: {
     fontSize: responsiveFont(32),

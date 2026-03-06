@@ -1,7 +1,10 @@
-import { getStoredToken } from "@/utils/secure-storage";
 import { useAuthStore } from "@/store/useAuthStore";
+import { getStoredToken } from "@/utils/secure-storage";
 
 const BASE_URL = "https://playmusic.com.co/agro/api/v1";
+
+// Prevent cascading 401 logouts when multiple requests fail simultaneously
+let isLoggingOut = false;
 
 interface RequestOptions extends RequestInit {
     params?: Record<string, string | number>;
@@ -40,9 +43,12 @@ export async function apiFetch<T>(endpoint: string, options: RequestOptions = {}
         const errorMessage = errorData.message || `Error ${response.status}: ${response.statusText}`;
         console.error(`API Error [${options.method || 'GET'} ${endpoint}]:`, errorMessage, errorData);
 
-        // Handle expired/invalid token — log out and redirect to login
-        if (response.status === 401) {
-            useAuthStore.getState().logout();
+        // Handle expired/invalid token — log out once (prevent cascading logouts)
+        if (response.status === 401 && !isLoggingOut) {
+            isLoggingOut = true;
+            useAuthStore.getState().logout().finally(() => {
+                isLoggingOut = false;
+            });
         }
 
         throw new Error(errorMessage);

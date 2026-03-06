@@ -1,4 +1,5 @@
 import { ThemedText } from "@/components/themed-text";
+import { useAlert } from "@/components/ui/custom-alert";
 import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
 import type { Question } from "@/schemas/characterization";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -18,10 +19,9 @@ import {
     Layers,
     Pencil,
 } from "lucide-react-native";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
-    Alert,
     ScrollView,
     StyleSheet,
     TouchableOpacity,
@@ -126,6 +126,65 @@ function resolveDisplayValue(
   return String(rawValue);
 }
 
+function resolveNumericValue(
+  rawValue: any,
+  questionId: number,
+  questionDetails: Record<number, any>,
+  getCanonicalTypeName: (typeId: number) => string,
+  questionTypeId: number,
+): number | null {
+  if (rawValue == null || rawValue === "") return null;
+
+  if (Array.isArray(rawValue)) {
+    const values = rawValue
+      .map((v) =>
+        resolveNumericValue(v, questionId, questionDetails, getCanonicalTypeName, questionTypeId),
+      )
+      .filter((v): v is number => v !== null);
+    if (values.length === 0) return null;
+    return values.reduce((sum, v) => sum + v, 0) / values.length;
+  }
+
+  const typeName = getCanonicalTypeName(questionTypeId);
+
+  if (typeName === "list") {
+    const detail = questionDetails[questionId] as any;
+    const options: any[] =
+      detail?.options ??
+      detail?.items ??
+      detail?.data?.options ??
+      detail?.data?.items ??
+      detail?.data ??
+      [];
+    if (Array.isArray(options)) {
+      const numVal = Number(rawValue);
+      const match = options.find(
+        (o: any) =>
+          o.id === numVal ||
+          o.id === rawValue ||
+          o.name === rawValue ||
+          o.value === rawValue,
+      );
+      if (match?.value != null) {
+        const val = Number(match.value);
+        if (!Number.isNaN(val)) return val;
+      }
+    }
+  }
+
+  const direct = Number(rawValue);
+  if (!Number.isNaN(direct)) return direct;
+
+  return null;
+}
+
+function computeGeometricMean(values: number[]): number | null {
+  const positive = values.filter((v) => v > 0);
+  if (positive.length === 0) return null;
+  const logSum = positive.reduce((sum, v) => sum + Math.log(v), 0);
+  return Math.exp(logSum / positive.length);
+}
+
 export function ClassificationTab({
   producerId,
   projectId,
@@ -147,6 +206,7 @@ export function ClassificationTab({
   } = useCharacterizationStore();
 
   const currentUserId = useAuthStore((state) => state.user?.user_id);
+  const { showAlert } = useAlert();
 
   const [showSheet, setShowSheet] = useState(false);
   const [answers, setAnswers] = useState<Record<number, any>>({});
@@ -275,6 +335,19 @@ export function ClassificationTab({
     }
   }, [localQuestions, getCanonicalTypeName, fetchQuestionDetail]);
 
+  // Compute geometric mean from answer values
+  const geometricMean = useMemo(() => {
+    if (localQuestions.length === 0 || Object.keys(answers).length === 0) return null;
+    const numericValues: number[] = [];
+    for (const q of localQuestions) {
+      const raw = answers[q.id];
+      if (raw == null || raw === "" || (Array.isArray(raw) && raw.length === 0)) continue;
+      const val = resolveNumericValue(raw, q.id, questionDetails, getCanonicalTypeName, q.question_type_id);
+      if (val !== null) numericValues.push(val);
+    }
+    return computeGeometricMean(numericValues);
+  }, [localQuestions, answers, questionDetails, getCanonicalTypeName]);
+
   // Build display answers
   useEffect(() => {
     if (localQuestions.length === 0 || Object.keys(answers).length === 0) {
@@ -385,10 +458,10 @@ export function ClassificationTab({
 
       setShowSheet(false);
       setHasSurvey(true);
-      Alert.alert("Guardado", "Las respuestas se guardaron localmente.");
+      showAlert({ title: "Guardado", message: "Las respuestas se guardaron localmente.", type: "success" });
     } catch (error) {
       console.error("Failed to save answers:", error);
-      Alert.alert("Error", "No se pudieron guardar las respuestas.");
+      showAlert({ title: "Error", message: "No se pudieron guardar las respuestas.", type: "error" });
     }
   }, [answers, classificationComponent, producerId, projectId, currentUserId]);
 
@@ -414,10 +487,10 @@ export function ClassificationTab({
       setAnswers((prev) => ({ ...prev, [editingQuestion.id]: newValue }));
       setShowSheet(false);
       setEditingQuestion(null);
-      Alert.alert("Actualizado", "La respuesta se actualizó correctamente.");
+      showAlert({ title: "Actualizado", message: "La respuesta se actualizó correctamente.", type: "success" });
     } catch (error) {
       console.error("Failed to update answer:", error);
-      Alert.alert("Error", "No se pudo actualizar la respuesta.");
+      showAlert({ title: "Error", message: "No se pudo actualizar la respuesta.", type: "error" });
     }
   }, [editingQuestion, editAnswers, answerIds, updateSurveyAnswer]);
 
@@ -478,9 +551,18 @@ export function ClassificationTab({
 
         {/* Answers section */}
         <View style={styles.answersSection}>
-          <ThemedText type="defaultSemiBold" style={styles.answersSectionTitle}>
-            Respuestas
-          </ThemedText>
+          <View style={styles.answersTitleRow}>
+            <ThemedText type="defaultSemiBold" style={styles.answersSectionTitle}>
+              Respuestas
+            </ThemedText>
+            {geometricMean !== null && (
+              <View style={styles.geometricMeanBadge}>
+                <ThemedText style={styles.geometricMeanText}>
+                  Media Geométrica: {geometricMean.toFixed(2)}
+                </ThemedText>
+              </View>
+            )}
+          </View>
 
           {savedAnswers.length > 0 ? (
             savedAnswers.map((item, index) => (
@@ -594,12 +676,28 @@ const styles = StyleSheet.create({
   answersSection: {
     marginTop: verticalScale(20),
   },
+  answersTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: verticalScale(12),
+  },
   answersSectionTitle: {
     fontSize: responsiveFont(17),
-    marginBottom: verticalScale(12),
     color: "#1a7a3a",
     textTransform: "uppercase",
     letterSpacing: 0.5,
+  },
+  geometricMeanBadge: {
+    backgroundColor: "rgba(26, 122, 58, 0.12)",
+    borderRadius: widthScale(8),
+    paddingVertical: verticalScale(4),
+    paddingHorizontal: widthScale(10),
+  },
+  geometricMeanText: {
+    fontSize: responsiveFont(13),
+    fontWeight: "600",
+    color: "#1a7a3a",
   },
   answerCard: {
     backgroundColor: "#ffffff",

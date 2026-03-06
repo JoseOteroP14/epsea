@@ -1,3 +1,4 @@
+import { useAlert } from "@/components/ui/custom-alert";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuthStore } from "@/store/useAuthStore";
 import { responsiveFont, widthScale } from "@/utils/responsive";
@@ -7,16 +8,15 @@ import { Tabs, useRouter } from "expo-router";
 import { Briefcase, Home, LogOut, RefreshCw } from "lucide-react-native";
 import { useEffect } from "react";
 import {
-  Alert,
-  Dimensions,
-  StyleSheet,
-  TouchableOpacity,
-  View,
+    Dimensions,
+    StyleSheet,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
 } from "react-native-reanimated";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -48,19 +48,25 @@ function TabBarIcon({
 function LogoutButton() {
   const { logout } = useAuthStore();
   const router = useRouter();
+  const { showAlert } = useAlert();
 
   const handleLogout = () => {
-    Alert.alert("Cerrar Sesión", "¿Estás seguro de que deseas cerrar sesión?", [
-      { text: "Cancelar", style: "cancel" },
-      {
-        text: "Cerrar Sesión",
-        style: "destructive",
-        onPress: async () => {
-          await logout();
-          router.replace("/login");
+    showAlert({
+      title: "Cerrar Sesión",
+      message: "¿Estás seguro de que deseas cerrar sesión?",
+      type: "warning",
+      buttons: [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Cerrar Sesión",
+          style: "destructive",
+          onPress: async () => {
+            await logout();
+            router.replace("/login");
+          },
         },
-      },
-    ]);
+      ],
+    });
   };
 
   return (

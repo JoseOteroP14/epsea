@@ -1,0 +1,384 @@
+{
+  "title": "Generación PDF Visita 1 con pdfmake — Documentación para Expo SDK 54",
+  "description": "Estructura exacta del documento PDF generado para la Visita 1. En Expo se puede usar 'expo-print' + HTML o 'react-native-pdfmake' para replicar este formato.",
+
+  "page_config": {
+    "pageSize": "LETTER",
+    "pageMargins": [30, 30, 30, 30]
+  },
+
+  "color_palette": {
+    "HEADER_GREEN": "#4A7A3D",
+    "HEADER_TEXT": "#FFFFFF",
+    "SECTION_GREEN": "#C6EFCE",
+    "LIGHT_GREEN": "#E2EFDA",
+    "BORDER_COLOR": "#4A7A3D"
+  },
+
+  "styles": {
+    "mainTitle": { "fontSize": 11, "bold": true, "alignment": "center" },
+    "visitNo": { "fontSize": 10, "bold": true, "alignment": "center" },
+    "sectionHeader": { "fontSize": 8, "bold": true, "fillColor": "#4A7A3D", "color": "#FFFFFF", "alignment": "center" },
+    "subSectionHeader": { "fontSize": 8, "bold": true, "fillColor": "#C6EFCE", "alignment": "center" },
+    "label": { "fontSize": 7, "bold": true, "fillColor": "#E2EFDA" },
+    "value": { "fontSize": 7 },
+    "smallNote": { "fontSize": 6, "italics": true, "color": "#555555" }
+  },
+
+  "border_layout": {
+    "hLineWidth": 0.5,
+    "vLineWidth": 0.5,
+    "hLineColor": "#4A7A3D",
+    "vLineColor": "#4A7A3D"
+  },
+
+  "data_interface": {
+    "Visit1PdfData": {
+      "section_1_productor": {
+        "nombreCompletoProductor": "string — first_name + middle_name + first_surname + last_surname (unidos con espacio, sin nulos)",
+        "tipoDocumento": "string — vacío por ahora",
+        "numeroIdentificacion": "string — producer.identification",
+        "numeroTelefonico": "string — producer.phone"
+      },
+      "section_2_predio": {
+        "nombreDelPredio": "string",
+        "asnm": "string — vacío por ahora",
+        "departamento": "string",
+        "municipio": "string",
+        "corregimientoVereda": "string"
+      },
+      "section_3_sistema_productivo": {
+        "lineaProductivaPrincipal": "string — vacío por ahora",
+        "lineaProductivaSecundaria": "string — vacío por ahora",
+        "areaTotalEnProduccion": "string — vacío por ahora"
+      },
+      "section_4_clasificacion": {
+        "nivelClasificacion": "string — último diagnóstico aplicado"
+      },
+      "section_5_enfoque_tecnico": {
+        "objetivoAcompanamiento": "string — visit1.objetive",
+        "diagnosticoVisita": "string — visit1.diagnosis",
+        "recomendacionesCompromisos": "string — visit1.recommendations",
+        "observacionesVisita": "string — visit1.observations"
+      },
+      "section_5_4_fotos": {
+        "photoBlobUrls": "string[] — array de URLs/URIs de hasta 3 fotos (blob URLs en web, file URIs en mobile)"
+      },
+      "section_6_acompanamiento": {
+        "fechaRegistroAcompanamiento": "string — fecha formateada legible",
+        "horaRegistroAcompanamiento": "string — hora formateada legible",
+        "nombrePersonaAtiende": "string — nombre de quien atiende (vacío si attendanceId=1)",
+        "attendanceId": "number — 1=Productor, 2=Trabajador UP, 3=Persona núcleo familiar, 4=Otro"
+      },
+      "section_7_extensionista": {
+        "nombreExtensionista": "string",
+        "identificacionExtensionista": "string",
+        "perfilProfesional": "string — vacío por ahora"
+      },
+      "meta": {
+        "visitNumber": "number — siempre 1"
+      }
+    }
+  },
+
+  "pdf_structure_sections_in_order": [
+    {
+      "order": 0,
+      "id": "header",
+      "description": "Encabezado con logos y título",
+      "layout": {
+        "type": "table",
+        "widths": [65, "*", 65],
+        "rows": [
+          {
+            "row": 1,
+            "cells": [
+              { "content": "Logo izquierdo (imagen)", "width": 60, "height": 40, "rowSpan": 2 },
+              { "content": "FORMATO ACOMPAÑAMIENTO DEL EXTENSIONISTA", "style": "mainTitle" },
+              { "content": "Logo derecho (imagen)", "width": 55, "height": 40, "rowSpan": 2 }
+            ]
+          },
+          {
+            "row": 2,
+            "cells": [
+              { "content": "(merged)" },
+              { "content": "Visita No 1", "style": "visitNo" },
+              { "content": "(merged)" }
+            ]
+          }
+        ]
+      }
+    },
+
+    {
+      "order": 1,
+      "id": "section_1",
+      "title": "1. Identificacion Del Usuario Productor",
+      "title_style": "sectionHeader",
+      "tables": [
+        {
+          "widths": ["25%", "*"],
+          "rows": [
+            ["Nombre Completo\nUsuario Productor (label)", "{{nombreCompletoProductor}} (value)"]
+          ]
+        },
+        {
+          "widths": ["18%", "14%", "18%", "14%", "18%", "*"],
+          "rows": [
+            [
+              "Tipo De Documento (label)", "{{tipoDocumento}} (value)",
+              "Numero De\nIdentificacion (label)", "{{numeroIdentificacion}} (value)",
+              "Numero\nTelefonico (label)", "{{numeroTelefonico}} (value)"
+            ]
+          ]
+        }
+      ]
+    },
+
+    {
+      "order": 2,
+      "id": "section_2",
+      "title": "2. Identificación Del Predio",
+      "title_style": "sectionHeader",
+      "tables": [
+        {
+          "widths": ["18%", "*", "12%"],
+          "rows": [
+            ["Nombre Del Predio (label)", "{{nombreDelPredio}} (value)", "ASNM (label)"]
+          ]
+        },
+        {
+          "widths": ["14%", "*", "14%", "*", "20%", "*"],
+          "rows": [
+            [
+              "Departamento (label)", "{{departamento}} (value)",
+              "Municipio (label)", "{{municipio}} (value)",
+              "Corregimiento/Vereda (label)", "{{corregimientoVereda}} (value)"
+            ]
+          ]
+        }
+      ]
+    },
+
+    {
+      "order": 3,
+      "id": "section_3",
+      "title": "3. Identificación Del Sistema Productivo",
+      "title_style": "sectionHeader",
+      "tables": [
+        {
+          "widths": ["25%", "*", "25%", "*"],
+          "rows": [
+            [
+              "Linea Productiva Principal (label)", "{{lineaProductivaPrincipal}} (value)",
+              "Linea Productiva Secundaria (label)", "{{lineaProductivaSecundaria}} (value)"
+            ]
+          ]
+        },
+        {
+          "widths": ["25%", "*"],
+          "rows": [
+            ["Área total En Producción (label, fillColor: SECTION_GREEN)", "{{areaTotalEnProduccion}} (value)"]
+          ]
+        }
+      ]
+    },
+
+    {
+      "order": 4,
+      "id": "section_4",
+      "title": "4. Clasificación Del Usuario (Según Ley 1876 Del 2017)",
+      "title_style": "sectionHeader",
+      "tables": [
+        {
+          "widths": ["50%", "*"],
+          "rows": [
+            ["Nivel de clasificación (último diagnóstico aplicado) (label)", "{{nivelClasificacion}} (value)"]
+          ]
+        }
+      ]
+    },
+
+    {
+      "order": 5,
+      "id": "section_5",
+      "title": "5. Enfoque Técnico Productivo",
+      "title_style": "sectionHeader",
+      "sub_sections": [
+        {
+          "id": "5.0",
+          "label_table": {
+            "widths": ["25%", "*"],
+            "rows": [["Objetivo del\nAcompañamiento (label)", "(empty value)"]]
+          },
+          "text_area": {
+            "content": "{{objetivoAcompanamiento}}",
+            "min_height": 50,
+            "full_width": true
+          }
+        },
+        {
+          "id": "5.1",
+          "sub_header": "5.1 Diagnostico visita",
+          "sub_header_style": "subSectionHeader",
+          "text_area": {
+            "content": "{{diagnosticoVisita}}",
+            "min_height": 80,
+            "full_width": true
+          }
+        },
+        {
+          "id": "5.2",
+          "sub_header": "5.2 Recomendaciones y Compromisos",
+          "sub_header_style": "subSectionHeader",
+          "text_area": {
+            "content": "{{recomendacionesCompromisos}}",
+            "min_height": 80,
+            "full_width": true
+          }
+        },
+        {
+          "id": "5.3",
+          "description": "Cumplimiento recomendaciones visita anterior — siempre 'No aplica' para Visita 1",
+          "table": {
+            "widths": ["40%", "20%", "20%", "20%"],
+            "rows": [
+              [
+                "5.3 Se Cumplió Con Las Recomendaciones De La Visita\nAnterior (label)",
+                "SI (label, center)",
+                "NO (label, center)",
+                "No aplica\n   X (label, center, SIEMPRE marcado en visita 1)"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "5.4_observaciones",
+          "sub_header": "5.4 Observaciones visita",
+          "sub_header_style": "subSectionHeader",
+          "text_area": {
+            "content": "{{observacionesVisita}}",
+            "min_height": 80,
+            "full_width": true
+          }
+        },
+        {
+          "id": "5.4_fotos",
+          "sub_header": "5.4 Registro Fotográfico visita",
+          "sub_header_style": "subSectionHeader",
+          "instruction_note": {
+            "text": "Tomar mínimo 3 fotos con su respectiva marca de agua (lugar, georreferenciación, ASNM, fecha, hora). Foto 1 panoramica del predio y el usuario, Foto 2 donde se vea al usuario en su actividad productiva principal, Foto 3 Donde se vea al usuario junto con el extensionista.",
+            "style": "smallNote",
+            "alignment": "center"
+          },
+          "photo_grid": {
+            "max_photos": 3,
+            "sizing_rules": {
+              "1_photo": { "width": 250, "height": 180, "columns": ["*"] },
+              "2_photos": { "width": 200, "height": 140, "columns": ["*", "*"] },
+              "3_photos": { "width": 150, "height": 110, "columns": ["*", "*", "*"] }
+            },
+            "fallback_no_photos": {
+              "columns": ["*", "*", "*"],
+              "row_height": 100,
+              "placeholders": ["Foto 1", "Foto 2", "Foto 3"]
+            },
+            "note_for_expo": "En Expo, convertir cada URI de imagen a base64 con FileSystem.readAsStringAsync(uri, { encoding: 'base64' }) antes de inyectar en el PDF."
+          }
+        }
+      ]
+    },
+
+    {
+      "order": 6,
+      "id": "section_6",
+      "title": "6. Datos Del Acompañamiento",
+      "title_style": "sectionHeader",
+      "tables": [
+        {
+          "widths": ["20%", "*", "20%", "*"],
+          "rows": [
+            [
+              "Fecha registro\nAcompañamiento (label)", "{{fechaRegistroAcompanamiento}} (value)",
+              "Hora registro\nAcompañamiento (label)", "{{horaRegistroAcompanamiento}} (value)"
+            ]
+          ]
+        },
+        {
+          "description": "Checkboxes de quién atiende. Se marca con 'X' según attendanceId.",
+          "widths": ["32%", "17%", "17%", "17%", "17%"],
+          "rows": [
+            [
+              "Nombre Persona Quien Atiende El Acompañamiento (label)",
+              "Usuario Productor\n{{X si attendanceId=1}} (label, center)",
+              "Trabajador UP\n{{X si attendanceId=2}} (label, center)",
+              "Persona núcleo\nfamiliar\n{{X si attendanceId=3}} (label, center)",
+              "Otro\n{{X si attendanceId=4}} (label, center)"
+            ]
+          ]
+        },
+        {
+          "description": "Nombre de quien atiende (solo si != productor)",
+          "widths": ["50%", "*"],
+          "rows": [
+            [
+              "Solo si quien atiende la visita es diferente al productor\nUsuario diligencié: Trabajador UP, Persona Núcleo\nFamiliar, Otro (label)",
+              "{{nombrePersonaAtiende si attendanceId != 1, sino vacío}} (value)"
+            ]
+          ]
+        }
+      ]
+    },
+
+    {
+      "order": 7,
+      "id": "section_7",
+      "title": "7. Datos Del Extensionista",
+      "title_style": "sectionHeader",
+      "table": {
+        "widths": ["30%", "*"],
+        "rows": [
+          ["Nombre del\nExtensionista (label)", "{{nombreExtensionista}} (value)"],
+          ["Identificación Del\nExtensionista (label)", "{{identificacionExtensionista}} (value)"],
+          ["Perfil Profesional\nDel Extensionista (label)", "{{perfilProfesional}} (value)"],
+          ["Firma extensionista (label)", "(espacio vacío, margen vertical 15px arriba/abajo)"],
+          ["Fecha firma\nextensionista (label)", "(espacio vacío, margen vertical 8px arriba/abajo)"]
+        ]
+      }
+    }
+  ],
+
+  "output": {
+    "filename_pattern": "visita1_{{nombreCompletoProductor}}.pdf",
+    "web_action": "pdfMake.createPdf(docDefinition).download(filename)",
+    "expo_recommendations": {
+      "option_1_expo_print": "Usar expo-print con HTML que replique esta estructura. Convertir tablas a HTML <table> con estilos inline.",
+      "option_2_react_native_html_to_pdf": "Usar react-native-html-to-pdf para generar el PDF desde un string HTML.",
+      "option_3_pdfmake_direct": "Usar pdfmake directamente (funciona en RN). Instalar pdfmake y replicar el docDefinition tal cual.",
+      "sharing": "Usar expo-sharing para compartir/abrir el PDF generado."
+    }
+  },
+
+  "helper_functions_to_replicate": {
+    "imageToBase64": {
+      "description": "Convierte una URL de imagen a data URL base64 para incrustar en el PDF",
+      "web": "fetch(url) → blob → FileReader.readAsDataURL",
+      "expo": "FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 }) → 'data:image/jpeg;base64,' + result"
+    },
+    "labelCell": {
+      "description": "Celda de etiqueta con fondo LIGHT_GREEN (#E2EFDA), texto bold fontSize 7, margin [2,2,2,2]"
+    },
+    "valueCell": {
+      "description": "Celda de valor sin fondo, fontSize 7, margin [2,2,2,2]"
+    },
+    "sectionHeader": {
+      "description": "Barra full-width con fondo HEADER_GREEN (#4A7A3D), texto blanco, bold, fontSize 8, centrado"
+    },
+    "subSectionHeader": {
+      "description": "Barra full-width con fondo SECTION_GREEN (#C6EFCE), texto negro, bold, fontSize 8, centrado"
+    },
+    "textAreaRow": {
+      "description": "Tabla de 1 celda full-width con altura mínima configurable, fontSize 7, margin [4,4,4,4]"
+    }
+  }
+}

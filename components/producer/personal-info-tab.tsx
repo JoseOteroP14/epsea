@@ -1,4 +1,5 @@
 import { ThemedText } from "@/components/themed-text";
+import { useAlert } from "@/components/ui/custom-alert";
 import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
 import type { Question } from "@/schemas/characterization";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -21,7 +22,6 @@ import {
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
-    Alert,
     ScrollView,
     StyleSheet,
     TouchableOpacity,
@@ -150,6 +150,7 @@ export function PersonalInfoTab({
   } = useCharacterizationStore();
 
   const currentUserId = useAuthStore((state) => state.user?.user_id);
+  const { showAlert } = useAlert();
 
   const [showSheet, setShowSheet] = useState(false);
   const [answers, setAnswers] = useState<Record<number, any>>({});
@@ -417,10 +418,10 @@ export function PersonalInfoTab({
 
       setShowSheet(false);
       setHasSurvey(true);
-      Alert.alert("Guardado", "Las respuestas se guardaron localmente.");
+      showAlert({ title: "Guardado", message: "Las respuestas se guardaron localmente.", type: "success" });
     } catch (error) {
       console.error("Failed to save answers:", error);
-      Alert.alert("Error", "No se pudieron guardar las respuestas.");
+      showAlert({ title: "Error", message: "No se pudieron guardar las respuestas.", type: "error" });
     }
   }, [answers, activeComponent, producerId, projectId, currentUserId]);
 
@@ -496,10 +497,10 @@ export function PersonalInfoTab({
 
       setShowSheet(false);
       setEditingQuestion(null);
-      Alert.alert("Actualizado", "La respuesta se actualizó correctamente.");
+      showAlert({ title: "Actualizado", message: "La respuesta se actualizó correctamente.", type: "success" });
     } catch (error) {
       console.error("Failed to update answer:", error);
-      Alert.alert("Error", "No se pudo actualizar la respuesta.");
+      showAlert({ title: "Error", message: "No se pudo actualizar la respuesta.", type: "error" });
     }
   }, [
     editingQuestion,

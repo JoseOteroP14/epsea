@@ -1,14 +1,14 @@
-import {
-  DarkTheme,
-  DefaultTheme,
-  ThemeProvider,
-} from "@react-navigation/native";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import {
-  Stack,
-  useRootNavigationState,
-  useRouter,
-  useSegments,
+    DarkTheme,
+    DefaultTheme,
+    ThemeProvider,
+} from "@react-navigation/native";
+import {
+    Stack,
+    useRootNavigationState,
+    useRouter,
+    useSegments,
 } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect } from "react";
@@ -16,6 +16,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
 import { DatabaseProvider } from "@/components/database-provider";
+import { AlertProvider } from "@/components/ui/custom-alert";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuthStore } from "@/store/useAuthStore";
 
@@ -59,6 +60,7 @@ export default function RootLayout() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
           <BottomSheetModalProvider>
+            <AlertProvider>
             <Stack screenOptions={{ animation: "fade", animationDuration: 250 }}>
               <Stack.Screen name="login" options={{ headerShown: false }} />
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -69,6 +71,7 @@ export default function RootLayout() {
               <Stack.Screen name="+not-found" options={{ title: "Oops!" }} />
             </Stack>
             <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+            </AlertProvider>
           </BottomSheetModalProvider>
         </ThemeProvider>
       </GestureHandlerRootView>
