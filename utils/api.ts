@@ -1,3 +1,4 @@
+import { getStoredToken } from "@/utils/secure-storage";
 import { useAuthStore } from "@/store/useAuthStore";
 
 const BASE_URL = "https://playmusic.com.co/agro/api/v1";
@@ -7,7 +8,7 @@ interface RequestOptions extends RequestInit {
 }
 
 export async function apiFetch<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const { token } = useAuthStore.getState();
+    const token = await getStoredToken();
 
     // Build URL with query params if any
     let url = `${BASE_URL}${endpoint}`;
@@ -38,6 +39,12 @@ export async function apiFetch<T>(endpoint: string, options: RequestOptions = {}
         const errorData = await response.json().catch(() => ({}));
         const errorMessage = errorData.message || `Error ${response.status}: ${response.statusText}`;
         console.error(`API Error [${options.method || 'GET'} ${endpoint}]:`, errorMessage, errorData);
+
+        // Handle expired/invalid token — log out and redirect to login
+        if (response.status === 401) {
+            useAuthStore.getState().logout();
+        }
+
         throw new Error(errorMessage);
     }
 

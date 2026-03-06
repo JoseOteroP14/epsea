@@ -1,5 +1,6 @@
 import { ThemedText } from "@/components/themed-text";
 import { useAuthStore } from "@/store/useAuthStore";
+import { useSyncStore } from "@/store/useSyncStore";
 import { apiFetch } from "@/utils/api";
 import {
   heightPercent,
@@ -7,7 +8,6 @@ import {
   verticalScale,
   widthScale,
 } from "@/utils/responsive";
-import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -47,29 +47,27 @@ export default function LoginScreen() {
   const pulse = useSharedValue(1);
 
   useEffect(() => {
-    // Animación de rotación permanente para el fondo
     rotation.value = withRepeat(
       withTiming(360, { duration: 30000, easing: Easing.linear }),
       -1,
-      false
+      false,
     );
 
-    // Animación de pulso permanente para el fondo
     pulse.value = withRepeat(
       withTiming(1.2, { duration: 4000, easing: Easing.inOut(Easing.ease) }),
       -1,
-      true
+      true,
     );
   }, []);
 
   const animatedLogoStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${rotation.value}deg` }, { scale: pulse.value }],
-    opacity: withTiming(loading ? 0.3 : 0.6),
+    opacity: withTiming(loading ? 0.4 : 0.8),
   }));
 
   const animatedSplash2Style = useAnimatedStyle(() => ({
     transform: [{ scale: pulse.value * 1.1 }],
-    opacity: withTiming(loading ? 0.2 : 0.4),
+    opacity: withTiming(loading ? 0.3 : 0.7),
   }));
 
   const handleLogin = async () => {
@@ -110,15 +108,17 @@ export default function LoginScreen() {
       });
 
       if (response.code === "SUCCESS" && response.data) {
-        login(response.data.user, response.data.access_token);
+        await login(response.data.user, response.data.access_token);
         router.replace("/(tabs)");
+        // Background sync: login confirms connectivity, kick off download immediately
+        useSyncStore.getState().startDownload().catch(console.error);
       } else {
         Alert.alert("Error", response.message || "Credenciales inválidas");
       }
     } catch (error: any) {
       Alert.alert(
         "Error",
-        error.message || "No se pudo conectar con el servidor"
+        error.message || "No se pudo conectar con el servidor",
       );
     } finally {
       setLoading(false);
@@ -131,28 +131,47 @@ export default function LoginScreen() {
   }));
 
   return (
-    <LinearGradient colors={["#0a1a10", "#1a3a20", "#0a1a10"]} style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.keyboardAvoid}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
-      >
+    <LinearGradient
+      colors={["#ffffff", "#d5f5e3", "#a9dfbf", "#d5f5e3", "#ffffff"]}
+      locations={[0, 0.25, 0.5, 0.75, 1]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.container}
+    >
+      <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoid}>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            bounces={false}
           >
             {/* Decorative elements */}
-            <Animated.View style={[styles.inkSplash, styles.inkSplash1, animatedLogoStyle]}>
+            <Animated.View
+              style={[styles.inkSplash, styles.inkSplash1, animatedLogoStyle]}
+            >
               <LinearGradient
-                colors={["rgba(46, 204, 113, 0.3)", "transparent"]}
+                colors={[
+                  "rgba(26, 122, 58, 0.45)",
+                  "rgba(39, 174, 96, 0.1)",
+                  "transparent",
+                ]}
                 style={styles.inkGradient}
               />
             </Animated.View>
-            <Animated.View style={[styles.inkSplash, styles.inkSplash2, animatedSplash2Style]}>
+            <Animated.View
+              style={[
+                styles.inkSplash,
+                styles.inkSplash2,
+                animatedSplash2Style,
+              ]}
+            >
               <LinearGradient
-                colors={["rgba(209, 250, 229, 0.2)", "transparent"]}
+                colors={[
+                  "rgba(26, 122, 58, 0.35)",
+                  "rgba(209, 250, 229, 0.15)",
+                  "transparent",
+                ]}
                 style={styles.inkGradient}
               />
             </Animated.View>
@@ -161,7 +180,7 @@ export default function LoginScreen() {
             <View style={styles.logoSection}>
               <View style={styles.logoContainer}>
                 <LinearGradient
-                  colors={["#2ecc71", "#27ae60"]}
+                  colors={["#1a7a3a", "#156b33"]}
                   style={styles.logoGradient}
                 >
                   <ThemedText style={styles.logoText}>🌱</ThemedText>
@@ -173,76 +192,70 @@ export default function LoginScreen() {
               </ThemedText>
             </View>
 
-            {/* Login Card */}
-            <BlurView intensity={20} tint="dark" style={styles.glassCard}>
-              <View style={styles.cardContent}>
-                <ThemedText style={styles.welcomeText}>Bienvenido</ThemedText>
-                <ThemedText style={styles.instructionText}>
-                  Ingresa tus credenciales para continuar
-                </ThemedText>
+            {/* Login Card — glassmorphism via View */}
+            <View style={styles.glassCard}>
+              <ThemedText style={styles.welcomeText}>Bienvenido</ThemedText>
+              <ThemedText style={styles.instructionText}>
+                Ingresa tus credenciales para continuar
+              </ThemedText>
 
-                <View style={styles.inputContainer}>
-                  <View style={styles.inputWrapper}>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Usuario"
-                      placeholderTextColor="rgba(255,255,255,0.5)"
-                      value={username}
-                      onChangeText={setUsername}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      returnKeyType="next"
-                      onSubmitEditing={() => passwordRef.current?.focus()}
-                      blurOnSubmit={false}
-                    />
-                  </View>
-
-                  <View style={styles.inputWrapper}>
-                    <TextInput
-                      ref={passwordRef}
-                      style={styles.input}
-                      placeholder="Contraseña"
-                      placeholderTextColor="rgba(255,255,255,0.5)"
-                      value={password}
-                      onChangeText={setPassword}
-                      secureTextEntry
-                      returnKeyType="done"
-                      onSubmitEditing={handleLogin}
-                    />
-                  </View>
+              <View style={styles.inputContainer}>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Usuario"
+                    placeholderTextColor="rgba(0,0,0,0.35)"
+                    value={username}
+                    onChangeText={setUsername}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="next"
+                    onSubmitEditing={() => passwordRef.current?.focus()}
+                    blurOnSubmit={false}
+                  />
                 </View>
 
-                <Animated.View style={buttonAnimatedStyle}>
-                  <TouchableOpacity
-                    style={[styles.loginButton, loading && styles.loginButtonDisabled]}
-                    onPress={handleLogin}
-                    disabled={loading}
-                    activeOpacity={0.8}
-                  >
-                    <LinearGradient
-                      colors={["#2ecc71", "#27ae60"]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.buttonGradient}
-                    >
-                      {loading ? (
-                        <ActivityIndicator color="#fff" size="small" />
-                      ) : (
-                        <ThemedText style={styles.buttonText}>
-                          Iniciar Sesión
-                        </ThemedText>
-                      )}
-                    </LinearGradient>
-                  </TouchableOpacity>
-                </Animated.View>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    ref={passwordRef}
+                    style={styles.input}
+                    placeholder="Contraseña"
+                    placeholderTextColor="rgba(0,0,0,0.35)"
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry
+                    returnKeyType="done"
+                    onSubmitEditing={handleLogin}
+                  />
+                </View>
               </View>
-            </BlurView>
 
-            {/* Footer */}
-            <View style={styles.footer}>
-              <ThemedText style={styles.footerText}>
-                © 2024 EPSEA - Todos los derechos reservados
-              </ThemedText>
+              <Animated.View style={buttonAnimatedStyle}>
+                <TouchableOpacity
+                  style={[
+                    styles.loginButton,
+                    loading && styles.loginButtonDisabled,
+                  ]}
+                  onPress={handleLogin}
+                  disabled={loading}
+                  activeOpacity={0.8}
+                >
+                  <LinearGradient
+                    colors={["#1a7a3a", "#156b33"]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.buttonGradient}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <ThemedText style={styles.buttonText}>
+                        Iniciar Sesión
+                      </ThemedText>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+              </Animated.View>
             </View>
           </ScrollView>
         </TouchableWithoutFeedback>
@@ -299,7 +312,7 @@ const styles = StyleSheet.create({
     borderRadius: widthScale(40),
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: "#2ecc71",
+    shadowColor: "#1a7a3a",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -311,34 +324,31 @@ const styles = StyleSheet.create({
   appTitle: {
     fontSize: responsiveFont(32),
     fontWeight: "bold",
-    color: "#fff",
+    color: "#1a3a20",
     letterSpacing: 4,
   },
   appSubtitle: {
-    fontSize: responsiveFont(14),
-    color: "rgba(255,255,255,0.7)",
+    fontSize: responsiveFont(17),
+    color: "rgba(0,0,0,0.5)",
     marginTop: verticalScale(8),
   },
   glassCard: {
     borderRadius: 24,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-  },
-  cardContent: {
     padding: widthScale(24),
-    backgroundColor: "rgba(255,255,255,0.05)",
+    backgroundColor: "rgba(255,255,255,0.45)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.8)",
   },
   welcomeText: {
     fontSize: responsiveFont(24),
     fontWeight: "bold",
-    color: "#fff",
+    color: "#1a3a20",
     textAlign: "center",
     marginBottom: verticalScale(8),
   },
   instructionText: {
-    fontSize: responsiveFont(14),
-    color: "rgba(255,255,255,0.7)",
+    fontSize: responsiveFont(17),
+    color: "rgba(0,0,0,0.5)",
     textAlign: "center",
     marginBottom: verticalScale(24),
   },
@@ -347,28 +357,27 @@ const styles = StyleSheet.create({
     marginBottom: verticalScale(24),
   },
   inputWrapper: {
-    backgroundColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "rgba(255,255,255,0.55)",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    borderColor: "rgba(255,255,255,0.8)",
   },
   input: {
     paddingHorizontal: widthScale(16),
     paddingVertical: verticalScale(14),
-    fontSize: responsiveFont(16),
-    color: "#fff",
+    fontSize: responsiveFont(17),
+    color: "#11181C",
   },
   loginButton: {
     borderRadius: 12,
     overflow: "hidden",
-    shadowColor: "#2ecc71",
+    shadowColor: "#1a7a3a",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
   },
   loginButtonDisabled: {
-    opacity: 0.7,
   },
   buttonGradient: {
     paddingVertical: verticalScale(16),
@@ -376,17 +385,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   buttonText: {
-    fontSize: responsiveFont(16),
+    fontSize: responsiveFont(17),
     fontWeight: "bold",
     color: "#fff",
-  },
-  footer: {
-    marginTop: verticalScale(20),
-    alignItems: "center",
-    paddingBottom: verticalScale(16),
-  },
-  footerText: {
-    fontSize: responsiveFont(12),
-    color: "rgba(255,255,255,0.5)",
   },
 });

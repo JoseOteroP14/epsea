@@ -1,67 +1,47 @@
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuthStore } from "@/store/useAuthStore";
-import {
-  responsiveFont,
-  widthScale
-} from "@/utils/responsive";
+import { responsiveFont, widthScale } from "@/utils/responsive";
 import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
 import { Tabs, useRouter } from "expo-router";
-import {
-  Bell,
-  Briefcase,
-  Home,
-  LogOut,
-  UserCog,
-  Users,
-} from "lucide-react-native";
+import { Briefcase, Home, LogOut, RefreshCw } from "lucide-react-native";
 import { useEffect } from "react";
-import { Alert, Dimensions, StyleSheet, TouchableOpacity, View } from "react-native";
+import {
+  Alert,
+  Dimensions,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
-  withSpring
+  withSpring,
 } from "react-native-reanimated";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const TAB_BAR_MARGIN = 16;
-const TAB_BAR_WIDTH = SCREEN_WIDTH - (TAB_BAR_MARGIN * 2);
-
+const TAB_BAR_WIDTH = SCREEN_WIDTH - TAB_BAR_MARGIN * 2;
 
 // Nombres de los tabs para los headers
 const TAB_TITLES: Record<string, string> = {
   index: "Inicio",
-  producers: "Productores",
   projects: "Proyectos",
-  users: "Usuarios",
-  notifications: "Notificaciones",
+  sync: "Sincronizar",
 };
 
 function TabBarIcon({
   Icon,
   color,
-  focused,
 }: {
   Icon: any;
   color: string;
-  focused: boolean;
+  focused?: boolean;
 }) {
-  const scale = useSharedValue(1);
-
-  useEffect(() => {
-    scale.value = withSpring(focused ? 1.2 : 1, {
-      damping: 10,
-      stiffness: 100,
-    });
-  }, [focused]);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
   return (
-    <Animated.View style={[animatedStyle, { justifyContent: 'center', alignItems: 'center' }]}>
-      <Icon size={24} color={color} strokeWidth={focused ? 2.5 : 2} />
-    </Animated.View>
+    <View style={{ justifyContent: "center", alignItems: "center" }}>
+      <Icon size={24} color={color} strokeWidth={2} />
+    </View>
   );
 }
 
@@ -70,21 +50,17 @@ function LogoutButton() {
   const router = useRouter();
 
   const handleLogout = () => {
-    Alert.alert(
-      "Cerrar Sesión",
-      "¿Estás seguro de que deseas cerrar sesión?",
-      [
-        { text: "Cancelar", style: "cancel" },
-        {
-          text: "Cerrar Sesión",
-          style: "destructive",
-          onPress: () => {
-            logout();
-            router.replace("/login");
-          },
+    Alert.alert("Cerrar Sesión", "¿Estás seguro de que deseas cerrar sesión?", [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: "Cerrar Sesión",
+        style: "destructive",
+        onPress: async () => {
+          await logout();
+          router.replace("/login");
         },
-      ]
-    );
+      },
+    ]);
   };
 
   return (
@@ -98,7 +74,6 @@ function LogoutButton() {
   );
 }
 
-
 function TabBar({ state, descriptors, navigation }: any) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
@@ -109,8 +84,9 @@ function TabBar({ state, descriptors, navigation }: any) {
 
   useEffect(() => {
     translateX.value = withSpring(state.index * tabWidth, {
-      damping: 15,
-      stiffness: 120,
+      damping: 20,
+      stiffness: 200,
+      overshootClamping: true,
     });
   }, [state.index, tabWidth]);
 
@@ -119,7 +95,7 @@ function TabBar({ state, descriptors, navigation }: any) {
     width: tabWidth,
   }));
 
-  const activeColor = "#27ae60";
+  const activeColor = "#156b33";
   const inactiveColor = isDark ? "#95a5a6" : "#7f8c8d";
 
   return (
@@ -152,9 +128,12 @@ function TabBar({ state, descriptors, navigation }: any) {
             }
           };
 
-          const Icon = options.tabBarIcon ?
-            (options.tabBarIcon as any)({ color: isFocused ? activeColor : inactiveColor, focused: isFocused }).props.Icon :
-            Home;
+          const Icon = options.tabBarIcon
+            ? (options.tabBarIcon as any)({
+                color: isFocused ? activeColor : inactiveColor,
+                focused: isFocused,
+              }).props.Icon
+            : Home;
 
           return (
             <TouchableOpacity
@@ -163,8 +142,17 @@ function TabBar({ state, descriptors, navigation }: any) {
               style={styles.tabItem}
               activeOpacity={0.7}
             >
-              <TabBarIcon Icon={Icon} color={isFocused ? activeColor : inactiveColor} focused={isFocused} />
-              <Animated.Text style={[styles.tabBarLabel, { color: isFocused ? activeColor : inactiveColor }]}>
+              <TabBarIcon
+                Icon={Icon}
+                color={isFocused ? activeColor : inactiveColor}
+                focused={isFocused}
+              />
+              <Animated.Text
+                style={[
+                  styles.tabBarLabel,
+                  { color: isFocused ? activeColor : inactiveColor },
+                ]}
+              >
                 {options.title}
               </Animated.Text>
             </TouchableOpacity>
@@ -177,8 +165,6 @@ function TabBar({ state, descriptors, navigation }: any) {
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const { currentRole } = useAuthStore();
-  const isAdminValue = currentRole === 1;
 
   const getHeaderOptions = (title: string) => ({
     headerTitle: title,
@@ -194,66 +180,55 @@ export default function TabLayout() {
     headerShadowVisible: false,
   });
 
+  const isDark = colorScheme === "dark";
+  const bgColor = isDark ? "#0a1a10" : "#f4fbf7";
+
   return (
-    <Tabs
-      tabBar={(props) => <TabBar {...props} />}
-      screenOptions={{
-        headerShown: false,
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Inicio",
-          ...getHeaderOptions(TAB_TITLES.index),
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon Icon={Home} color={color} focused={focused} />
-          ),
+    <View style={{ flex: 1 }}>
+      <Tabs
+        tabBar={(props) => <TabBar {...props} />}
+        screenOptions={{
+          headerShown: false,
         }}
+      >
+        <Tabs.Screen
+          name="index"
+          options={{
+            title: "Inicio",
+            ...getHeaderOptions(TAB_TITLES.index),
+            tabBarIcon: ({ color, focused }) => (
+              <TabBarIcon Icon={Home} color={color} focused={focused} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="projects"
+          options={{
+            title: "Proyectos",
+            ...getHeaderOptions(TAB_TITLES.projects),
+            tabBarIcon: ({ color, focused }) => (
+              <TabBarIcon Icon={Briefcase} color={color} focused={focused} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="sync"
+          options={{
+            title: "Sincronizar",
+            ...getHeaderOptions(TAB_TITLES.sync),
+            tabBarIcon: ({ color, focused }) => (
+              <TabBarIcon Icon={RefreshCw} color={color} focused={focused} />
+            ),
+          }}
+        />
+      </Tabs>
+      <LinearGradient
+        colors={["transparent", bgColor]}
+        locations={[0, 0.55]}
+        style={styles.bottomFade}
+        pointerEvents="none"
       />
-      <Tabs.Screen
-        name="producers"
-        options={{
-          title: "Productores",
-          ...getHeaderOptions(TAB_TITLES.producers),
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon Icon={Users} color={color} focused={focused} />
-          ),
-          href: isAdminValue ? "/producers" : null,
-        }}
-      />
-      <Tabs.Screen
-        name="projects"
-        options={{
-          title: "Proyectos",
-          ...getHeaderOptions(TAB_TITLES.projects),
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon Icon={Briefcase} color={color} focused={focused} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="users"
-        options={{
-          title: "Usuarios",
-          ...getHeaderOptions(TAB_TITLES.users),
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon Icon={UserCog} color={color} focused={focused} />
-          ),
-          href: isAdminValue ? "/users" : null,
-        }}
-      />
-      <Tabs.Screen
-        name="notifications"
-        options={{
-          title: "Avisos",
-          ...getHeaderOptions(TAB_TITLES.notifications),
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon Icon={Bell} color={color} focused={focused} />
-          ),
-        }}
-      />
-    </Tabs>
+    </View>
   );
 }
 
@@ -271,6 +246,7 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
     flexDirection: "row",
     alignItems: "center",
+    zIndex: 10,
   },
   tabItemsContainer: {
     flex: 1,
@@ -291,16 +267,24 @@ const styles = StyleSheet.create({
   indicatorInner: {
     width: "80%",
     height: "80%",
-    backgroundColor: "rgba(46, 204, 113, 0.15)",
+    backgroundColor: "rgba(26, 122, 58, 0.15)",
     borderRadius: 20,
   },
   tabBarLabel: {
-    fontSize: responsiveFont(10),
-    fontWeight: "700",
+    fontSize: responsiveFont(17),
+    fontWeight: "500",
     marginTop: 2,
   },
   logoutButton: {
     marginRight: widthScale(16),
     padding: widthScale(8),
+  },
+  bottomFade: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 120,
+    zIndex: 0,
   },
 });

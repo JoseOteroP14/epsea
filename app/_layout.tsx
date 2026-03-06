@@ -1,19 +1,31 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack, useRootNavigationState, useRouter, useSegments } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import React, { useEffect } from 'react';
-import 'react-native-reanimated';
+import {
+  DarkTheme,
+  DefaultTheme,
+  ThemeProvider,
+} from "@react-navigation/native";
+import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
+import {
+  Stack,
+  useRootNavigationState,
+  useRouter,
+  useSegments,
+} from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import React, { useEffect } from "react";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import "react-native-reanimated";
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useAuthStore } from '@/store/useAuthStore';
+import { DatabaseProvider } from "@/components/database-provider";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useAuthStore } from "@/store/useAuthStore";
 
 export const unstable_settings = {
-  anchor: '(tabs)',
+  anchor: "(tabs)",
 };
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, isHydrated } = useAuthStore();
   const segments = useSegments();
   const router = useRouter();
   const navigationState = useRootNavigationState();
@@ -24,34 +36,42 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    // Wait for everything to be ready: component mounted, navigation state initialized, and segments available
-    if (!isMounted || !navigationState?.key || !segments) return;
+    // Wait for everything to be ready: hydration complete, component mounted, navigation state initialized, and segments available
+    if (!isHydrated || !isMounted || !navigationState?.key || !segments) return;
 
     const performRedirect = () => {
       const currentSegment = segments[0];
 
-      if (!isAuthenticated && currentSegment !== 'login') {
-        router.replace('/login');
-      } else if (isAuthenticated && currentSegment === 'login') {
-        router.replace('/(tabs)');
+      if (!isAuthenticated && currentSegment !== "login") {
+        router.replace("/login");
+      } else if (isAuthenticated && currentSegment === "login") {
+        router.replace("/(tabs)");
       }
     };
 
     // Use requestAnimationFrame to ensure the navigator is fully painted and stable
     const frame = requestAnimationFrame(performRedirect);
     return () => cancelAnimationFrame(frame);
-  }, [isAuthenticated, segments, navigationState?.key, isMounted, router]);
+  }, [isAuthenticated, isHydrated, segments, navigationState?.key, isMounted, router]);
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="login" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-        <Stack.Screen name="project/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="+not-found" options={{ title: 'Oops!' }} />
-      </Stack>
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-    </ThemeProvider>
+    <DatabaseProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+          <BottomSheetModalProvider>
+            <Stack screenOptions={{ animation: "fade", animationDuration: 250 }}>
+              <Stack.Screen name="login" options={{ headerShown: false }} />
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen
+                name="modal"
+                options={{ presentation: "modal", title: "Modal" }}
+              />
+              <Stack.Screen name="+not-found" options={{ title: "Oops!" }} />
+            </Stack>
+            <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+          </BottomSheetModalProvider>
+        </ThemeProvider>
+      </GestureHandlerRootView>
+    </DatabaseProvider>
   );
 }

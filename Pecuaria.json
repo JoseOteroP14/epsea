@@ -1,0 +1,181 @@
+{
+  "label_prefix": "Producción Pecuaria",
+  "fields": [
+    {
+      "key": "pecuaria_linea",
+      "label": "A. Línea productiva principal",
+      "description": "(Hace referencia a la línea que sustenta su economía)",
+      "type": "select",
+      "required": true,
+      "options": [
+        "Bovino - Leche",
+        "Bovino - Carne",
+        "Bovino - Carne y leche (doble propósito)",
+        "Búfalo - Carne",
+        "Búfalo - Leche",
+        "Avícola - Gallina Ponedora - Levante",
+        "Avícola - Gallina Ponedora - Ponedora",
+        "Avícola - Pollo engorde",
+        "Avícola - Aves de Traspatio - Pato",
+        "Avícola - Aves de Traspatio - Ganzo",
+        "Avícola - Aves de Traspatio - Pavos",
+        "Avícola - Aves de Traspatio - Codornices",
+        "Avícola - Aves de Traspatio - Gallinas de Campo",
+        "Apicultura - Miel",
+        "Apicultura - Polen",
+        "Apicultura - Cera",
+        "Conejos - Carne",
+        "Conejos - Piel",
+        "Cuy - Carne",
+        "Ovino - Leche",
+        "Ovino - Lana",
+        "Ovino - Carne y lana (doble propósito)",
+        "Caprino - Leche",
+        "Caprino - Carne",
+        "Caprino - Carne y lana (doble propósito)",
+        "Mulares/Asnales/Equinos - Carne",
+        "Mulares/Asnales/Equinos - Trabajo",
+        "Mulares/Asnales/Equinos - Exposición",
+        "Zoocría - Babillas",
+        "Zoocría - Ofidios",
+        "Avestruces - Exhibición",
+        "Chigüiros - Carne",
+        "Lapa - Carne",
+        "Mariposas - Mariposario"
+      ]
+    },
+    {
+      "key": "pecuaria_unidad",
+      "label": "Unidad de medida",
+      "type": "unit_by_option",
+      "required": true,
+      "map_from": "pecuaria_linea",
+      "units": {
+        "Bovino - Leche": { "mode": "fixed", "value": "Litros / día" },
+        "Bovino - Carne": { "mode": "fixed", "value": "Kilogramos en pie al sacrificio" },
+        "Bovino - Carne y leche (doble propósito)": {
+          "mode": "select",
+          "options": [
+            "Litros / día",
+            "Kilogramos en pie al destete",
+            "Kilogramos en pie al sacrificio"
+          ]
+        },
+        "Búfalo - Carne": { "mode": "fixed", "value": "Kilogramos en pie al sacrificio" },
+        "Búfalo - Leche": { "mode": "fixed", "value": "Litros / día" },
+        "Avícola - Gallina Ponedora - Levante": { "mode": "fixed", "value": "Número de aves" },
+        "Avícola - Gallina Ponedora - Ponedora": { "mode": "fixed", "value": "Huevos / día (Promedio)" },
+        "Avícola - Pollo engorde": {
+          "mode": "select",
+          "options": ["Kilogramos de carne", "Número de aves"]
+        },
+        "Avícola - Aves de Traspatio - Pato": { "mode": "fixed", "value": "Número de aves" },
+        "Avícola - Aves de Traspatio - Ganzo": { "mode": "fixed", "value": "Número de aves" },
+        "Avícola - Aves de Traspatio - Pavos": { "mode": "fixed", "value": "Número de aves" },
+        "Avícola - Aves de Traspatio - Codornices": { "mode": "fixed", "value": "Kilogramos de carne" },
+        "Avícola - Aves de Traspatio - Gallinas de Campo": {
+          "mode": "select",
+          "options": ["Número de aves", "Huevos / día (Promedio)"]
+        },
+        "Apicultura - Miel": {
+          "mode": "select",
+          "options": ["Kilogramo", "Número de colmenas"]
+        },
+        "Apicultura - Polen": {
+          "mode": "select",
+          "options": ["Kilogramo", "Número de colmenas"]
+        },
+        "Apicultura - Cera": {
+          "mode": "select",
+          "options": ["Kilogramo", "Número de colmenas"]
+        },
+        "Conejos - Carne": { "mode": "fixed", "value": "Kilogramo" },
+        "Conejos - Piel": { "mode": "fixed", "value": "Número de pieles" },
+        "Cuy - Carne": { "mode": "fixed", "value": "Kilogramo" },
+        "Ovino - Leche": { "mode": "fixed", "value": "Litros / día" },
+        "Ovino - Lana": { "mode": "fixed", "value": "Kilogramos promedio por animal" },
+        "Ovino - Carne y lana (doble propósito)": {
+          "mode": "select",
+          "options": [
+            "Kilogramos en pie al sacrificio",
+            "Kilogramos promedio por animal"
+          ]
+        },
+        "Caprino - Leche": { "mode": "fixed", "value": "Litros / día" },
+        "Caprino - Carne": { "mode": "fixed", "value": "Kilogramos en pie al sacrificio" },
+        "Caprino - Carne y lana (doble propósito)": {
+          "mode": "select",
+          "options": [
+            "Litros / día",
+            "Kilogramos en pie al sacrificio"
+          ]
+        },
+        "Mulares/Asnales/Equinos - Carne": { "mode": "fixed", "value": "Kilogramos en pie al sacrificio" },
+        "Mulares/Asnales/Equinos - Trabajo": { "mode": "fixed", "value": "Número de animales" },
+        "Mulares/Asnales/Equinos - Exposición": { "mode": "fixed", "value": "Andares (animales de exposición)" },
+        "Zoocría - Babillas": {
+          "mode": "select",
+          "options": ["Kilogramos carne", "Kilogramos piel"]
+        },
+        "Zoocría - Ofidios": { "mode": "fixed", "value": "Número de animales" },
+        "Avestruces - Exhibición": {
+          "mode": "select",
+          "options": [
+            "Número de animales",
+            "Kilogramos en pie al sacrificio",
+            "Huevos / año"
+          ]
+        },
+        "Chigüiros - Carne": {
+          "mode": "select",
+          "options": ["Kilogramos en pie al sacrificio", "Número de animales"]
+        },
+        "Lapa - Carne": {
+          "mode": "select",
+          "options": ["Kilogramos en pie al sacrificio", "Número de animales"]
+        },
+        "Mariposas - Mariposario": { "mode": "fixed", "value": "Número de insectos" }
+      }
+    },
+    {
+      "key": "pecuaria_area",
+      "label": "B. ¿Cuál es el área destinada a esta línea productiva en metros cuadrados?",
+      "type": "number",
+      "required": true,
+      "decimals": 2,
+      "max_length": 12
+    },
+    {
+      "key": "pecuaria_ciclos",
+      "label": "C. ¿Cuántos ciclos productivos obtiene al año?",
+      "type": "number",
+      "required": true,
+      "decimals": 2,
+      "max_length": 12
+    },
+    {
+      "key": "pecuaria_produccion_promedio",
+      "label": "D. Producción promedio",
+      "type": "number",
+      "required": true,
+      "decimals": 2,
+      "max_length": 12
+    },
+    {
+      "key": "pecuaria_cantidad_promedio",
+      "label": "E. Cantidad producción promedio",
+      "type": "number",
+      "required": true,
+      "decimals": 2,
+      "max_length": 12
+    },
+    {
+      "key": "pecuaria_fecha_inicio",
+      "label": "F. Fecha de inicio de la producción",
+      "type": "date",
+      "required": true,
+      "placeholder": "dd/mm/aaaa",
+      "max": "today"
+    }
+  ]
+}
