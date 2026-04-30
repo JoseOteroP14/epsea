@@ -4,11 +4,12 @@ import { Fonts } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { heightPercent, responsiveFont, verticalScale, widthScale } from '@/utils/responsive';
-import type { PropsWithChildren, ReactElement } from 'react';
+import type { PropsWithChildren, ReactElement, ReactNode } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 type Props = PropsWithChildren<{
+    headerContent?: ReactNode;
     headerImage?: ReactElement;
     headerBackgroundColor: { dark: string; light: string };
     headerTitle?: string;
@@ -17,6 +18,7 @@ type Props = PropsWithChildren<{
 
 export default function StandardView({
     children,
+    headerContent,
     headerImage,
     headerBackgroundColor,
     headerTitle,
@@ -30,12 +32,23 @@ export default function StandardView({
             <View style={[styles.header, { backgroundColor: headerBackgroundColor[colorScheme] }]}>
                 <SafeAreaView edges={['top']} style={styles.safeArea}>
                     <View style={styles.headerContent}>
-                        {headerTitle && (
-                            <ThemedText type="title" style={styles.title}>
-                                {headerTitle}
-                            </ThemedText>
+                        {headerContent ? (
+                            headerContent
+                        ) : (
+                            <View style={styles.headerRow}>
+                                {headerTitle && (
+                                    <ThemedText
+                                        type="title"
+                                        style={[styles.title, headerImage && styles.titleWithAction]}
+                                        numberOfLines={1}
+                                        ellipsizeMode="tail"
+                                    >
+                                        {headerTitle}
+                                    </ThemedText>
+                                )}
+                                {headerImage ? <View style={styles.headerAction}>{headerImage}</View> : null}
+                            </View>
                         )}
-                        {headerImage}
                     </View>
                 </SafeAreaView>
             </View>
@@ -63,7 +76,7 @@ const styles = StyleSheet.create({
     },
     header: {
         height: heightPercent(10),
-        minHeight: 100,
+        minHeight: 112,
         justifyContent: 'flex-end',
     },
     safeArea: {
@@ -75,11 +88,25 @@ const styles = StyleSheet.create({
         paddingBottom: verticalScale(12),
         justifyContent: 'flex-end',
     },
+    headerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: widthScale(8),
+    },
     title: {
+        flex: 1,
         color: '#ffffff',
         fontSize: responsiveFont(36),
         fontFamily: Fonts.rounded,
         fontWeight: '900',
+    },
+    titleWithAction: {
+        marginRight: widthScale(8),
+    },
+    headerAction: {
+        alignItems: 'flex-end',
+        justifyContent: 'center',
     },
     scrollView: {
         flex: 1,

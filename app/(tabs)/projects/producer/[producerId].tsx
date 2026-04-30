@@ -120,10 +120,37 @@ export default function ProducerDetailScreen() {
 
   const getDocumentTypeName = () => producerDetail?.document_type?.name ?? null;
 
+  const headerContent = producerDetail ? (
+    <View style={styles.profileHeader}>
+      <View style={styles.headerInfo}>
+        <ThemedText
+          type="subtitle"
+          style={styles.fullName}
+          numberOfLines={1}
+        >
+          {getFullName()}
+        </ThemedText>
+        <View style={styles.identificationBadge}>
+          <FileText size={responsiveFont(11)} color="#ffffff" />
+          <ThemedText style={styles.identification}>
+            {getDocumentTypeName() || "CC"}: {producerDetail.identification}
+          </ThemedText>
+        </View>
+      </View>
+      <TouchableOpacity
+        style={styles.infoButton}
+        onPress={() => setShowInfoModal(true)}
+        activeOpacity={0.7}
+      >
+        <Info size={responsiveFont(20)} color="#ffffff" />
+      </TouchableOpacity>
+    </View>
+  ) : null;
+
   return (
     <StandardView
       headerBackgroundColor={{ light: "#1a7a3a", dark: "#0a1a10" }}
-      headerTitle="Productor"
+      headerContent={headerContent}
       noScroll
     >
       <View style={styles.container}>
@@ -135,38 +162,11 @@ export default function ProducerDetailScreen() {
           <View style={styles.center}>
             <AlertCircle size={responsiveFont(48)} color="#e74c3c" />
             <ThemedText style={styles.errorText}>
-              Error al cargar los datos del productor
+              Error al cargar los datos del usuario
             </ThemedText>
           </View>
         ) : producerDetail ? (
           <View style={styles.mainContent}>
-            {/* Compact header: name + identification + info button */}
-            <View style={styles.profileHeader}>
-              <View style={styles.headerInfo}>
-                <ThemedText
-                  type="subtitle"
-                  style={styles.fullName}
-                  numberOfLines={1}
-                >
-                  {getFullName()}
-                </ThemedText>
-                <View style={styles.identificationBadge}>
-                  <FileText size={responsiveFont(11)} color="#1a7a3a" />
-                  <ThemedText style={styles.identification}>
-                    {getDocumentTypeName() || "CC"}:{" "}
-                    {producerDetail.identification}
-                  </ThemedText>
-                </View>
-              </View>
-              <TouchableOpacity
-                style={styles.infoButton}
-                onPress={() => setShowInfoModal(true)}
-                activeOpacity={0.7}
-              >
-                <Info size={responsiveFont(20)} color="#1a7a3a" />
-              </TouchableOpacity>
-            </View>
-
             {/* Sub-tabs bar — scrollable, edge-to-edge */}
             <View style={styles.subTabsBarWrapper}>
               <ScrollView
@@ -269,7 +269,7 @@ const styles = StyleSheet.create({
   profileHeader: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: verticalScale(8),
+    marginHorizontal: -widthScale(12),
     gap: widthScale(10),
   },
   headerInfo: {
@@ -278,13 +278,14 @@ const styles = StyleSheet.create({
   fullName: {
     fontSize: responsiveFont(17),
     lineHeight: responsiveFont(21),
+    color: "#ffffff",
   },
   identificationBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: widthScale(3),
     marginTop: verticalScale(2),
-    backgroundColor: "rgba(26, 122, 58, 0.08)",
+    backgroundColor: "rgba(255, 255, 255, 0.18)",
     paddingHorizontal: widthScale(6),
     paddingVertical: verticalScale(2),
     borderRadius: widthScale(5),
@@ -292,14 +293,16 @@ const styles = StyleSheet.create({
   },
   identification: {
     fontSize: responsiveFont(17),
-    color: "#1a7a3a",
+    color: "#ffffff",
     fontWeight: "600",
   },
   infoButton: {
     width: widthScale(38),
     height: widthScale(38),
     borderRadius: widthScale(19),
-    backgroundColor: "rgba(26, 122, 58, 0.08)",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.32)",
     justifyContent: "center",
     alignItems: "center",
   },

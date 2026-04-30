@@ -74,27 +74,28 @@ export async function downloadAllData(
     projects = projectsResponse;
   } else if (Array.isArray(projectsResponse?.data)) {
     projects = projectsResponse.data;
+  } else if (Array.isArray(projectsResponse?.data?.pagination?.items)) {
+    projects = projectsResponse.data.pagination.items;
   } else if (Array.isArray(projectsResponse?.data?.projects)) {
     projects = projectsResponse.data.projects;
+  } else if (Array.isArray(projectsResponse?.pagination?.items)) {
+    projects = projectsResponse.pagination.items;
   }
-  const extensionistProjects = projects.filter(
-    (p) => p.role_name === "Extensionista",
-  );
-  await upsertProjects(extensionistProjects);
-  // Remove projects no longer assigned to this extensionist
-  if (extensionistProjects.length > 0) {
-    await deleteProjectsNotIn(extensionistProjects.map((p) => p.id));
+  await upsertProjects(projects);
+  // Remove projects no longer assigned to this user
+  if (projects.length > 0) {
+    await deleteProjectsNotIn(projects.map((p) => p.id));
   }
   report("Descargando proyectos", 1, 1);
 
   // 2. Producers for each project
   let producerCount = 0;
-  for (let i = 0; i < extensionistProjects.length; i++) {
-    const project = extensionistProjects[i];
+  for (let i = 0; i < projects.length; i++) {
+    const project = projects[i];
     report(
-      `Productores (proyecto ${i + 1}/${extensionistProjects.length})`,
+      `Usuarios (proyecto ${i + 1}/${projects.length})`,
       i,
-      extensionistProjects.length,
+      projects.length,
     );
 
     // Fetch all pages
@@ -135,7 +136,7 @@ export async function downloadAllData(
     // Remove producers no longer assigned to this project
     await deleteProducersNotIn(project.id, fetchedProducerIds);
   }
-  report("Productores descargados", producerCount, producerCount);
+  report("Usuarios descargados", producerCount, producerCount);
 
   // Note: Producer details endpoint (/producers/:id) is not available for extensionists.
   // Producer data from the list is sufficient for offline use.

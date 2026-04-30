@@ -202,6 +202,28 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 4,
+    up: async (db) => {
+      const columns = await db.getAllAsync<{ name: string }>(
+        "PRAGMA table_info(users);",
+      );
+      const hasFirstName = columns.some((c) => c.name === "first_name");
+      const hasLastName = columns.some((c) => c.name === "last_name");
+
+      if (!hasFirstName) {
+        await db.execAsync(`
+          ALTER TABLE users ADD COLUMN first_name TEXT;
+        `);
+      }
+
+      if (!hasLastName) {
+        await db.execAsync(`
+          ALTER TABLE users ADD COLUMN last_name TEXT;
+        `);
+      }
+    },
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {

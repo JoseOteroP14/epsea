@@ -1,46 +1,60 @@
 import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
+import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
 import {
-  ACTIVITY_IDS,
-  ACTIVITY_TYPE_LABELS,
-  ACTIVITY_TYPES,
-  createEmptyAgriculturalForm,
-  createEmptyLivestockForm,
-  LIVESTOCK_UNIT_MAP,
-  UNIT_ID_TO_NAME,
-  UNIT_NAME_TO_ID,
-  type ActivityType,
-  type AgriculturalLineForm,
-  type ExistingAgriculturalLine,
-  type ExistingLivestockLine,
-  type LivestockLineForm,
-  type ProductiveLine,
+    ACTIVITY_IDS,
+    ACTIVITY_TYPE_LABELS,
+    ACTIVITY_TYPES,
+    createEmptyAgriculturalForm,
+    createEmptyLivestockForm,
+    LIVESTOCK_UNIT_MAP,
+    UNIT_ID_TO_NAME,
+    UNIT_NAME_TO_ID,
+    type ActivityType,
+    type AgriculturalLineForm,
+    type ExistingAgriculturalLine,
+    type ExistingLivestockLine,
+    type LivestockLineForm,
+    type ProductiveLine,
 } from "@/constants/productive-lines-questions";
+import type { Question } from "@/schemas/characterization";
+import { useAuthStore } from "@/store/useAuthStore";
+import {
+    PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
+    useCharacterizationStore,
+} from "@/store/useCharacterizationStore";
+import { checkConnectivity } from "@/hooks/use-network";
 import { apiFetch } from "@/utils/api";
+import {
+    getAnswers,
+    saveAnswersBatch,
+} from "@/utils/database/repositories/answer-repository";
+import { enqueue } from "@/utils/database/repositories/sync-repository";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
-  BottomSheetBackdrop,
-  BottomSheetModal,
-  BottomSheetScrollView,
-  type BottomSheetBackdropProps,
+    BottomSheetBackdrop,
+    BottomSheetModal,
+    BottomSheetScrollView,
+    type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
-import { ChevronDown, Plus, Search, Sprout, X } from "lucide-react-native";
+import { ChevronDown, ClipboardList, Plus, Search, Sprout, X } from "lucide-react-native";
 import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
 } from "react";
 import {
-  ActivityIndicator,
-  Dimensions,
-  Modal,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Dimensions,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    TextInput,
+    TouchableOpacity,
+    View,
+    type LayoutChangeEvent,
 } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import PagerView from "react-native-pager-view";
@@ -77,8 +91,8 @@ function getLineName(
 const CAROUSEL_PADDING = widthScale(10);
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const CARD_WIDTH = Math.min(SCREEN_WIDTH * 0.75, widthScale(280));
-// Tab bar: 64h + 16 bottom margin + extra breathing room
-const TAB_BAR_RESERVED = verticalScale(96);
+// Keep a compact breathing room so content does not stick to main tab bar.
+const TAB_BAR_RESERVED = verticalScale(82);
 
 const ACTIVITY_BADGE_CONFIG = {
   agricola: { label: "Agrícola", color: "#1a7a3a", bg: "rgba(26,122,58,0.12)" },
@@ -373,6 +387,27 @@ export function ProductiveLinesTab({
 }: ProductiveLinesTabProps) {
   const [activityType, setActivityType] = useState<ActivityType>("agricola");
   const { showAlert } = useAlert();
+  const currentUserId = useAuthStore((state) => state.user?.user_id);
+  const {
+    components,
+    questions: storeQuestions,
+    loadingQuestions,
+    fetchComponents,
+    fetchQuestions,
+    fetchQuestionTypes,
+    fetchSurveyResults,
+    getProductiveLinesComponent,
+    getCanonicalTypeName,
+  } = useCharacterizationStore();
+
+  const [showComplementarySheet, setShowComplementarySheet] = useState(false);
+  const [complementaryAnswers, setComplementaryAnswers] = useState<
+    Record<number, any>
+  >({});
+  const [localComplementaryQuestions, setLocalComplementaryQuestions] =
+    useState<Question[]>([]);
+  const hasFetchedComplementaryQuestions = useRef(false);
+
   const [lineOptions, setLineOptions] = useState<ProductiveLine[]>([]);
   const [allLineOptions, setAllLineOptions] = useState<ProductiveLine[]>([]);
   const [loadingOptions, setLoadingOptions] = useState(false);
@@ -407,6 +442,118 @@ export function ProductiveLinesTab({
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const tabScrollRef = useRef<GHScrollView>(null);
   const snapPoints = useMemo(() => ["92%"], []);
+  const [pagerHeight, setPagerHeight] = useState(verticalScale(252));
+
+  const productiveLinesComponent = getProductiveLinesComponent();
+
+  useEffect(() => {
+    if (components.length === 0) {
+      fetchComponents();
+    }
+    fetchQuestionTypes();
+  }, [components.length, fetchComponents, fetchQuestionTypes]);
+
+  useEffect(() => {
+    if (!productiveLinesComponent || hasFetchedComplementaryQuestions.current) {
+      return;
+    }
+    hasFetchedComplementaryQuestions.current = true;
+    fetchQuestions(productiveLinesComponent.id);
+  }, [productiveLinesComponent, fetchQuestions]);
+
+  useEffect(() => {
+    if (
+      storeQuestions.length > 0 &&
+      productiveLinesComponent &&
+      storeQuestions[0]?.component_id === productiveLinesComponent.id
+    ) {
+      setLocalComplementaryQuestions(storeQuestions);
+    }
+  }, [storeQuestions, productiveLinesComponent]);
+
+  useEffect(() => {
+    if (
+      !productiveLinesComponent ||
+      !producerId ||
+      !projectId ||
+      !currentUserId
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const pid = Number(producerId);
+    const projId = Number(projectId);
+
+    (async () => {
+      const merged: Record<number, any> = {};
+
+      try {
+        const remote = await fetchSurveyResults(
+          projId,
+          pid,
+          PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
+        );
+        for (const item of remote) {
+          if (merged[item.question_id] !== undefined) {
+            if (Array.isArray(merged[item.question_id])) {
+              merged[item.question_id].push(item.answer_value);
+            } else {
+              merged[item.question_id] = [
+                merged[item.question_id],
+                item.answer_value,
+              ];
+            }
+          } else {
+            merged[item.question_id] = item.answer_value;
+          }
+        }
+      } catch (error) {
+        console.error(
+          "Failed to fetch remote productive-lines complementary answers:",
+          error,
+        );
+      }
+
+      try {
+        const local = await getAnswers(
+          pid,
+          projId,
+          productiveLinesComponent.id,
+          currentUserId,
+        );
+        for (const answer of local) {
+          try {
+            const parsed = JSON.parse(answer.value ?? "");
+            if (Array.isArray(parsed)) {
+              merged[answer.question_id] = parsed;
+              continue;
+            }
+          } catch {}
+          merged[answer.question_id] = answer.value;
+        }
+      } catch (error) {
+        console.error(
+          "Failed to load local productive-lines complementary answers:",
+          error,
+        );
+      }
+
+      if (!cancelled) {
+        setComplementaryAnswers(merged);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    productiveLinesComponent,
+    producerId,
+    projectId,
+    currentUserId,
+    fetchSurveyResults,
+  ]);
 
   // Fetch line options when activity type changes
   useEffect(() => {
@@ -693,12 +840,159 @@ export function ProductiveLinesTab({
     }
   }, [producerId, projectId, activityType, agriFormLines, livestockFormLines, showAlert]);
 
+  const handleOpenComplementarySheet = useCallback(() => {
+    if (!productiveLinesComponent) {
+      showAlert({
+        title: "Sin componente",
+        message: "No se encontró el componente de Líneas Productivas.",
+        type: "error",
+      });
+      return;
+    }
+    fetchQuestions(productiveLinesComponent.id);
+    setShowComplementarySheet(true);
+  }, [productiveLinesComponent, fetchQuestions, showAlert]);
+
+  const handleComplementaryAnswerChange = useCallback(
+    (questionId: number, value: any) => {
+      setComplementaryAnswers((prev) => ({ ...prev, [questionId]: value }));
+    },
+    [],
+  );
+
+  const handleCarouselCardLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const cardHeight = event.nativeEvent.layout.height;
+      const requiredHeight = cardHeight + verticalScale(12);
+      setPagerHeight((prev) =>
+        requiredHeight > prev ? requiredHeight : prev,
+      );
+    },
+    [],
+  );
+
+  const handleSaveComplementary = useCallback(async () => {
+    if (
+      !productiveLinesComponent ||
+      !producerId ||
+      !projectId ||
+      !currentUserId
+    ) {
+      return;
+    }
+
+    const pid = Number(producerId);
+    const projId = Number(projectId);
+    const userId = currentUserId;
+
+    const answerEntries = Object.entries(complementaryAnswers).filter(
+      ([, value]) => {
+        if (Array.isArray(value)) return value.length > 0;
+        if (value == null) return false;
+        return String(value).trim() !== "";
+      },
+    );
+
+    if (answerEntries.length === 0) {
+      showAlert({
+        title: "Sin respuestas",
+        message: "Debe diligenciar al menos una respuesta para guardar.",
+        type: "warning",
+      });
+      return;
+    }
+
+    try {
+      const answerRows = answerEntries.map(([questionId, value]) => ({
+        producer_id: pid,
+        project_id: projId,
+        component_id: productiveLinesComponent.id,
+        question_id: Number(questionId),
+        user_id: userId,
+        value: Array.isArray(value)
+          ? JSON.stringify(value)
+          : typeof value === "object" && value !== null
+            ? JSON.stringify(value)
+            : String(value),
+      }));
+
+      const syncAnswers: (
+        | { question_id: number; answer_value: string }
+        | { question_id: number; answers: { answer_value: string }[] }
+      )[] = [];
+
+      for (const row of answerRows) {
+        try {
+          const parsed = JSON.parse(row.value ?? "");
+          if (Array.isArray(parsed)) {
+            syncAnswers.push({
+              question_id: row.question_id,
+              answers: parsed.map((entry) => ({ answer_value: String(entry) })),
+            });
+            continue;
+          }
+        } catch {}
+
+        syncAnswers.push({
+          question_id: row.question_id,
+          answer_value: row.value ?? "",
+        });
+      }
+
+      const payload = {
+        project_id: projId,
+        intervention_method_id: PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
+        producer_id: pid,
+        created_at: new Date().toISOString().split("T")[0],
+        answers: syncAnswers,
+      };
+
+      const isOnline = await checkConnectivity();
+
+      if (isOnline) {
+        await apiFetch("/surveys", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await saveAnswersBatch(answerRows);
+        await enqueue(
+          "survey_answers",
+          `${pid}-${projId}-${PRODUCTIVE_LINES_INTERVENTION_METHOD_ID}-${userId}`,
+          payload,
+          userId,
+        );
+      }
+
+      setShowComplementarySheet(false);
+      showAlert({
+        title: isOnline ? "Guardado" : "Sin internet",
+        message: isOnline
+          ? "Los datos complementarios se guardaron correctamente."
+          : "Los datos complementarios se guardaron localmente y se enviarán al sincronizar.",
+        type: isOnline ? "success" : "warning",
+      });
+    } catch (error) {
+      console.error("Failed to save productive-lines complementary answers:", error);
+      showAlert({
+        title: "Error",
+        message: "No se pudieron guardar los datos complementarios.",
+        type: "error",
+      });
+    }
+  }, [
+    complementaryAnswers,
+    productiveLinesComponent,
+    producerId,
+    projectId,
+    currentUserId,
+    showAlert,
+  ]);
+
   const formLines =
     activityType === "agricola" ? agriFormLines : livestockFormLines;
 
   // ── Unified carousel data ──────────────────────────────────────────────────
-  const [carouselIndex, setCarouselIndex] = useState(0);
-
   const unifiedLines = useMemo<UnifiedLineItem[]>(() => {
     const agri: UnifiedLineItem[] = existingAgriLines.map((line) => ({
       key: `agri-${line.id}`,
@@ -730,15 +1024,6 @@ export function ProductiveLinesTab({
     }));
     return [...agri, ...livestock];
   }, [existingAgriLines, existingLivestockLines, allLineOptions]);
-
-  const pagerRef = useRef<PagerView>(null);
-
-  const onPageSelected = useCallback(
-    (e: { nativeEvent: { position: number } }) => {
-      setCarouselIndex(e.nativeEvent.position);
-    },
-    [],
-  );
 
   const filteredLineOptions = useMemo(() => {
     if (!lineSearchQuery.trim()) return lineOptions;
@@ -828,37 +1113,38 @@ export function ProductiveLinesTab({
             <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
               Líneas productivas
             </ThemedText>
-            <ThemedText style={styles.carouselIndicator}>
-              {carouselIndex + 1}/{unifiedLines.length}
-            </ThemedText>
           </View>
           <PagerView
-            ref={pagerRef}
-            style={styles.pagerView}
+            style={[styles.pagerView, { height: pagerHeight }]}
             initialPage={0}
-            onPageSelected={onPageSelected}
             overdrag
           >
             {unifiedLines.map((item) => (
               <View key={item.key} style={styles.pagerPage} collapsable={false}>
-                <View style={styles.carouselCardWrapper}>
+                <View
+                  style={styles.carouselCardWrapper}
+                  onLayout={handleCarouselCardLayout}
+                >
                   <ExistingLineCard lineName={item.lineName} activityType={item.type} fields={item.fields} />
                 </View>
               </View>
             ))}
           </PagerView>
-          {/* Dot indicators */}
-          <View style={styles.dotsContainer}>
-            {unifiedLines.map((item, i) => (
-              <View
-                key={item.key}
-                style={[
-                  styles.dot,
-                  i === carouselIndex && styles.dotActive,
-                ]}
-              />
-            ))}
-          </View>
+          <TouchableOpacity
+            style={styles.complementaryButton}
+            onPress={handleOpenComplementarySheet}
+            activeOpacity={0.8}
+          >
+            <ClipboardList size={responsiveFont(18)} color="#fff" />
+            <ThemedText
+              lightColor="#fff"
+              darkColor="#fff"
+              type="defaultSemiBold"
+              style={styles.complementaryButtonText}
+            >
+              Datos complementarios
+            </ThemedText>
+          </TouchableOpacity>
         </View>
       ) : (
         formLines.length === 0 && (
@@ -1146,6 +1432,18 @@ export function ProductiveLinesTab({
           </TouchableOpacity>
         </BottomSheetScrollView>
       </BottomSheetModal>
+
+      <SurveyBottomSheet
+        visible={showComplementarySheet}
+        onClose={() => setShowComplementarySheet(false)}
+        title={productiveLinesComponent?.name ?? "LÍNEAS PRODUCTIVAS"}
+        questions={localComplementaryQuestions}
+        answers={complementaryAnswers}
+        onAnswerChange={handleComplementaryAnswerChange}
+        onSave={handleSaveComplementary}
+        getTypeName={getCanonicalTypeName}
+        loading={loadingQuestions}
+      />
     </View>
   );
 }
@@ -1243,11 +1541,10 @@ const styles = StyleSheet.create({
   carouselContainer: {
     flex: 1,
     marginBottom: TAB_BAR_RESERVED,
-    gap: verticalScale(4),
+    gap: verticalScale(6),
   },
   carouselHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: CAROUSEL_PADDING,
   },
@@ -1255,13 +1552,8 @@ const styles = StyleSheet.create({
     fontSize: responsiveFont(15),
     color: "#333",
   },
-  carouselIndicator: {
-    fontSize: responsiveFont(13),
-    color: "#888",
-    fontWeight: "600",
-  },
   pagerView: {
-    flex: 1,
+    flexGrow: 0,
   },
   pagerPage: {
     flex: 1,
@@ -1272,22 +1564,20 @@ const styles = StyleSheet.create({
   carouselCardWrapper: {
     width: CARD_WIDTH,
   },
-  dotsContainer: {
+  complementaryButton: {
     flexDirection: "row",
-    justifyContent: "center",
     alignItems: "center",
-    gap: widthScale(6),
-    paddingVertical: verticalScale(8),
-  },
-  dot: {
-    width: widthScale(7),
-    height: widthScale(7),
-    borderRadius: widthScale(4),
-    backgroundColor: "rgba(0,0,0,0.15)",
-  },
-  dotActive: {
+    justifyContent: "center",
     backgroundColor: "#1a7a3a",
-    width: widthScale(20),
+    borderRadius: widthScale(10),
+    marginHorizontal: CAROUSEL_PADDING,
+    marginTop: verticalScale(14),
+    marginBottom: verticalScale(4),
+    paddingVertical: verticalScale(10),
+    gap: widthScale(8),
+  },
+  complementaryButtonText: {
+    fontSize: responsiveFont(15),
   },
   existingCard: {
     backgroundColor: "#fff",
@@ -1310,7 +1600,7 @@ const styles = StyleSheet.create({
   },
   existingCardTitle: {
     flex: 1,
-    fontSize: responsiveFont(15),
+    fontSize: responsiveFont(18),
     color: "#1a7a3a",
   },
   activityBadge: {
@@ -1319,7 +1609,7 @@ const styles = StyleSheet.create({
     borderRadius: widthScale(6),
   },
   activityBadgeText: {
-    fontSize: responsiveFont(11),
+    fontSize: responsiveFont(13),
     fontWeight: "700",
   },
   existingCardGrid: {
@@ -1332,11 +1622,11 @@ const styles = StyleSheet.create({
     gap: verticalScale(2),
   },
   existingCardLabel: {
-    fontSize: responsiveFont(13),
+    fontSize: responsiveFont(15),
     color: "#666",
   },
   existingCardValue: {
-    fontSize: responsiveFont(14),
+    fontSize: responsiveFont(17),
     color: "#333",
     fontWeight: "600",
   },

@@ -1,11 +1,11 @@
+import { apiFetch } from "@/utils/api";
+import {
+    getAllProjects,
+    upsertProjects,
+} from "@/utils/database/repositories/project-repository";
 import { create } from "zustand";
 import { Project } from "../schemas/project";
-import { apiFetch } from "@/utils/api";
 import { useAuthStore } from "./useAuthStore";
-import {
-  upsertProjects,
-  getAllProjects,
-} from "@/utils/database/repositories/project-repository";
 
 export interface ProjectStats {
   totalProducers: number;
@@ -54,28 +54,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       } else if (response?.data && Array.isArray(response.data)) {
         projects = response.data;
       } else if (
+        response?.data?.pagination?.items &&
+        Array.isArray(response.data.pagination.items)
+      ) {
+        projects = response.data.pagination.items;
+      } else if (
         response?.data?.projects &&
         Array.isArray(response.data.projects)
       ) {
         projects = response.data.projects;
+      } else if (
+        response?.pagination?.items &&
+        Array.isArray(response.pagination.items)
+      ) {
+        projects = response.pagination.items;
       }
-
-      // Filtrar solo proyectos donde el usuario es Extensionista
-      const extensionistProjects = projects.filter(
-        (p) => p.role_name === "Extensionista",
-      );
 
       // Write-through: persist to SQLite
       try {
-        await upsertProjects(extensionistProjects);
+        await upsertProjects(projects);
       } catch (e) {
         console.error("Failed to persist projects to SQLite:", e);
       }
 
-      set({ projects: extensionistProjects, loading: false });
+      set({ projects, loading: false });
 
       // Fetch stats for each project in parallel
-      extensionistProjects.forEach((project) => {
+      projects.forEach((project) => {
         if (project.id) {
           get().fetchProjectStats(project.id);
         }
@@ -86,12 +91,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       // Fallback: read from SQLite
       try {
         const cached = await getAllProjects();
-        const extensionistProjects = cached.filter(
-          (p) => p.role_name === "Extensionista",
-        );
-        if (extensionistProjects.length > 0) {
-          set({ projects: extensionistProjects, loading: false, error: null });
-          extensionistProjects.forEach((project) => {
+        if (cached.length > 0) {
+          set({ projects: cached, loading: false, error: null });
+          cached.forEach((project) => {
             if (project.id) {
               get().fetchProjectStats(project.id);
             }
@@ -138,17 +140,27 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       let totalProducers = 0;
       let characterizedProducers = 0;
 
+      const toNumber = (value: unknown): number | null => {
+        if (value === null || value === undefined) return null;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+      };
+
+      const extractTotal = (payload: any): number | null =>
+        toNumber(payload?.meta?.total) ??
+        toNumber(payload?.data?.meta?.total) ??
+        toNumber(payload?.data?.pagination?.totalItems) ??
+        toNumber(payload?.data?.pagination?.total_items) ??
+        toNumber(payload?.data?.pagination?.total) ??
+        toNumber(payload?.pagination?.total) ??
+        toNumber(payload?.pagination?.total_items) ??
+        toNumber(payload?.pagination?.totalItems);
+
+      const totalFromResponse = extractTotal(response);
+
       // Extract total count from different response structures
-      if (response?.meta?.total !== undefined) {
-        totalProducers = response.meta.total;
-      } else if (response?.data?.meta?.total !== undefined) {
-        totalProducers = response.data.meta.total;
-      } else if (response?.data?.pagination?.totalItems !== undefined) {
-        totalProducers = response.data.pagination.totalItems;
-      } else if (response?.data?.pagination?.total !== undefined) {
-        totalProducers = response.data.pagination.total;
-      } else if (response?.pagination?.total !== undefined) {
-        totalProducers = response.pagination.total;
+      if (totalFromResponse !== null) {
+        totalProducers = totalFromResponse;
       } else if (Array.isArray(response?.data)) {
         // If no pagination, we need to get all to count
         const fullResponse = await apiFetch<any>(
@@ -180,6 +192,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           producers = fullProducersResponse.data.pagination.items;
         }
 
+        const fullTotalFromResponse = extractTotal(fullProducersResponse);
+        const hasPagination = Boolean(
+          fullProducersResponse?.data?.pagination ||
+            fullProducersResponse?.pagination ||
+            fullProducersResponse?.meta ||
+            fullProducersResponse?.data?.meta,
+        );
+
         // Count characterized producers based on is_characterized field if it exists
         characterizedProducers = producers.filter(
           (p: any) =>
@@ -189,8 +209,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             p.has_characterization === true,
         ).length;
 
-        // Update totalProducers if we got the full list
-        if (producers.length > 0) {
+        // Only override total when we can confirm a full list or explicit total
+        if (totalFromResponse === null && fullTotalFromResponse !== null) {
+          totalProducers = fullTotalFromResponse;
+        } else if (
+          totalFromResponse === null &&
+          fullTotalFromResponse === null &&
+          !hasPagination &&
+          producers.length > 0
+        ) {
           totalProducers = producers.length;
         }
       } catch {

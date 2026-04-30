@@ -1,22 +1,22 @@
-import { ThemedText } from "@/components/themed-text";
 import { QuestionRenderer } from "@/components/question-renderer";
+import { ThemedText } from "@/components/themed-text";
+import type { Question } from "@/schemas/characterization";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { ChevronLeft, ChevronRight } from "lucide-react-native";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
-  ScrollView,
-  StyleSheet,
-  TouchableOpacity,
-  View,
-  type ComponentType,
+    ScrollView,
+    StyleSheet,
+    TouchableOpacity,
+    View,
+    type ComponentType,
 } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
+    useAnimatedStyle,
+    useSharedValue,
+    withTiming,
 } from "react-native-reanimated";
-import type { Question } from "@/schemas/characterization";
 
 interface QuestionWizardProps {
   questions: Question[];
@@ -149,7 +149,7 @@ export function QuestionWizard({
                     !isCurrent && isAnswered && styles.pageBoxTextAnswered,
                   ]}
                 >
-                  {q.id}
+                  {index + 1}
                 </ThemedText>
               </TouchableOpacity>
             );

@@ -36,8 +36,8 @@ const LIGHT_GREEN = "#E2EFDA";
 // ─── Data Interface ───────────────────────────────────────────────────────
 
 export interface Visit1PdfData {
-  // Section 1: Productor
-  nombreCompletoProductor: string;
+  // Section 1: Usuario
+  nombreCompletoUsuario: string;
   tipoDocumento: string;
   numeroIdentificacion: string;
   numeroTelefonico: string;
@@ -259,14 +259,14 @@ function buildHeader(logoLeft: string, logoRight: string) {
 
 function buildSection1(d: Visit1PdfData) {
   return [
-    secHeader("1. Identificacion Del Usuario Productor"),
+    secHeader("1. Identificacion Del Usuario"),
     {
       table: {
         widths: ["25%", "*"],
         body: [
           [
-            lbl("Nombre Completo\nUsuario Productor"),
-            val(d.nombreCompletoProductor),
+            lbl("Nombre Completo\nUsuario"),
+            val(d.nombreCompletoUsuario),
           ],
         ],
       },
@@ -534,7 +534,7 @@ function buildSection6(d: Visit1PdfData) {
         body: [
           [
             lbl("Nombre Persona Quien\nAtiende El Acompañamiento"),
-            lbl(`Usuario\nProductor\n${mark(1)}`, { alignment: "center" }),
+            lbl(`Usuario\n${mark(1)}`, { alignment: "center" }),
             lbl(`Trabajador UP\n${mark(2)}`, { alignment: "center" }),
             lbl(`Persona núcleo\nfamiliar\n${mark(3)}`, { alignment: "center" }),
             lbl(`Otro\n${mark(4)}`, { alignment: "center" }),
@@ -550,7 +550,7 @@ function buildSection6(d: Visit1PdfData) {
         body: [
           [
             lbl(
-              "Solo si quien atiende la visita es diferente al productor\nUsuario diligencié: Trabajador UP, Persona Núcleo\nFamiliar, Otro",
+              "Solo si quien atiende la visita es diferente al usuario\nUsuario diligencié: Trabajador UP, Persona Núcleo\nFamiliar, Otro",
             ),
             val(d.attendanceId !== 1 ? d.nombrePersonaAtiende : ""),
           ],
@@ -636,7 +636,7 @@ export async function generateAndPrintVisit1Pdf(
   const docDefinition = buildDocDefinition(data, logoLeft, logoRight);
   const base64 = await pdfToBase64(docDefinition);
 
-  const safeName = data.nombreCompletoProductor
+  const safeName = data.nombreCompletoUsuario
     .replace(/[^a-zA-ZáéíóúÁÉÍÓÚñÑ0-9 ]/g, "")
     .replace(/\s+/g, "_");
   const fileName = `visita1_${safeName}.pdf`;

@@ -10,6 +10,8 @@ export const RoleSchema = z.object({
 export const UserSchema = z.object({
     user_id: z.number(),
     username: z.string(),
+    first_name: z.string().optional(),
+    last_name: z.string().optional(),
     roles: z.array(RoleSchema),
 });
 

@@ -1,8 +1,13 @@
 import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { useAuthStore } from "@/store/useAuthStore";
+import {
+    PROPERTY_INFO_INTERVENTION_METHOD_ID,
+    useCharacterizationStore,
+} from "@/store/useCharacterizationStore";
 import { useProducerStore } from "@/store/useProducerStore";
 import { apiFetch } from "@/utils/api";
+import { getAnswers } from "@/utils/database/repositories/answer-repository";
 import {
     convertPhotosToBase64,
     generateAndPrintVisit1Pdf,
@@ -101,7 +106,7 @@ interface LocalPhoto {
 // ─── Attendance options ─────────────────────────────────────────────────────
 
 const ATTENDANCE_OPTIONS = [
-  { id: "1", label: "Usuario Productor" },
+  { id: "1", label: "Usuario" },
   { id: "2", label: "Trabajador UP" },
   { id: "3", label: "Persona núcleo familiar" },
   { id: "4", label: "Otro" },
@@ -599,18 +604,158 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
       const now = new Date();
       const hora = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
+      // ── Fetch property info for the PDF ──────────────────────────────
+      let nombreDelPredio = "";
+      let asnm = "";
+      let departamento = producerDetail?.municipality?.department_name ?? "";
+      let municipio = producerDetail?.municipality?.name ?? "";
+      let corregimientoVereda = "";
+
+      try {
+        const { fetchSurveyResults, fetchQuestions, fetchQuestionTypes, getCanonicalTypeName, getPropertyInfoComponent, fetchDepartments, fetchMunicipalities } =
+          useCharacterizationStore.getState();
+
+        // Ensure question types are loaded
+        await fetchQuestionTypes();
+
+        const propComponent = getPropertyInfoComponent();
+        const pid = Number(producerId);
+        const projId = Number(projectId);
+
+        if (propComponent) {
+          // Fetch questions for property info component
+          await fetchQuestions(propComponent.id);
+          const { questions: propQuestions } = useCharacterizationStore.getState();
+
+          // Fetch survey results from API
+          const results = await fetchSurveyResults(
+            projId,
+            pid,
+            PROPERTY_INFO_INTERVENTION_METHOD_ID,
+          );
+
+          // Build answer map: question_id -> answer_value
+          const answerMap: Record<number, string> = {};
+          for (const item of results) {
+            answerMap[item.question_id] = item.answer_value;
+          }
+
+          // Also check local answers (offline fallback — local takes precedence)
+          try {
+            const currentUserId = useAuthStore.getState().user?.user_id;
+            if (currentUserId) {
+              const localAnswers = await getAnswers(pid, projId, propComponent.id, currentUserId);
+              for (const a of localAnswers) {
+                if (a.value) {
+                  answerMap[a.question_id] = a.value;
+                }
+              }
+            }
+          } catch { /* ignore local fallback errors */ }
+
+          // Map questions to PDF fields by order and type
+          for (const q of propQuestions) {
+            if (q.component_id !== propComponent.id) continue;
+            const typeName = getCanonicalTypeName(q.question_type_id);
+            const rawVal = answerMap[q.id];
+            if (!rawVal) continue;
+
+            const desc = (q.description ?? q.name ?? "").toLowerCase();
+
+            if (typeName === "location") {
+              // Value format: "department_cod|municipality_code|municipality_name|department_name"
+              // or legacy: "department_cod|municipality_code"
+              if (rawVal.includes("|")) {
+                const parts = rawVal.split("|");
+                const muniName = parts[2] ?? "";
+                const deptName = parts[3] ?? "";
+                if (muniName && deptName) {
+                  municipio = muniName;
+                  departamento = deptName;
+                }
+              }
+            } else if (desc.includes("nombre") && desc.includes("predio")) {
+              nombreDelPredio = rawVal;
+            } else if (desc.includes("asnm") || desc.includes("altura") || desc.includes("nivel del mar")) {
+              asnm = rawVal;
+            } else if (desc.includes("corregimiento") || desc.includes("vereda")) {
+              corregimientoVereda = rawVal;
+            }
+          }
+
+          // Fallback: scan all answer values for location pattern
+          // (handles cases where question types aren't fully loaded)
+          if (!departamento || !municipio) {
+            for (const rawVal of Object.values(answerMap)) {
+              if (rawVal && rawVal.includes("|")) {
+                const parts = rawVal.split("|");
+                if (parts.length >= 4 && parts[2] && parts[3]) {
+                  municipio = parts[2];
+                  departamento = parts[3];
+                  break;
+                }
+              }
+            }
+          }
+
+          // Fallback: resolve names from DIVIPOLA codes via API
+          // when only codes are available (legacy format or API-only data)
+          if (!departamento || !municipio) {
+            // Extract codes from any pipe-separated location value
+            let deptCode = "";
+            let muniCode = "";
+            for (const rawVal of Object.values(answerMap)) {
+              if (rawVal && rawVal.includes("|")) {
+                const parts = rawVal.split("|");
+                if (parts[0] && parts[1]) {
+                  deptCode = parts[0];
+                  muniCode = parts[1];
+                  break;
+                }
+              }
+            }
+
+            // If no codes from answers, try producer detail municipality_code
+            if (!deptCode && producerDetail?.municipality_code) {
+              muniCode = producerDetail.municipality_code;
+              // department_code is the first 2 digits of DIVIPOLA municipality code
+              deptCode = producerDetail.municipality_code.substring(0, 2);
+            }
+
+            if (deptCode && muniCode) {
+              try {
+                const depts = await fetchDepartments();
+                const deptMatch = depts.find((d) => d.department_cod === deptCode);
+                if (deptMatch) {
+                  departamento = deptMatch.department;
+                  const munis = await fetchMunicipalities(deptCode);
+                  const muniMatch = munis.find((m) => m.municipality_code === muniCode);
+                  if (muniMatch) {
+                    municipio = muniMatch.municipality;
+                  }
+                }
+              } catch {
+                // Ignore API errors — keep whatever was already resolved
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch property info for PDF:", e);
+      }
+
       const pdfData: Visit1PdfData = {
-        // Section 1: Productor
-        nombreCompletoProductor: fullName,
+        // Section 1: Usuario
+        nombreCompletoUsuario: fullName,
         tipoDocumento: producerDetail?.document_type?.name ?? "",
         numeroIdentificacion: producerDetail?.identification ?? "",
         numeroTelefonico: producerDetail?.phone ?? "",
         // Section 2: Predio
-        nombreDelPredio: "",
-        asnm: "",
-        departamento: producerDetail?.municipality?.department_name ?? "",
-        municipio: producerDetail?.municipality?.name ?? "",
-        corregimientoVereda: "",
+        nombreDelPredio,
+        asnm,
+        departamento,
+        municipio,
+        corregimientoVereda,
         // Section 3: Sistema Productivo
         lineaProductivaPrincipal: "",
         lineaProductivaSecundaria: "",
@@ -645,6 +790,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
     objective, diagnosis, recommendations, observations,
     attendanceId, attendanceName, registrationDate,
     localPhotos, existingImages, token, producerDetail, authUser,
+    producerId, projectId,
   ]);
 
   // ── Render: section header ────────────────────────────────────────────
@@ -877,7 +1023,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
                   : `Nombre del ${selectedOption?.label ?? ""}`}
               </ThemedText>
               <ThemedText style={styles.fieldHintSmall}>
-                Solo se habilita si selecciona una opción diferente a Usuario Productor
+                Solo se habilita si selecciona una opción diferente a Usuario
               </ThemedText>
               <TextInput
                 style={styles.textInput}

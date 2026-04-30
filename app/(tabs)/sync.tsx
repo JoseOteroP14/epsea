@@ -175,7 +175,7 @@ export default function SyncScreen() {
             darkColor="rgba(255,255,255,0.7)"
             style={styles.actionSubtitle}
           >
-            Proyectos, productores, preguntas
+            Proyectos, usuarios, preguntas
           </ThemedText>
         </View>
       </TouchableOpacity>

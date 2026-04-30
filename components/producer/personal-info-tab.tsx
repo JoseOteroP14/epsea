@@ -1,12 +1,14 @@
 import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
+import { checkConnectivity } from "@/hooks/use-network";
 import type { Question } from "@/schemas/characterization";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
     PERSONAL_INFO_INTERVENTION_METHOD_ID,
     useCharacterizationStore,
 } from "@/store/useCharacterizationStore";
+import { apiFetch } from "@/utils/api";
 import {
     getAnswers,
     saveAnswersBatch,
@@ -14,6 +16,8 @@ import {
 import { enqueue } from "@/utils/database/repositories/sync-repository";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
+    ChevronDown,
+    ChevronUp,
     ClipboardList,
     FileQuestion,
     Layers,
@@ -67,6 +71,19 @@ function resolveDisplayValue(
 
   const typeName = getCanonicalTypeName(questionTypeId);
 
+  // Location type: value is "department_cod|municipality_code|municipality_name|department_name"
+  if (typeName === "location") {
+    if (typeof rawValue === "string" && rawValue.includes("|")) {
+      const parts = rawValue.split("|");
+      const muniName = parts[2] ?? "";
+      const deptName = parts[3] ?? "";
+      if (muniName && deptName) {
+        return `${muniName.toUpperCase()}-${deptName.toUpperCase()}`;
+      }
+    }
+    return String(rawValue);
+  }
+
   if (typeName === "list") {
     const detail = questionDetails[questionId] as any;
     const options: any[] =
@@ -113,7 +130,7 @@ function resolveDisplayValue(
   }
 
   if (typeName === "bool") {
-    return rawValue === true || rawValue === "true" ? "Sí" : "No";
+    return rawValue === true || rawValue === "true" ? "SI" : "NO";
   }
 
   if (
@@ -122,7 +139,7 @@ function resolveDisplayValue(
     rawValue === false ||
     rawValue === "false"
   ) {
-    return rawValue === true || rawValue === "true" ? "Sí" : "No";
+    return rawValue === true || rawValue === "true" ? "SI" : "NO";
   }
 
   return String(rawValue);
@@ -168,6 +185,12 @@ export function PersonalInfoTab({
   // Edit mode
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [editAnswers, setEditAnswers] = useState<Record<number, any>>({});
+
+  // Snapshot of answers before opening sheet, used to restore on close without save
+  const answersSnapshotRef = useRef<Record<number, any>>({});
+
+  // Accordion: track which parent cards have their children expanded
+  const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (components.length === 0) {
@@ -281,6 +304,8 @@ export function PersonalInfoTab({
 
   // Build display answers with nesting for dependent questions
   useEffect(() => {
+    // Don't recompute while sheet is open to avoid unmounting the sheet
+    if (showSheet) return;
     if (localQuestions.length === 0 || Object.keys(answers).length === 0) {
       setSavedAnswers([]);
       return;
@@ -333,19 +358,23 @@ export function PersonalInfoTab({
     }
 
     setSavedAnswers(display);
-  }, [localQuestions, answers, questionDetails, getCanonicalTypeName]);
+  }, [localQuestions, answers, questionDetails, getCanonicalTypeName, showSheet]);
 
   const handleApply = useCallback(() => {
     if (!activeComponent) return;
     setEditingQuestion(null);
+    answersSnapshotRef.current = { ...answers };
     fetchQuestions(activeComponent.id);
     setShowSheet(true);
-  }, [activeComponent, fetchQuestions]);
+  }, [activeComponent, fetchQuestions, answers]);
 
   const handleCloseSheet = useCallback(() => {
+    if (!editingQuestion) {
+      setAnswers(answersSnapshotRef.current);
+    }
     setShowSheet(false);
     setEditingQuestion(null);
-  }, []);
+  }, [editingQuestion]);
 
   const handleAnswerChange = useCallback((questionId: number, value: any) => {
     setAnswers((prev) => ({ ...prev, [questionId]: value }));
@@ -382,8 +411,6 @@ export function PersonalInfoTab({
             : null,
       }));
 
-      await saveAnswersBatch(answerRows);
-
       // Build sync payload — multi-select uses nested `answers` array format
       const syncAnswers: ({ question_id: number; answer_value: string } | { question_id: number; answers: { answer_value: string }[] })[] = [];
       for (const row of answerRows) {
@@ -403,27 +430,49 @@ export function PersonalInfoTab({
         });
       }
 
-      await enqueue(
-        "survey_answers",
-        `${pid}-${projId}-${PERSONAL_INFO_INTERVENTION_METHOD_ID}-${userId}`,
-        {
-          project_id: projId,
-          intervention_method_id: PERSONAL_INFO_INTERVENTION_METHOD_ID,
-          producer_id: pid,
-          created_at: new Date().toISOString().split("T")[0],
-          answers: syncAnswers,
-        },
-        userId,
-      );
+      const payload = {
+        project_id: projId,
+        intervention_method_id: PERSONAL_INFO_INTERVENTION_METHOD_ID,
+        producer_id: pid,
+        created_at: new Date().toISOString().split("T")[0],
+        answers: syncAnswers,
+      };
+
+      const isOnline = await checkConnectivity();
+
+      if (isOnline) {
+        await apiFetch("/surveys", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        showAlert({
+          title: "Guardado",
+          message: "Las respuestas se guardaron correctamente.",
+          type: "success",
+        });
+      } else {
+        await saveAnswersBatch(answerRows);
+        await enqueue(
+          "survey_answers",
+          `${pid}-${projId}-${PERSONAL_INFO_INTERVENTION_METHOD_ID}-${userId}`,
+          payload,
+          userId,
+        );
+        showAlert({
+          title: "Sin internet",
+          message:
+            "Las respuestas se guardaron localmente y se enviarán al sincronizar.",
+          type: "warning",
+        });
+      }
 
       setShowSheet(false);
       setHasSurvey(true);
-      showAlert({ title: "Guardado", message: "Las respuestas se guardaron localmente.", type: "success" });
     } catch (error) {
       console.error("Failed to save answers:", error);
       showAlert({ title: "Error", message: "No se pudieron guardar las respuestas.", type: "error" });
     }
-  }, [answers, activeComponent, producerId, projectId, currentUserId]);
+  }, [answers, activeComponent, producerId, projectId, currentUserId, showAlert]);
 
   // Edit single answer
   const handleEditPress = useCallback(
@@ -531,7 +580,7 @@ export function PersonalInfoTab({
     );
   }
 
-  if (loadingAnswers || (Object.keys(answers).length > 0 && savedAnswers.length === 0)) {
+  if (loadingAnswers || (!showSheet && Object.keys(answers).length > 0 && savedAnswers.length === 0)) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#1a7a3a" />
@@ -548,10 +597,10 @@ export function PersonalInfoTab({
           <ClipboardList size={responsiveFont(48)} color="#1a7a3a" />
         </View>
         <ThemedText type="defaultSemiBold" style={styles.introTitle}>
-          Información Personal del Productor
+          Información Personal del Usuario
         </ThemedText>
         <ThemedText style={styles.introDescription}>
-          Registre la información personal del productor según los campos
+          Registre la información personal del usuario según los campos
           establecidos.
         </ThemedText>
         <TouchableOpacity
@@ -621,19 +670,62 @@ export function PersonalInfoTab({
                   </ThemedText>
                 </View>
 
-                {/* Nested child answers (dependent questions) */}
-                {item.children?.map((child, childIdx) => (
-                  <View key={childIdx} style={styles.childAnswerCard}>
-                    <ThemedText style={styles.childAnswerQuestion}>
-                      {child.questionName}
-                    </ThemedText>
-                    <View style={styles.childAnswerValueContainer}>
-                      <ThemedText style={styles.childAnswerValue}>
-                        {child.displayValue}
+                {/* Nested child answers (accordion) */}
+                {item.children && item.children.length > 0 && (
+                  <>
+                    <TouchableOpacity
+                      style={styles.accordionToggle}
+                      onPress={() => {
+                        setExpandedCards((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(item.questionId)) {
+                            next.delete(item.questionId);
+                          } else {
+                            next.add(item.questionId);
+                          }
+                          return next;
+                        });
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <ThemedText style={styles.accordionToggleText}>
+                        {expandedCards.has(item.questionId)
+                          ? "Ocultar subpreguntas"
+                          : `Ver ${item.children.length} subpregunta${item.children.length > 1 ? "s" : ""}`}
                       </ThemedText>
-                    </View>
-                  </View>
-                ))}
+                      {expandedCards.has(item.questionId) ? (
+                        <ChevronUp size={responsiveFont(16)} color="#1a7a3a" />
+                      ) : (
+                        <ChevronDown size={responsiveFont(16)} color="#1a7a3a" />
+                      )}
+                    </TouchableOpacity>
+
+                    {expandedCards.has(item.questionId) &&
+                      item.children.map((child, childIdx) => (
+                        <View key={childIdx} style={styles.childAnswerCard}>
+                          <View style={styles.answerHeader}>
+                            <ThemedText style={styles.childAnswerQuestion}>
+                              {child.questionName}
+                            </ThemedText>
+                            {answerIds[child.questionId] != null && (
+                              <TouchableOpacity
+                                style={styles.editButton}
+                                onPress={() => handleEditPress(child.questionId)}
+                                activeOpacity={0.7}
+                              >
+                                <Pencil size={responsiveFont(14)} color="#1a7a3a" />
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                          <View style={styles.childAnswerValueContainer}>
+                            <ThemedText style={styles.childAnswerValue}>
+                              {child.displayValue}
+                            </ThemedText>
+                          </View>
+                        </View>
+                      ))}
+                  </>
+                )}
               </View>
             ))
           ) : (
@@ -747,8 +839,6 @@ const styles = StyleSheet.create({
     borderRadius: widthScale(10),
     padding: widthScale(14),
     marginBottom: verticalScale(10),
-    borderLeftWidth: 3,
-    borderLeftColor: "#1a7a3a",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
@@ -785,17 +875,28 @@ const styles = StyleSheet.create({
     fontSize: responsiveFont(16),
     fontWeight: "500",
   },
+  accordionToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: widthScale(4),
+    marginTop: verticalScale(10),
+    paddingVertical: verticalScale(8),
+  },
+  accordionToggleText: {
+    fontSize: responsiveFont(13),
+    color: "#1a7a3a",
+    fontWeight: "600",
+  },
   childAnswerCard: {
     marginTop: verticalScale(10),
-    marginLeft: widthScale(12),
-    paddingLeft: widthScale(12),
     paddingVertical: verticalScale(8),
-    borderLeftWidth: 2,
-    borderLeftColor: "rgba(26, 122, 58, 0.4)",
+    paddingHorizontal: widthScale(12),
     backgroundColor: "rgba(26, 122, 58, 0.04)",
     borderRadius: widthScale(8),
   },
   childAnswerQuestion: {
+    flex: 1,
     fontSize: responsiveFont(14),
     fontWeight: "600",
     marginBottom: verticalScale(6),

@@ -15,12 +15,16 @@ import type {
 } from "@/schemas/characterization";
 import { useCharacterizationStore } from "@/store/useCharacterizationStore";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
-import React, { useCallback, useEffect, useState } from "react";
+import { ChevronDown, Search } from "lucide-react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
+    FlatList,
+    Modal,
     StyleSheet,
     TextInput,
     TouchableOpacity,
+    TouchableWithoutFeedback,
     View,
 } from "react-native";
 
@@ -29,6 +33,76 @@ interface QuestionRendererProps {
   typeName: string;
   value: any;
   onChange: (questionId: number, value: any) => void;
+}
+
+const QUESTION_TYPE_ALIASES: Record<string, string> = {
+  text: "text",
+  texto: "text",
+  date: "date",
+  fecha: "date",
+  bool: "bool",
+  boolean: "bool",
+  booleana: "bool",
+  booleano: "bool",
+  "si/no": "bool",
+  "s\u00ed/no": "bool",
+  numeric: "numeric",
+  number: "numeric",
+  numero: "numeric",
+  numerica: "numeric",
+  "num\u00e9rica": "numeric",
+  numerico: "numeric",
+  "num\u00e9rico": "numeric",
+  list: "list",
+  lista: "list",
+  logica: "bool",
+  "l\u00f3gica": "bool",
+  logico: "bool",
+  "l\u00f3gico": "bool",
+  logic: "bool",
+  logical: "bool",
+  dependent_list: "dependent_list",
+  "lista dependiente": "dependent_list",
+  location: "location",
+  ubicacion: "location",
+  "ubicaci\u00f3n": "location",
+};
+
+function normalizeQuestionType(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.toLowerCase().trim();
+  return QUESTION_TYPE_ALIASES[normalized] ?? null;
+}
+
+function inferQuestionTypeFromMetadata(question: Question): string | null {
+  const raw = question as Record<string, unknown>;
+  const rawQuestionType =
+    raw.question_type && typeof raw.question_type === "object"
+      ? (raw.question_type as Record<string, unknown>)
+      : null;
+  const rawQuestionTypeAlt =
+    raw.questionType && typeof raw.questionType === "object"
+      ? (raw.questionType as Record<string, unknown>)
+      : null;
+
+  const candidates: unknown[] = [
+    raw.type,
+    raw.question_type_name,
+    raw.questionTypeName,
+    raw.question_type,
+    rawQuestionType?.type,
+    rawQuestionType?.name,
+    raw.questionType,
+    rawQuestionTypeAlt?.type,
+    rawQuestionTypeAlt?.name,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeQuestionType(candidate);
+    if (normalized) return normalized;
+  }
+
+  return null;
 }
 
 function TextQuestion({
@@ -279,16 +353,33 @@ function LocationQuestion({
   const { fetchDepartments, fetchMunicipalities } = useCharacterizationStore();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [municipalities, setMunicipalities] = useState<Municipality[]>([]);
-  const [selectedDept, setSelectedDept] = useState<string | null>(null);
+  const [selectedDept, setSelectedDept] = useState<Department | null>(null);
+  const [selectedMuni, setSelectedMuni] = useState<Municipality | null>(null);
   const [loadingDepts, setLoadingDepts] = useState(true);
   const [loadingMunis, setLoadingMunis] = useState(false);
+  const [showDeptModal, setShowDeptModal] = useState(false);
+  const [showMuniModal, setShowMuniModal] = useState(false);
+  const [deptSearch, setDeptSearch] = useState("");
+  const [muniSearch, setMuniSearch] = useState("");
 
-  // Parse stored value: format is "department_cod|municipality_code" or just municipality_code
+  // Parse stored value: "department_cod|municipality_code|municipality_name|department_name"
   useEffect(() => {
     if (value && typeof value === "string" && value.includes("|")) {
-      const [deptCod] = value.split("|");
-      if (deptCod && deptCod !== selectedDept) {
-        setSelectedDept(deptCod);
+      const parts = value.split("|");
+      const deptCod = parts[0];
+      const muniCode = parts[1];
+      const muniName = parts[2] ?? "";
+      const deptName = parts[3] ?? "";
+      if (deptCod && !selectedDept) {
+        setSelectedDept({ department_cod: deptCod, department: deptName });
+      }
+      if (muniCode && !selectedMuni) {
+        setSelectedMuni({
+          municipality_code: muniCode,
+          municipality: muniName,
+          department_cod: deptCod,
+          department: deptName,
+        });
       }
     }
   }, [value]);
@@ -300,6 +391,12 @@ function LocationQuestion({
       try {
         const depts = await fetchDepartments();
         setDepartments(depts);
+        // If we have a saved value, update names from fresh data
+        if (value && typeof value === "string" && value.includes("|")) {
+          const deptCod = value.split("|")[0];
+          const match = depts.find((d) => d.department_cod === deptCod);
+          if (match) setSelectedDept(match);
+        }
       } catch (e) {
         console.error("Failed to fetch departments:", e);
       } finally {
@@ -317,36 +414,60 @@ function LocationQuestion({
     (async () => {
       setLoadingMunis(true);
       try {
-        const munis = await fetchMunicipalities(selectedDept);
+        const munis = await fetchMunicipalities(selectedDept.department_cod);
         setMunicipalities(munis);
+        // If we have a saved value, update names from fresh data
+        if (value && typeof value === "string" && value.includes("|")) {
+          const muniCode = value.split("|")[1];
+          const match = munis.find((m) => m.municipality_code === muniCode);
+          if (match) setSelectedMuni(match);
+        }
       } catch (e) {
         console.error("Failed to fetch municipalities:", e);
       } finally {
         setLoadingMunis(false);
       }
     })();
-  }, [selectedDept, fetchMunicipalities]);
+  }, [selectedDept?.department_cod, fetchMunicipalities]);
 
-  const handleDeptPress = useCallback(
-    (deptCod: string) => {
-      setSelectedDept(deptCod);
+  const handleDeptSelect = useCallback(
+    (dept: Department) => {
+      setSelectedDept(dept);
+      setSelectedMuni(null);
+      setShowDeptModal(false);
+      setDeptSearch("");
       // Clear municipality selection when department changes
       onChange(question.id, null);
     },
     [question.id, onChange],
   );
 
-  const handleMuniPress = useCallback(
-    (muniCode: string) => {
-      // Store as "department_cod|municipality_code" for full traceability
-      onChange(question.id, `${selectedDept}|${muniCode}`);
+  const handleMuniSelect = useCallback(
+    (muni: Municipality) => {
+      setSelectedMuni(muni);
+      setShowMuniModal(false);
+      setMuniSearch("");
+      // Store as "department_cod|municipality_code|municipality_name|department_name"
+      const deptName = selectedDept?.department ?? muni.department ?? "";
+      onChange(
+        question.id,
+        `${muni.department_cod}|${muni.municipality_code}|${muni.municipality}|${deptName}`,
+      );
     },
     [question.id, selectedDept, onChange],
   );
 
-  const selectedMuniCode = value && typeof value === "string" && value.includes("|")
-    ? value.split("|")[1]
-    : null;
+  const filteredDepts = useMemo(() => {
+    if (!deptSearch.trim()) return departments;
+    const q = deptSearch.toLowerCase();
+    return departments.filter((d) => d.department.toLowerCase().includes(q));
+  }, [departments, deptSearch]);
+
+  const filteredMunis = useMemo(() => {
+    if (!muniSearch.trim()) return municipalities;
+    const q = muniSearch.toLowerCase();
+    return municipalities.filter((m) => m.municipality.toLowerCase().includes(q));
+  }, [municipalities, muniSearch]);
 
   if (loadingDepts) {
     return <ActivityIndicator size="small" color="#1a7a3a" style={styles.detailLoader} />;
@@ -354,65 +475,160 @@ function LocationQuestion({
 
   return (
     <View style={styles.locationContainer}>
-      {/* Department selector */}
+      {/* Department select */}
       <ThemedText style={styles.locationLabel}>Departamento</ThemedText>
-      <View style={styles.listContainer}>
-        {departments.map((dept) => {
-          const isSelected = dept.department_cod === selectedDept;
-          return (
-            <TouchableOpacity
-              key={dept.department_cod}
-              style={[styles.listOption, isSelected && styles.listOptionSelected]}
-              onPress={() => handleDeptPress(dept.department_cod)}
-              activeOpacity={0.7}
-            >
-              <ThemedText
-                style={[
-                  styles.listOptionText,
-                  isSelected && styles.listOptionTextSelected,
-                ]}
-              >
-                {dept.department}
-              </ThemedText>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      <TouchableOpacity
+        style={styles.locationSelector}
+        onPress={() => setShowDeptModal(true)}
+        activeOpacity={0.8}
+      >
+        <ThemedText
+          style={selectedDept ? styles.locationSelectorText : styles.locationSelectorPlaceholder}
+          numberOfLines={1}
+        >
+          {selectedDept?.department ?? "Seleccionar departamento..."}
+        </ThemedText>
+        <ChevronDown size={responsiveFont(16)} color="#1a7a3a" />
+      </TouchableOpacity>
 
-      {/* Municipality selector */}
-      {selectedDept && (
-        <>
-          <ThemedText style={[styles.locationLabel, { marginTop: verticalScale(12) }]}>
-            Municipio
+      {/* Municipality select */}
+      <ThemedText style={[styles.locationLabel, { marginTop: verticalScale(12) }]}>
+        Municipio
+      </ThemedText>
+      {!selectedDept ? (
+        <View style={[styles.locationSelector, { opacity: 0.5 }]}>
+          <ThemedText style={styles.locationSelectorPlaceholder} numberOfLines={1}>
+            Seleccione primero un departamento
           </ThemedText>
-          {loadingMunis ? (
-            <ActivityIndicator size="small" color="#1a7a3a" style={styles.detailLoader} />
-          ) : (
-            <View style={styles.listContainer}>
-              {municipalities.map((muni) => {
-                const isSelected = muni.municipality_code === selectedMuniCode;
-                return (
-                  <TouchableOpacity
-                    key={muni.municipality_code}
-                    style={[styles.listOption, isSelected && styles.listOptionSelected]}
-                    onPress={() => handleMuniPress(muni.municipality_code)}
-                    activeOpacity={0.7}
-                  >
-                    <ThemedText
-                      style={[
-                        styles.listOptionText,
-                        isSelected && styles.listOptionTextSelected,
-                      ]}
-                    >
-                      {muni.municipality}
-                    </ThemedText>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          )}
-        </>
+        </View>
+      ) : loadingMunis ? (
+        <ActivityIndicator size="small" color="#1a7a3a" style={styles.detailLoader} />
+      ) : (
+        <TouchableOpacity
+          style={styles.locationSelector}
+          onPress={() => setShowMuniModal(true)}
+          activeOpacity={0.8}
+        >
+          <ThemedText
+            style={selectedMuni ? styles.locationSelectorText : styles.locationSelectorPlaceholder}
+            numberOfLines={1}
+          >
+            {selectedMuni?.municipality ?? "Seleccionar municipio..."}
+          </ThemedText>
+          <ChevronDown size={responsiveFont(16)} color="#1a7a3a" />
+        </TouchableOpacity>
       )}
+
+      {/* Selected display */}
+      {selectedMuni && selectedDept && (
+        <View style={styles.locationResultContainer}>
+          <ThemedText style={styles.locationResultText}>
+            {selectedMuni.municipality.toUpperCase()}-{selectedDept.department.toUpperCase()}
+          </ThemedText>
+        </View>
+      )}
+
+      {/* Department popover Modal */}
+      <Modal visible={showDeptModal} transparent animationType="fade" onRequestClose={() => setShowDeptModal(false)}>
+        <TouchableWithoutFeedback onPress={() => setShowDeptModal(false)}>
+          <View style={styles.locationModalOverlay}>
+            <TouchableWithoutFeedback>
+              <View style={styles.locationModalContent}>
+                <ThemedText type="defaultSemiBold" style={styles.locationModalTitle}>
+                  Seleccionar Departamento
+                </ThemedText>
+                <View style={styles.locationSearchContainer}>
+                  <Search size={responsiveFont(16)} color="#999" />
+                  <TextInput
+                    style={styles.locationSearchInput}
+                    placeholder="Buscar departamento..."
+                    placeholderTextColor="rgba(17,24,28,0.4)"
+                    value={deptSearch}
+                    onChangeText={setDeptSearch}
+                    autoFocus
+                  />
+                </View>
+                <FlatList
+                  data={filteredDepts}
+                  keyExtractor={(item) => item.department_cod}
+                  style={styles.locationModalList}
+                  keyboardShouldPersistTaps="handled"
+                  renderItem={({ item }) => {
+                    const isSelected = item.department_cod === selectedDept?.department_cod;
+                    return (
+                      <TouchableOpacity
+                        style={[styles.locationModalOption, isSelected && styles.locationModalOptionSelected]}
+                        onPress={() => handleDeptSelect(item)}
+                        activeOpacity={0.7}
+                      >
+                        <ThemedText
+                          style={[styles.locationModalOptionText, isSelected && styles.locationModalOptionTextSelected]}
+                        >
+                          {item.department}
+                        </ThemedText>
+                      </TouchableOpacity>
+                    );
+                  }}
+                  ListEmptyComponent={
+                    <ThemedText style={styles.locationModalEmpty}>No se encontraron resultados</ThemedText>
+                  }
+                />
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* Municipality popover Modal */}
+      <Modal visible={showMuniModal} transparent animationType="fade" onRequestClose={() => setShowMuniModal(false)}>
+        <TouchableWithoutFeedback onPress={() => setShowMuniModal(false)}>
+          <View style={styles.locationModalOverlay}>
+            <TouchableWithoutFeedback>
+              <View style={styles.locationModalContent}>
+                <ThemedText type="defaultSemiBold" style={styles.locationModalTitle}>
+                  Seleccionar Municipio
+                </ThemedText>
+                <View style={styles.locationSearchContainer}>
+                  <Search size={responsiveFont(16)} color="#999" />
+                  <TextInput
+                    style={styles.locationSearchInput}
+                    placeholder="Buscar municipio..."
+                    placeholderTextColor="rgba(17,24,28,0.4)"
+                    value={muniSearch}
+                    onChangeText={setMuniSearch}
+                    autoFocus
+                  />
+                </View>
+                <FlatList
+                  data={filteredMunis}
+                  keyExtractor={(item) => item.municipality_code}
+                  style={styles.locationModalList}
+                  keyboardShouldPersistTaps="handled"
+                  renderItem={({ item }) => {
+                    const isSelected = item.municipality_code === selectedMuni?.municipality_code;
+                    return (
+                      <TouchableOpacity
+                        style={[styles.locationModalOption, isSelected && styles.locationModalOptionSelected]}
+                        onPress={() => handleMuniSelect(item)}
+                        activeOpacity={0.7}
+                      >
+                        <ThemedText
+                          style={[styles.locationModalOptionText, isSelected && styles.locationModalOptionTextSelected]}
+                        >
+                          {item.municipality}
+                        </ThemedText>
+                      </TouchableOpacity>
+                    );
+                  }}
+                  ListEmptyComponent={
+                    <ThemedText style={styles.locationModalEmpty}>No se encontraron resultados</ThemedText>
+                  }
+                />
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
     </View>
   );
 }
@@ -595,14 +811,18 @@ export function QuestionRenderer({
   const { questionDetails, fetchQuestionDetail, loadingQuestionDetail } =
     useCharacterizationStore();
 
-  const normalizedType = typeName.toLowerCase();
+  const normalizedType = normalizeQuestionType(typeName) ?? "text";
+  const inferredType = inferQuestionTypeFromMetadata(question);
   const detail = questionDetails[question.id];
 
-  // Detect boolean-like values when type resolution falls back to "text"
+  // Recover the renderer type from question metadata when typeId lookup falls back to text.
+  const valueLooksBoolean =
+    value === true || value === "true" || value === false || value === "false";
+
+  // Detect boolean-like values when type resolution falls back to text.
   const effectiveType =
-    normalizedType === "text" &&
-    (value === true || value === "true" || value === false || value === "false")
-      ? "bool"
+    normalizedType === "text"
+      ? inferredType ?? (valueLooksBoolean ? "bool" : "text")
       : normalizedType;
 
   useEffect(() => {
@@ -827,6 +1047,102 @@ const styles = StyleSheet.create({
     fontSize: responsiveFont(15),
     fontWeight: "600",
     marginBottom: verticalScale(4),
+  },
+  locationSelector: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.1)",
+    borderRadius: widthScale(8),
+    paddingHorizontal: widthScale(12),
+    paddingVertical: verticalScale(12),
+    backgroundColor: "#fff",
+  },
+  locationSelectorText: {
+    flex: 1,
+    fontSize: responsiveFont(16),
+    color: "#333",
+  },
+  locationSelectorPlaceholder: {
+    flex: 1,
+    fontSize: responsiveFont(16),
+    color: "rgba(17,24,28,0.4)",
+  },
+  locationResultContainer: {
+    marginTop: verticalScale(10),
+    backgroundColor: "rgba(26, 122, 58, 0.1)",
+    borderRadius: widthScale(8),
+    paddingVertical: verticalScale(10),
+    paddingHorizontal: widthScale(12),
+    borderLeftWidth: 3,
+    borderLeftColor: "#1a7a3a",
+  },
+  locationResultText: {
+    fontSize: responsiveFont(16),
+    fontWeight: "600",
+    color: "#1a7a3a",
+  },
+  locationModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: widthScale(20),
+  },
+  locationModalContent: {
+    backgroundColor: "#fff",
+    borderRadius: widthScale(16),
+    width: "100%",
+    maxHeight: "70%",
+    overflow: "hidden",
+  },
+  locationModalTitle: {
+    fontSize: responsiveFont(18),
+    textAlign: "center",
+    paddingVertical: verticalScale(14),
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0,0,0,0.06)",
+  },
+  locationSearchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: widthScale(8),
+    paddingHorizontal: widthScale(14),
+    paddingVertical: verticalScale(8),
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0,0,0,0.06)",
+  },
+  locationSearchInput: {
+    flex: 1,
+    fontSize: responsiveFont(15),
+    color: "#333",
+    paddingVertical: verticalScale(4),
+  },
+  locationModalList: {
+    maxHeight: verticalScale(350),
+  },
+  locationModalOption: {
+    paddingHorizontal: widthScale(16),
+    paddingVertical: verticalScale(12),
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0,0,0,0.04)",
+  },
+  locationModalOptionSelected: {
+    backgroundColor: "rgba(26, 122, 58, 0.08)",
+  },
+  locationModalOptionText: {
+    fontSize: responsiveFont(16),
+  },
+  locationModalOptionTextSelected: {
+    color: "#1a7a3a",
+    fontWeight: "600",
+  },
+  locationModalEmpty: {
+    fontSize: responsiveFont(15),
+    textAlign: "center",
+    paddingVertical: verticalScale(24),
+    color: "#999",
   },
   subQuestionContainer: {
     marginTop: verticalScale(12),

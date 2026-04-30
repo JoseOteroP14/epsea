@@ -1,12 +1,11 @@
-import { create } from "zustand";
-import { Producer, ProducerDetail } from "../schemas/producer";
 import { apiFetch } from "@/utils/api";
 import {
-  upsertProducers,
-  getProducersByProject,
-  upsertProducerDetail,
-  getProducerDetail as getProducerDetailFromDb,
+    getProducerDetail as getProducerDetailFromDb,
+    getProducersByProject,
+    upsertProducers
 } from "@/utils/database/repositories/producer-repository";
+import { create } from "zustand";
+import { Producer, ProducerDetail } from "../schemas/producer";
 
 interface PaginationMeta {
   currentPage: number;
@@ -41,10 +40,10 @@ const initialPagination: PaginationMeta = {
   currentPage: 1,
   totalPages: 1,
   totalCount: 0,
-  limit: 20,
+  limit: 150,
 };
 
-// Helper para obtener el ID del productor de diferentes estructuras de respuesta
+// Helper para obtener el ID del usuario de diferentes estructuras de respuesta
 const getProducerId = (producer: any): string => {
   return String(producer.producer_id ?? producer.id ?? "");
 };
@@ -58,7 +57,7 @@ export const useProducerStore = create<ProducerState>((set, get) => ({
   searchQuery: "",
   pagination: { ...initialPagination },
 
-  fetchProducers: async (projectId, page = 1, limit = 20) => {
+  fetchProducers: async (projectId, page = 1, limit = 150) => {
     set({ loading: true, error: null });
     try {
       const response = await apiFetch<any>(
@@ -152,7 +151,7 @@ export const useProducerStore = create<ProducerState>((set, get) => ({
       (p) => getProducerId(p) === producerIdStr,
     );
 
-    // Los extensionistas no tienen acceso al endpoint de detalle de productor.
+    // Los extensionistas no tienen acceso al endpoint de detalle de usuario.
     // Usamos solo datos locales: lista en memoria o cache SQLite.
 
     if (fromList) {
@@ -179,7 +178,7 @@ export const useProducerStore = create<ProducerState>((set, get) => ({
 
     // No hay datos disponibles
     set({
-      error: "No se encontraron datos del productor",
+      error: "No se encontraron datos del usuario",
       loadingDetail: false,
     });
   },

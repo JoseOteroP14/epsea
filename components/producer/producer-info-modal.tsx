@@ -1,25 +1,15 @@
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
+import type { ProducerDetail } from "@/schemas/producer";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
-import BottomSheet, {
-  BottomSheetBackdrop,
-  BottomSheetModal,
-  BottomSheetScrollView,
-  type BottomSheetBackdropProps,
-} from "@gorhom/bottom-sheet";
 import {
-  BookOpen,
-  Calendar,
-  Globe,
-  Heart,
-  Mail,
-  MapPin,
-  Phone,
-  User as UserIcon,
-} from "lucide-react-native";
+    BottomSheetBackdrop,
+    BottomSheetModal,
+    BottomSheetScrollView,
+    type BottomSheetBackdropProps,
+} from "@gorhom/bottom-sheet";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { StyleSheet, View } from "react-native";
-import type { ProducerDetail } from "@/schemas/producer";
 
 interface ProducerInfoModalProps {
   visible: boolean;
@@ -27,22 +17,27 @@ interface ProducerInfoModalProps {
   producer: ProducerDetail;
 }
 
+function toText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
 function InfoItem({
-  icon,
   label,
   value,
 }: {
-  icon: React.ReactNode;
   label: string;
   value?: string | null;
 }) {
   if (!value) return null;
   return (
     <View style={styles.infoItem}>
-      <View style={styles.infoIconContainer}>{icon}</View>
       <View style={styles.infoContent}>
-        <ThemedText style={styles.infoLabel}>{label}</ThemedText>
-        <ThemedText style={styles.infoValue} numberOfLines={2}>
+        <ThemedText style={styles.infoLabel} numberOfLines={1} ellipsizeMode="tail">
+          {label}:
+        </ThemedText>
+        <ThemedText style={styles.infoValue} numberOfLines={1} ellipsizeMode="tail">
           {value}
         </ThemedText>
       </View>
@@ -54,8 +49,8 @@ function InfoRow({
   left,
   right,
 }: {
-  left: { icon: React.ReactNode; label: string; value?: string | null };
-  right?: { icon: React.ReactNode; label: string; value?: string | null };
+  left: { label: string; value?: string | null };
+  right?: { label: string; value?: string | null };
 }) {
   const hasLeft = !!left.value;
   const hasRight = right && !!right.value;
@@ -63,17 +58,8 @@ function InfoRow({
 
   return (
     <View style={styles.infoRow}>
-      {hasLeft && (
-        <View style={styles.infoRowItem}>
-          <InfoItem icon={left.icon} label={left.label} value={left.value} />
-        </View>
-      )}
-      {hasRight && (
-        <View style={styles.infoRowItem}>
-          <InfoItem icon={right.icon} label={right.label} value={right.value} />
-        </View>
-      )}
-      {hasLeft && !hasRight && <View style={styles.infoRowItem} />}
+      {hasLeft && <InfoItem label={left.label} value={left.value} />}
+      {hasRight && <InfoItem label={right.label} value={right.value} />}
     </View>
   );
 }
@@ -85,9 +71,6 @@ export function ProducerInfoModal({
 }: ProducerInfoModalProps) {
   const bottomSheetModalRef = useRef<BottomSheetModal>(null);
   const snapPoints = useMemo(() => ["50%", "80%"], []);
-
-  const iconColor = "#7f8c8d";
-  const iconSize = responsiveFont(16);
 
   useEffect(() => {
     if (visible) {
@@ -119,19 +102,31 @@ export function ProducerInfoModal({
     [],
   );
 
-  const formatDate = (dateStr?: string | null) => {
-    if (!dateStr) return null;
-    try {
-      const date = new Date(dateStr);
-      return date.toLocaleDateString("es-CO", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      });
-    } catch {
-      return dateStr;
-    }
-  };
+  const producerSource = producer as Record<string, unknown>;
+
+  const documentTypeName =
+    toText(producerSource.document_type_name) ?? toText(producer.document_type?.name);
+  const identification = toText(producerSource.identification) ?? toText(producer.identification);
+
+  const firstName = toText(producerSource.first_name) ?? toText(producer.first_name);
+  const middleName = toText(producerSource.middle_name) ?? toText(producer.middle_name);
+  const firstSurname =
+    toText(producerSource.first_surname) ?? toText(producer.first_surname);
+  const lastSurname = toText(producerSource.last_surname) ?? toText(producer.last_surname);
+
+  const projectName = toText(producerSource.project_name);
+
+  const municipality =
+    toText(producerSource.municipality) ?? toText(producer.municipality?.name);
+  const municipalityCode =
+    toText(producerSource.municipality_code) ?? toText(producer.municipality?.code);
+  const department =
+    toText(producerSource.department) ?? toText(producer.municipality?.department_name);
+  const departmentCode =
+    toText(producerSource.department_cod) ??
+    toText(producer.municipality?.department_code);
+
+  const productionLineName = toText(producerSource.production_line_name);
 
   const fullName = [
     producer.first_name,
@@ -141,6 +136,8 @@ export function ProducerInfoModal({
   ]
     .filter(Boolean)
     .join(" ");
+
+  const producerTitle = fullName || "Información del usuario";
 
   return (
     <BottomSheetModal
@@ -162,7 +159,7 @@ export function ProducerInfoModal({
           lightColor="#333"
           darkColor="#333"
         >
-          {fullName}
+          {producerTitle}
         </ThemedText>
       </View>
 
@@ -170,88 +167,80 @@ export function ProducerInfoModal({
         contentContainerStyle={styles.sheetContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Información Personal */}
+        {/* Datos solicitados del usuario asignado */}
         <ThemedView style={styles.section}>
           <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
-            Información Personal
+            Datos del Usuario
           </ThemedText>
           <InfoRow
             left={{
-              icon: <UserIcon size={iconSize} color={iconColor} />,
-              label: "Sexo",
-              value: producer.sex?.name ?? null,
+              label: "Tipo de documento",
+              value: documentTypeName,
             }}
             right={{
-              icon: <Calendar size={iconSize} color={iconColor} />,
-              label: "Fecha de nacimiento",
-              value: formatDate(producer.birthdate),
+              label: "Identificación",
+              value: identification,
             }}
           />
           <InfoRow
             left={{
-              icon: <Globe size={iconSize} color={iconColor} />,
-              label: "Grupo étnico",
-              value: producer.ethnic_group?.name ?? null,
+              label: "Primer nombre",
+              value: firstName,
             }}
             right={{
-              icon: <BookOpen size={iconSize} color={iconColor} />,
-              label: "Nivel educativo",
-              value: producer.level_of_education?.name ?? null,
+              label: "Segundo nombre",
+              value: middleName,
             }}
           />
-          {producer.disability?.name && (
-            <InfoRow
-              left={{
-                icon: <Heart size={iconSize} color={iconColor} />,
-                label: "Discapacidad",
-                value: producer.disability.name,
-              }}
-            />
-          )}
+          <InfoRow
+            left={{
+              label: "Primer apellido",
+              value: firstSurname,
+            }}
+            right={{
+              label: "Segundo apellido",
+              value: lastSurname,
+            }}
+          />
         </ThemedView>
 
-        {/* Contacto */}
-        {(producer.phone || producer.email) && (
-          <ThemedView style={styles.section}>
-            <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
-              Contacto
-            </ThemedText>
-            <InfoRow
-              left={{
-                icon: <Phone size={iconSize} color={iconColor} />,
-                label: "Teléfono",
-                value: producer.phone,
-              }}
-              right={{
-                icon: <Mail size={iconSize} color={iconColor} />,
-                label: "Email",
-                value: producer.email,
-              }}
-            />
-          </ThemedView>
-        )}
-
-        {/* Ubicación */}
-        {(producer.municipality?.name ||
-          producer.municipality?.department_name) && (
-          <ThemedView style={styles.section}>
-            <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
-              Ubicación
-            </ThemedText>
-            <InfoRow
-              left={{
-                icon: <MapPin size={iconSize} color={iconColor} />,
-                label: "Departamento",
-                value: producer.municipality?.department_name ?? null,
-              }}
-              right={{
-                icon: <MapPin size={iconSize} color={iconColor} />,
-                label: "Municipio",
-                value: producer.municipality?.name ?? null,
-              }}
-            />
-          </ThemedView>
-        )}
+        <ThemedView style={styles.section}>
+          <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
+            Proyecto y Ubicación
+          </ThemedText>
+          <InfoRow
+            left={{
+              label: "Proyecto",
+              value: projectName,
+            }}
+          />
+          <InfoRow
+            left={{
+              label: "Departamento",
+              value: department,
+            }}
+            right={{
+              label: "Municipio",
+              value: municipality,
+            }}
+          />
+          <InfoRow
+            left={{
+              label: "Código departamento",
+              value: departmentCode,
+            }}
+            right={{
+              label: "Código municipio",
+              value: municipalityCode,
+            }}
+          />
+          <InfoRow
+            left={{
+              label: "Línea productiva principal",
+              value: productionLineName,
+            }}
+          />
+        </ThemedView>
       </BottomSheetScrollView>
     </BottomSheetModal>
   );
@@ -264,7 +253,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: widthScale(24),
   },
   handleIndicator: {
-    backgroundcolor: "#11181C",
+    backgroundColor: "#11181C",
     width: widthScale(40),
   },
   sheetHeader: {
@@ -296,25 +285,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   infoRow: {
-    flexDirection: "row",
-    marginBottom: verticalScale(6),
-  },
-  infoRowItem: {
-    flex: 1,
+    gap: verticalScale(8),
+    marginBottom: verticalScale(8),
   },
   infoItem: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: widthScale(8),
-  },
-  infoIconContainer: {
-    width: widthScale(28),
-    height: widthScale(28),
-    borderRadius: widthScale(6),
-    backgroundColor: "rgba(0,0,0,0.03)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: verticalScale(2),
+    paddingVertical: verticalScale(2),
   },
   infoContent: {
     flex: 1,
@@ -322,8 +297,10 @@ const styles = StyleSheet.create({
   infoLabel: {
     fontSize: responsiveFont(17),
     marginBottom: verticalScale(1),
+    fontWeight: "700",
   },
   infoValue: {
     fontSize: responsiveFont(17),
+    fontWeight: "600",
   },
 });

@@ -40,10 +40,9 @@ export const CHARACTERIZATION_COMPONENT_ID = 5;
 export const PERSONAL_INFO_INTERVENTION_METHOD_ID = 1;
 export const CHARACTERIZATION_INTERVENTION_METHOD_ID = 2;
 export const CLASSIFICATION_INTERVENTION_METHOD_ID = 3;
-export const PROPERTY_INFO_INTERVENTION_METHOD_ID = 4;
+export const PROPERTY_INFO_INTERVENTION_METHOD_ID = 7;
 export const VISIT_INTERVENTION_METHOD_ID = 5;
-// TODO: Update when backend assigns intervention_method_id for Actividad Productiva
-export const PRODUCTIVE_LINES_INTERVENTION_METHOD_ID = 0;
+export const PRODUCTIVE_LINES_INTERVENTION_METHOD_ID = 8;
 
 type QuestionDetail =
   | QuestionTextDetail
@@ -123,12 +122,23 @@ const QUESTION_TYPE_ENDPOINTS: Record<string, string> = {
   fecha: "/questions-date",
   bool: "/questions-bool",
   boolean: "/questions-bool",
+  booleana: "/questions-bool",
   booleano: "/questions-bool",
+  "si/no": "/questions-bool",
+  "sí/no": "/questions-bool",
   numeric: "/questions-numeric",
+  numerica: "/questions-numeric",
+  "numérica": "/questions-numeric",
   numerico: "/questions-numeric",
   "numérico": "/questions-numeric",
   list: "/questions-list",
   lista: "/questions-list",
+  logica: "/questions-bool",
+  "lógica": "/questions-bool",
+  logico: "/questions-bool",
+  "lógico": "/questions-bool",
+  logic: "/questions-bool",
+  logical: "/questions-bool",
   dependent_list: "/questions-list",
   "lista dependiente": "/questions-list",
   // Location type has no detail endpoint — uses departments/municipalities assistants
@@ -142,17 +152,48 @@ const TYPE_NAME_MAP: Record<string, string> = {
   fecha: "date",
   bool: "bool",
   boolean: "bool",
+  booleana: "bool",
   booleano: "bool",
+  "si/no": "bool",
+  "sí/no": "bool",
   numeric: "numeric",
+  numerica: "numeric",
+  "numérica": "numeric",
   numerico: "numeric",
   "numérico": "numeric",
   list: "list",
   lista: "list",
+  logica: "bool",
+  "lógica": "bool",
+  logico: "bool",
+  "lógico": "bool",
+  logic: "bool",
+  logical: "bool",
   dependent_list: "dependent_list",
   "lista dependiente": "dependent_list",
   location: "location",
   "ubicación": "location",
   ubicacion: "location",
+};
+
+const QUESTION_TYPE_ID_FALLBACK: Record<number, string> = {
+  1: "text",
+  2: "date",
+  3: "bool",
+  4: "numeric",
+  5: "list",
+  6: "dependent_list",
+  7: "location",
+};
+
+const CANONICAL_TYPE_DEFAULT_ID: Record<string, number> = {
+  text: 1,
+  date: 2,
+  bool: 3,
+  numeric: 4,
+  list: 5,
+  dependent_list: 6,
+  location: 7,
 };
 
 export const useCharacterizationStore = create<CharacterizationState>(
@@ -307,11 +348,44 @@ export const useCharacterizationStore = create<CharacterizationState>(
         const response = await apiFetch<any>("/questions/types", {
           method: "GET",
         });
-        const data: QuestionType[] = Array.isArray(response?.data)
+        const rawData: any[] = Array.isArray(response?.data)
           ? response.data
           : Array.isArray(response)
             ? response
             : [];
+
+        const data: QuestionType[] = rawData
+          .map((item: any) => {
+            const rawName =
+              typeof item?.name === "string" ? item.name.trim() : "";
+            const rawType =
+              typeof item?.type === "string" ? item.type.trim() : "";
+
+            const normalizedName = rawName.toLowerCase();
+            const normalizedType = rawType.toLowerCase();
+
+            const canonical =
+              TYPE_NAME_MAP[normalizedType] ?? TYPE_NAME_MAP[normalizedName] ?? null;
+
+            const resolvedId =
+              typeof item?.id === "number"
+                ? item.id
+                : canonical
+                  ? CANONICAL_TYPE_DEFAULT_ID[canonical]
+                  : undefined;
+
+            if (resolvedId == null) return null;
+
+            return {
+              id: resolvedId,
+              name: rawName || rawType || canonical || `type_${resolvedId}`,
+            } as QuestionType;
+          })
+          .filter((item): item is QuestionType => item !== null)
+          .filter(
+            (item, index, arr) =>
+              arr.findIndex((candidate) => candidate.id === item.id) === index,
+          );
 
         // Write-through
         try {
@@ -471,6 +545,19 @@ export const useCharacterizationStore = create<CharacterizationState>(
             ? response
             : [];
 
+        const pickAnswerValue = (answer: any): any => {
+          const itemName =
+            answer?.item_name ??
+            answer?.itemName ??
+            answer?.name ??
+            answer?.answer_name;
+          if (itemName != null) {
+            const text = typeof itemName === "string" ? itemName.trim() : itemName;
+            if (text !== "") return text;
+          }
+          return answer?.value ?? answer?.answer_value ?? answer?.answerValue ?? "";
+        };
+
         // The API returns questions with nested `answers` arrays:
         //   { id, description, answers: [{ id, survey_id, question_id, value }] }
         // Flatten into SurveyResultItem[] expected by the tabs.
@@ -479,6 +566,7 @@ export const useCharacterizationStore = create<CharacterizationState>(
           const nestedAnswers = item.answers;
           if (Array.isArray(nestedAnswers) && nestedAnswers.length > 0) {
             for (const ans of nestedAnswers) {
+              const answerValue = pickAnswerValue(ans);
               flattened.push({
                 survey_id: ans.survey_id ?? 0,
                 created_at: item.created_at ?? "",
@@ -486,7 +574,7 @@ export const useCharacterizationStore = create<CharacterizationState>(
                 intervention_method_id: interventionMethodId,
                 intervention_method_name: "",
                 answer_id: ans.id,
-                answer_value: ans.value ?? "",
+                answer_value: answerValue ?? "",
                 question_id: ans.question_id ?? item.id,
                 question_description: item.description ?? null,
                 question_type_id: item.question_type_id ?? 0,
@@ -495,7 +583,14 @@ export const useCharacterizationStore = create<CharacterizationState>(
             }
           } else if (item.answer_id != null) {
             // Already in flat format — pass through as-is
-            flattened.push(item as SurveyResultItem);
+            const flatAnswerValue = pickAnswerValue({
+              item_name: item?.item_name ?? item?.itemName ?? item?.answer?.name,
+              value: item?.answer_value ?? item?.value ?? item?.answer?.value,
+            });
+            flattened.push({
+              ...(item as SurveyResultItem),
+              answer_value: flatAnswerValue ?? item?.answer_value ?? "",
+            });
           }
         }
         return flattened;
@@ -554,9 +649,12 @@ export const useCharacterizationStore = create<CharacterizationState>(
     getCanonicalTypeName: (typeId: number) => {
       const { questionTypes } = get();
       const found = questionTypes.find((t) => t.id === typeId);
-      if (!found) return "text";
-      const normalized = found.name.toLowerCase().trim();
-      return TYPE_NAME_MAP[normalized] ?? "text";
+      if (found) {
+        const normalized = found.name.toLowerCase().trim();
+        const mapped = TYPE_NAME_MAP[normalized];
+        if (mapped) return mapped;
+      }
+      return QUESTION_TYPE_ID_FALLBACK[typeId] ?? "text";
     },
 
     fetchDepartments: async () => {

@@ -51,7 +51,7 @@ const DisabilitySchema = z
   .nullable()
   .optional();
 
-// Schema básico para listados de productores asignados
+// Schema básico para listados de usuarios asignados
 export const ProducerSchema = z
   .object({
     id: z.number().optional(),

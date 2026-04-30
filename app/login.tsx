@@ -33,6 +33,12 @@ import Animated, {
     withTiming,
 } from "react-native-reanimated";
 
+function normalizeName(value?: string | null): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const cleaned = value.trim().replace(/\s+/g, " ");
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
 export default function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -94,6 +100,10 @@ export default function LoginScreen() {
           user: {
             user_id: number;
             username: string;
+            first_name?: string;
+            last_name?: string;
+            firstName?: string;
+            lastName?: string;
             roles: {
               id: number;
               role_id: number;
@@ -109,7 +119,23 @@ export default function LoginScreen() {
       });
 
       if (response.code === "SUCCESS" && response.data) {
-        await login(response.data.user, response.data.access_token);
+        const userData = response.data.user;
+        const dataAny = response.data as any;
+        const mappedUser = {
+          ...userData,
+          first_name:
+            normalizeName(userData.first_name) ??
+            normalizeName(userData.firstName) ??
+            normalizeName(dataAny?.first_name) ??
+            normalizeName(dataAny?.firstName),
+          last_name:
+            normalizeName(userData.last_name) ??
+            normalizeName(userData.lastName) ??
+            normalizeName(dataAny?.last_name) ??
+            normalizeName(dataAny?.lastName),
+        };
+
+        await login(mappedUser, response.data.access_token);
         router.replace("/(tabs)");
         // Background sync: login confirms connectivity, kick off download immediately
         useSyncStore.getState().startDownload().catch(console.error);
@@ -180,27 +206,11 @@ export default function LoginScreen() {
 
             {/* Logo/Title Section */}
             <View style={styles.logoSection}>
-              <View style={styles.logosRow}>
-                <Image
-                  source={require("@/assets/images/logo-unicordoba.jpeg")}
-                  style={styles.logoImage}
-                  resizeMode="contain"
-                />
-                <Image
-                  source={require("@/assets/images/Logo_Ministerio_de_Agricultura_2022_2026_.png")}
-                  style={styles.logoImageCenter}
-                  resizeMode="contain"
-                />
-                <Image
-                  source={require("@/assets/images/logo_mini.png")}
-                  style={styles.logoImage}
-                  resizeMode="contain"
-                />
-              </View>
-              <ThemedText style={styles.appTitle}>EPSEA</ThemedText>
-              <ThemedText style={styles.appSubtitle}>
-                Sistema de Gestión Agrícola
-              </ThemedText>
+              <Image
+                source={require("@/assets/images/Epsea.png")}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
             </View>
 
             {/* Login Card — glassmorphism via View */}
@@ -314,31 +324,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: verticalScale(40),
   },
-  logosRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: widthScale(16),
-    marginBottom: verticalScale(16),
-  },
   logoImage: {
-    width: widthScale(70),
-    height: widthScale(70),
-  },
-  logoImageCenter: {
-    width: widthScale(90),
-    height: widthScale(90),
-  },
-  appTitle: {
-    fontSize: responsiveFont(32),
-    fontWeight: "bold",
-    color: "#1a3a20",
-    letterSpacing: 4,
-  },
-  appSubtitle: {
-    fontSize: responsiveFont(17),
-    color: "rgba(0,0,0,0.5)",
-    marginTop: verticalScale(8),
+    width: widthScale(260),
+    height: widthScale(140),
+    marginBottom: verticalScale(16),
   },
   glassCard: {
     borderRadius: 24,

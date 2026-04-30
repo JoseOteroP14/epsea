@@ -1,26 +1,25 @@
 import StandardView from "@/components/standard-view";
 import { ThemedText } from "@/components/themed-text";
-import { useProjectStore, ProjectStats } from "@/store/useProjectStore";
+import { useAuthStore } from "@/store/useAuthStore";
+import { ProjectStats, useProjectStore } from "@/store/useProjectStore";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { BlurView } from "expo-blur";
 import { useRouter } from "expo-router";
 import {
-  ChevronRight,
-  ClipboardCheck,
-  ClipboardList,
-  Folder,
-  Search,
-  Users,
+    ChevronRight,
+    Folder,
+    Search,
+    Users,
 } from "lucide-react-native";
 import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  FlatList,
-  RefreshControl,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    FlatList,
+    RefreshControl,
+    StyleSheet,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 
 interface StatRowProps {
@@ -50,13 +49,15 @@ function StatRow({ icon, value, label, loading }: StatRowProps) {
 
 export default function ProjectsScreen() {
   const { projects, projectStats, loading, fetchProjects } = useProjectStore();
+  const userId = useAuthStore((state) => state.user?.user_id);
   const router = useRouter();
 
   const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
+    if (!userId) return;
     fetchProjects();
-  }, [fetchProjects]);
+  }, [fetchProjects, userId]);
 
   const filteredProjects = projects.filter(
     (p) =>
@@ -76,8 +77,6 @@ export default function ProjectsScreen() {
 
   const renderProjectItem = ({ item }: { item: any }) => {
     const stats = getProjectStats(item.id);
-    const pendingCharacterization =
-      stats.totalProducers - stats.characterizedProducers;
 
     return (
       <TouchableOpacity
@@ -114,21 +113,7 @@ export default function ProjectsScreen() {
             <StatRow
               icon={<Users size={responsiveFont(18)} color="#3498db" />}
               value={stats.totalProducers}
-              label="Productores asignados"
-              loading={stats.loading}
-            />
-            <StatRow
-              icon={
-                <ClipboardCheck size={responsiveFont(18)} color="#1a7a3a" />
-              }
-              value={stats.characterizedProducers}
-              label="Productores caracterizados"
-              loading={stats.loading}
-            />
-            <StatRow
-              icon={<ClipboardList size={responsiveFont(18)} color="#e67e22" />}
-              value={pendingCharacterization >= 0 ? pendingCharacterization : 0}
-              label="Pendientes por caracterizar"
+              label="Usuarios asignados"
               loading={stats.loading}
             />
           </View>

@@ -1,12 +1,14 @@
 import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
+import { checkConnectivity } from "@/hooks/use-network";
 import type { Question } from "@/schemas/characterization";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
     CLASSIFICATION_INTERVENTION_METHOD_ID,
     useCharacterizationStore,
 } from "@/store/useCharacterizationStore";
+import { apiFetch } from "@/utils/api";
 import {
     getAnswers,
     saveAnswersBatch,
@@ -92,6 +94,19 @@ function resolveDisplayValue(
 
   const typeName = getCanonicalTypeName(questionTypeId);
 
+  // Location type: value is "department_cod|municipality_code|municipality_name|department_name"
+  if (typeName === "location") {
+    if (typeof rawValue === "string" && rawValue.includes("|")) {
+      const parts = rawValue.split("|");
+      const muniName = parts[2] ?? "";
+      const deptName = parts[3] ?? "";
+      if (muniName && deptName) {
+        return `${muniName.toUpperCase()}-${deptName.toUpperCase()}`;
+      }
+    }
+    return String(rawValue);
+  }
+
   if (typeName === "list") {
     const detail = questionDetails[questionId] as any;
     const options: any[] =
@@ -115,12 +130,12 @@ function resolveDisplayValue(
   }
 
   if (typeName === "bool") {
-    return rawValue === true || rawValue === "true" ? "Sí" : "No";
+    return rawValue === true || rawValue === "true" ? "SI" : "NO";
   }
 
   // Fallback: detect boolean-like values even if questionTypes aren't loaded yet
   if (rawValue === true || rawValue === "true" || rawValue === false || rawValue === "false") {
-    return rawValue === true || rawValue === "true" ? "Sí" : "No";
+    return rawValue === true || rawValue === "true" ? "SI" : "NO";
   }
 
   return String(rawValue);
@@ -223,6 +238,9 @@ export function ClassificationTab({
   // Edit mode
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [editAnswers, setEditAnswers] = useState<Record<number, any>>({});
+
+  // Snapshot of answers before opening sheet, used to restore on close without save
+  const answersSnapshotRef = useRef<Record<number, any>>({});
 
   useEffect(() => {
     if (components.length === 0) {
@@ -350,6 +368,8 @@ export function ClassificationTab({
 
   // Build display answers
   useEffect(() => {
+    // Don't recompute while sheet is open to avoid unmounting the sheet
+    if (showSheet) return;
     if (localQuestions.length === 0 || Object.keys(answers).length === 0) {
       setSavedAnswers([]);
       return;
@@ -376,19 +396,23 @@ export function ClassificationTab({
       });
     });
     setSavedAnswers(display);
-  }, [localQuestions, answers, questionDetails, getCanonicalTypeName]);
+  }, [localQuestions, answers, questionDetails, getCanonicalTypeName, showSheet]);
 
   const handleApply = useCallback(() => {
     if (!classificationComponent) return;
     setEditingQuestion(null);
+    answersSnapshotRef.current = { ...answers };
     fetchQuestions(classificationComponent.id);
     setShowSheet(true);
-  }, [classificationComponent, fetchQuestions]);
+  }, [classificationComponent, fetchQuestions, answers]);
 
   const handleCloseSheet = useCallback(() => {
+    if (!editingQuestion) {
+      setAnswers(answersSnapshotRef.current);
+    }
     setShowSheet(false);
     setEditingQuestion(null);
-  }, []);
+  }, [editingQuestion]);
 
   const handleAnswerChange = useCallback((questionId: number, value: any) => {
     setAnswers((prev) => ({ ...prev, [questionId]: value }));
@@ -422,8 +446,6 @@ export function ClassificationTab({
             : null,
       }));
 
-      await saveAnswersBatch(answerRows);
-
       // Build sync payload — multi-select uses nested `answers` array format
       const syncAnswers: ({ question_id: number; answer_value: string } | { question_id: number; answers: { answer_value: string }[] })[] = [];
       for (const row of answerRows) {
@@ -443,27 +465,49 @@ export function ClassificationTab({
         });
       }
 
-      await enqueue(
-        "survey_answers",
-        `${pid}-${projId}-${CLASSIFICATION_INTERVENTION_METHOD_ID}-${userId}`,
-        {
-          project_id: projId,
-          intervention_method_id: CLASSIFICATION_INTERVENTION_METHOD_ID,
-          producer_id: pid,
-          created_at: new Date().toISOString().split("T")[0],
-          answers: syncAnswers,
-        },
-        userId,
-      );
+      const payload = {
+        project_id: projId,
+        intervention_method_id: CLASSIFICATION_INTERVENTION_METHOD_ID,
+        producer_id: pid,
+        created_at: new Date().toISOString().split("T")[0],
+        answers: syncAnswers,
+      };
+
+      const isOnline = await checkConnectivity();
+
+      if (isOnline) {
+        await apiFetch("/surveys", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        showAlert({
+          title: "Guardado",
+          message: "Las respuestas se guardaron correctamente.",
+          type: "success",
+        });
+      } else {
+        await saveAnswersBatch(answerRows);
+        await enqueue(
+          "survey_answers",
+          `${pid}-${projId}-${CLASSIFICATION_INTERVENTION_METHOD_ID}-${userId}`,
+          payload,
+          userId,
+        );
+        showAlert({
+          title: "Sin internet",
+          message:
+            "Las respuestas se guardaron localmente y se enviarán al sincronizar.",
+          type: "warning",
+        });
+      }
 
       setShowSheet(false);
       setHasSurvey(true);
-      showAlert({ title: "Guardado", message: "Las respuestas se guardaron localmente.", type: "success" });
     } catch (error) {
       console.error("Failed to save answers:", error);
       showAlert({ title: "Error", message: "No se pudieron guardar las respuestas.", type: "error" });
     }
-  }, [answers, classificationComponent, producerId, projectId, currentUserId]);
+  }, [answers, classificationComponent, producerId, projectId, currentUserId, showAlert]);
 
   // Edit single answer
   const handleEditPress = useCallback(
@@ -514,7 +558,7 @@ export function ClassificationTab({
     );
   }
 
-  if (loadingAnswers || (Object.keys(answers).length > 0 && savedAnswers.length === 0)) {
+  if (loadingAnswers || (!showSheet && Object.keys(answers).length > 0 && savedAnswers.length === 0)) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#1a7a3a" />
@@ -558,7 +602,7 @@ export function ClassificationTab({
             {geometricMean !== null && (
               <View style={styles.geometricMeanBadge}>
                 <ThemedText style={styles.geometricMeanText}>
-                  Media Geométrica: {geometricMean.toFixed(2)}
+                  Media Geométrica: {Math.round(geometricMean)}
                 </ThemedText>
               </View>
             )}
@@ -704,8 +748,6 @@ const styles = StyleSheet.create({
     borderRadius: widthScale(10),
     padding: widthScale(14),
     marginBottom: verticalScale(10),
-    borderLeftWidth: 3,
-    borderLeftColor: "#1a7a3a",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
