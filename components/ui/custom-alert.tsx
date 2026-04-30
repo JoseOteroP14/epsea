@@ -129,7 +129,7 @@ export function AlertProvider({ children }: { children: React.ReactNode }) {
             style={styles.overlayBg}
           />
           <Animated.View
-            entering={ZoomIn.duration(250).springify().damping(18)}
+            entering={ZoomIn.duration(220)}
             exiting={ZoomOut.duration(150)}
           >
             <Pressable style={styles.alertCard} onPress={() => {}}>

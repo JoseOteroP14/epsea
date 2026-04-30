@@ -1,5 +1,6 @@
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
+import { NativeDatePicker } from "@/components/ui/native-date-picker";
 import type {
     Department,
     Municipality,
@@ -139,14 +140,26 @@ function DateQuestion({
   value: string;
   onChange: (id: number, val: string) => void;
 }) {
+  // Internal format for NativeDatePicker is dd/mm/yyyy
+  // The store uses yyyy-mm-dd, so convert on both ends
+  function toDisplay(yyyymmdd: string): string {
+    if (!yyyymmdd) return "";
+    const parts = yyyymmdd.split("-");
+    if (parts.length !== 3) return yyyymmdd;
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+
+  function toApi(ddmmyyyy: string): string {
+    if (!ddmmyyyy) return "";
+    const parts = ddmmyyyy.split("/");
+    if (parts.length !== 3) return ddmmyyyy;
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+
   return (
-    <TextInput
-      style={styles.textInput}
-      placeholder="AAAA-MM-DD"
-      placeholderTextColor="rgba(17, 24, 28, 0.4)"
-      value={value ?? ""}
-      onChangeText={(text) => onChange(question.id, text)}
-      keyboardType="numbers-and-punctuation"
+    <NativeDatePicker
+      value={toDisplay(value ?? "")}
+      onChange={(ddmmyyyy) => onChange(question.id, toApi(ddmmyyyy))}
     />
   );
 }

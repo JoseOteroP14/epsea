@@ -427,7 +427,7 @@ export function PropertyInfoTab({
         await saveAnswersBatch(answerRows);
         await enqueue(
           "survey_answers",
-          `${pid}-${projId}-${PROPERTY_INFO_INTERVENTION_METHOD_ID}-${userId}`,
+          `${pid}-${projId}-${compId}-${userId}`,
           payload,
           userId,
         );

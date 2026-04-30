@@ -386,7 +386,7 @@ export function CharacterizationTab({
         await saveAnswersBatch(answerRows);
         await enqueue(
           "survey_answers",
-          `${pid}-${projId}-${CHARACTERIZATION_INTERVENTION_METHOD_ID}-${userId}`,
+          `${pid}-${projId}-${compId}-${userId}`,
           payload,
           userId,
         );

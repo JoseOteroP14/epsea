@@ -1,24 +1,46 @@
 // Backward compat alias for repository
 export type LineAnswers = Record<string, string>;
 
-export type ActivityType = 'agricola' | 'pecuaria';
+export type ActivityType = 'agricola' | 'pecuaria' | 'forestal' | 'pesca' | 'acuicola';
 
 export const ACTIVITY_TYPE_LABELS: Record<ActivityType, string> = {
   agricola: 'Agrícola',
   pecuaria: 'Pecuaria',
+  forestal: 'Forestal',
+  pesca: 'Pesca',
+  acuicola: 'Acuícola',
 };
 
-export const ACTIVITY_TYPES: ActivityType[] = ['agricola', 'pecuaria'];
+export const ACTIVITY_TYPES: ActivityType[] = ['agricola', 'pecuaria', 'forestal', 'pesca', 'acuicola'];
 
 export const ACTIVITY_IDS: Record<ActivityType, number> = {
   agricola: 1,
   pecuaria: 2,
+  forestal: 3,
+  pesca: 4,
+  acuicola: 5,
 };
+
+export const SPECIES_ACTIVITY_ID = 5;
 
 export interface ProductiveLine {
   id: number;
   activity_id: number;
   name: string;
+}
+
+export interface AssistantItem {
+  id: number;
+  name: string;
+}
+
+export interface UnitOfMeasureItem {
+  id: number;
+  line_id: number;
+  unit_id: number;
+  type_field_id: number;
+  unit_of_measure_name: string;
+  line_name: string;
 }
 
 export interface UnitConfig {
@@ -110,7 +132,8 @@ export const UNIT_ID_TO_NAME: Record<number, string> = Object.fromEntries(
   Object.entries(UNIT_NAME_TO_ID).map(([name, id]) => [id, name]),
 );
 
-// Form data types
+// ── Form data types ────────────────────────────────────────────────────────────
+
 export interface AgriculturalLineForm {
   line_id: number | null;
   line_name: string;
@@ -130,15 +153,64 @@ export interface LivestockLineForm {
   date: string;
 }
 
+export interface ForestLineForm {
+  line_id: number | null;
+  line_name: string;
+  unit_of_measure_id: string;
+  unit_of_measure_name: string;
+  area: string;
+  cycles: string;
+  production: string;
+  date: string;
+}
+
+export interface FishingLineForm {
+  type_id: string;
+  type_name: string;
+  fishing_area_id: string;
+  fishing_area_name: string;
+  species: { line_id: number; name: string }[];
+  weight: string;
+  date: string;
+}
+
+export interface AquacultureLineForm {
+  type_id: string;
+  type_name: string;
+  area_crop_id: string;
+  area_crop_name: string;
+  area_value_crop: string;
+  number_of_animals: string;
+  cycles: string;
+  production: string;
+  date: string;
+  species: { line_id: number; name: string }[];
+}
+
+// ── Factory functions ──────────────────────────────────────────────────────────
+
 export function createEmptyAgriculturalForm(): AgriculturalLineForm {
-  return { line_id: null, line_name: "", area: "", harvests: "", production: "", date: "" };
+  return { line_id: null, line_name: '', area: '', harvests: '', production: '', date: '' };
 }
 
 export function createEmptyLivestockForm(): LivestockLineForm {
-  return { line_id: null, line_name: "", unit_of_measure: "", area: "", cycles: "", production: "", date: "" };
+  return { line_id: null, line_name: '', unit_of_measure: '', area: '', cycles: '', production: '', date: '' };
 }
 
-// Existing line types from GET endpoints
+export function createEmptyForestForm(): ForestLineForm {
+  return { line_id: null, line_name: '', unit_of_measure_id: '', unit_of_measure_name: '', area: '', cycles: '', production: '', date: '' };
+}
+
+export function createEmptyFishingForm(): FishingLineForm {
+  return { type_id: '', type_name: '', fishing_area_id: '', fishing_area_name: '', species: [], weight: '', date: '' };
+}
+
+export function createEmptyAquacultureForm(): AquacultureLineForm {
+  return { type_id: '', type_name: '', area_crop_id: '', area_crop_name: '', area_value_crop: '', number_of_animals: '', cycles: '', production: '', date: '', species: [] };
+}
+
+// ── Existing line types from GET endpoints ────────────────────────────────────
+
 export interface ExistingAgriculturalLine {
   id: number;
   producer_id: number;
@@ -162,4 +234,46 @@ export interface ExistingLivestockLine {
   cycles: number;
   production: number;
   date: string;
+}
+
+export interface ExistingForestLine {
+  id: number;
+  producer_id: number;
+  project_id: number;
+  line_id: number;
+  line?: { id: number; name: string };
+  unit_of_measure_id: number;
+  area: number;
+  cycles: number;
+  production: number;
+  date: string;
+}
+
+export interface ExistingFishingLine {
+  id: number;
+  producer_id: number;
+  project_id: number;
+  type_id: number;
+  fishing_area_id?: number;
+  type_name?: string;
+  fishing_area_name?: string;
+  weight: number;
+  date: string;
+  lines?: { line_id: number }[];
+}
+
+export interface ExistingAquacultureLine {
+  id: number;
+  producer_id: number;
+  project_id: number;
+  type_id: number;
+  area_crop_id: number;
+  area_value_crop?: number;
+  type_system_name?: string;
+  area_crop_name?: string;
+  number_of_animals: number;
+  cycles: number;
+  production: number;
+  date: string;
+  lines?: { line_id: number }[];
 }

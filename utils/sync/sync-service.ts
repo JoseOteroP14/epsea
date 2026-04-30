@@ -23,6 +23,7 @@ import {
     markFailed,
     setMetadata,
 } from "@/utils/database/repositories/sync-repository";
+import { deleteAnswers } from "@/utils/database/repositories/answer-repository";
 
 // Map type names to GET-capable detail endpoints.
 // Only "list" type questions support GET /questions-list/:id (returns options).
@@ -295,6 +296,20 @@ export async function uploadPendingAnswers(
       });
 
       await markCompleted(item.id);
+
+      // Clean up locally cached answers so future loads use the remote source of truth
+      if (item.entity_type === "survey_answers") {
+        const parts = item.entity_key.split("-").map((n) => Number(n));
+        if (parts.length === 4 && parts.every((n) => Number.isFinite(n))) {
+          const [pid, projId, compId, uId] = parts;
+          try {
+            await deleteAnswers(pid, projId, compId, uId);
+          } catch (e) {
+            console.error("Failed to clean local answers after upload:", e);
+          }
+        }
+      }
+
       uploaded++;
     } catch (error) {
       const errorMsg =

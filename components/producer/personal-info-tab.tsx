@@ -454,7 +454,7 @@ export function PersonalInfoTab({
         await saveAnswersBatch(answerRows);
         await enqueue(
           "survey_answers",
-          `${pid}-${projId}-${PERSONAL_INFO_INTERVENTION_METHOD_ID}-${userId}`,
+          `${pid}-${projId}-${compId}-${userId}`,
           payload,
           userId,
         );
