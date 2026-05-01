@@ -11,14 +11,13 @@
     "lint": "expo lint"
   },
   "dependencies": {
-    "@expo/ui": "~0.2.0-beta.9",
     "@expo/vector-icons": "^15.1.1",
     "@gorhom/bottom-sheet": "^5.2.8",
     "@react-native-community/datetimepicker": "8.4.4",
     "@tanstack/react-query": "^5.90.21",
     "expo": "~54.0.34",
     "expo-blur": "~15.0.8",
-    "expo-build-properties": "^55.0.13",
+    "expo-build-properties": "~1.0.10",
     "expo-calendar": "~15.0.8",
     "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.13",
