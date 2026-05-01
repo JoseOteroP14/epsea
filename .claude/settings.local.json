@@ -7,7 +7,10 @@
       "Bash(npx tsc *)",
       "Bash(bun run *)",
       "Bash(./node_modules/.bin/tsc --noEmit --skipLibCheck)",
-      "Bash(bun expo *)"
+      "Bash(bun expo *)",
+      "Bash(rm -rf node_modules)",
+      "Bash(bun install *)",
+      "Bash(bun add *)"
     ]
   }
 }
