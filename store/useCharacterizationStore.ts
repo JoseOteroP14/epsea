@@ -415,19 +415,10 @@ export const useCharacterizationStore = create<CharacterizationState>(
       const normalizedType = typeName.toLowerCase();
       const canonical = TYPE_NAME_MAP[normalizedType];
 
-      // Text questions have no detail endpoint — store a placeholder and skip
-      if (canonical === "text") {
-        set((state) => ({
-          questionDetails: {
-            ...state.questionDetails,
-            [questionId]: {} as QuestionDetail,
-          },
-        }));
-        return;
-      }
-
-      // Location questions use departments/municipalities assistant endpoints, not a detail endpoint
-      if (canonical === "location") {
+      // Only "list" type questions support GET on their detail endpoint.
+      // text, date, bool, numeric endpoints only support POST/PUT/DELETE (admin ops).
+      // location uses departments/municipalities assistants instead.
+      if (canonical !== "list" && canonical !== "dependent_list") {
         set((state) => ({
           questionDetails: {
             ...state.questionDetails,
@@ -607,15 +598,15 @@ export const useCharacterizationStore = create<CharacterizationState>(
       });
     },
 
-    updateDependentListAnswer: async (answerId, value, child) => {
-      await apiFetch(`/questions-dependent-list/${answerId}`, {
+    updateDependentListAnswer: async (answerId, value, _child) => {
+      await apiFetch(`/surveys/update-answer/${answerId}`, {
         method: "PUT",
-        body: JSON.stringify({ value, child }),
+        body: JSON.stringify({ value }),
       });
     },
 
-    updateMultipleAnswers: async (answerId, questionId, surveyId, answers) => {
-      await apiFetch(`/surveys/update-answer-miltiple/${answerId}`, {
+    updateMultipleAnswers: async (_answerId, questionId, surveyId, answers) => {
+      await apiFetch(`/surveys/update-answer-multiple`, {
         method: "PUT",
         body: JSON.stringify({ question_id: questionId, survey_id: surveyId, answers }),
       });
