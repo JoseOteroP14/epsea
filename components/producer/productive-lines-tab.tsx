@@ -1,41 +1,42 @@
 import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
+import { NativeDatePicker } from "@/components/ui/native-date-picker";
 import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
 import {
     ACTIVITY_IDS,
     ACTIVITY_TYPE_LABELS,
     ACTIVITY_TYPES,
-    SPECIES_ACTIVITY_ID,
     createEmptyAgriculturalForm,
-    createEmptyLivestockForm,
-    createEmptyForestForm,
-    createEmptyFishingForm,
     createEmptyAquacultureForm,
+    createEmptyFishingForm,
+    createEmptyForestForm,
+    createEmptyLivestockForm,
     LIVESTOCK_UNIT_MAP,
+    SPECIES_ACTIVITY_ID,
     UNIT_ID_TO_NAME,
     UNIT_NAME_TO_ID,
     type ActivityType,
     type AgriculturalLineForm,
-    type LivestockLineForm,
-    type ForestLineForm,
-    type FishingLineForm,
     type AquacultureLineForm,
     type AssistantItem,
-    type UnitOfMeasureItem,
     type ExistingAgriculturalLine,
-    type ExistingLivestockLine,
-    type ExistingForestLine,
-    type ExistingFishingLine,
     type ExistingAquacultureLine,
+    type ExistingFishingLine,
+    type ExistingForestLine,
+    type ExistingLivestockLine,
+    type FishingLineForm,
+    type ForestLineForm,
+    type LivestockLineForm,
     type ProductiveLine,
+    type UnitOfMeasureItem,
 } from "@/constants/productive-lines-questions";
+import { checkConnectivity } from "@/hooks/use-network";
 import type { Question } from "@/schemas/characterization";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
     PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
     useCharacterizationStore,
 } from "@/store/useCharacterizationStore";
-import { checkConnectivity } from "@/hooks/use-network";
 import { apiFetch } from "@/utils/api";
 import {
     getAnswers,
@@ -49,7 +50,6 @@ import {
     BottomSheetScrollView,
     type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
-import { NativeDatePicker } from "@/components/ui/native-date-picker";
 import { ChevronDown, ClipboardList, Plus, Search, Sprout, X } from "lucide-react-native";
 import React, {
     useCallback,

@@ -1,16 +1,16 @@
+import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import type { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { Calendar } from "lucide-react-native";
 import React, { useState } from "react";
 import {
-  Modal,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Modal,
+    Platform,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
-import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 
 // value and onChange always use "dd/mm/yyyy" format
 // For "yyyy-mm-dd" callers, convert before/after
