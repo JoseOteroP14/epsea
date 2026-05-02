@@ -1,13 +1,22 @@
 import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
+import { checkConnectivity } from "@/hooks/use-network";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
     PROPERTY_INFO_INTERVENTION_METHOD_ID,
+    VISIT_INTERVENTION_METHOD_ID,
     useCharacterizationStore,
 } from "@/store/useCharacterizationStore";
 import { useProducerStore } from "@/store/useProducerStore";
 import { apiFetch } from "@/utils/api";
 import { getAnswers } from "@/utils/database/repositories/answer-repository";
+import {
+    markInterventionMethodApplied,
+} from "@/utils/database/repositories/producer-intervention-repository";
+import {
+    enqueueVisit1,
+    getExistingVisit1FromQueue,
+} from "@/utils/database/repositories/visit1-repository";
 import {
     convertPhotosToBase64,
     generateAndPrintVisit1Pdf,
@@ -310,6 +319,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   const [existingVisitId, setExistingVisitId] = useState<number | null>(null);
   const [deletingPhotoIndex, setDeletingPhotoIndex] = useState<number | null>(null);
   const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
   const token = useAuthStore((s) => s.token);
@@ -370,6 +380,8 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
       try {
         const data = await getVisit1(Number(projectId), Number(producerId));
         if (cancelled) return;
+
+        // If we got data from API, use it (server wins)
         if (data) {
           setIsEditMode(true);
           setExistingVisitId(data.id);
@@ -387,6 +399,30 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
             newExisting[i] = img;
           });
           setExistingImages(newExisting);
+        } else {
+          // No API visit found — check pending local queue (offline-created visits)
+          const userId = authUser?.user_id ?? 0;
+          const localVisit = await getExistingVisit1FromQueue(
+            `${producerId}-${projectId}-%`,
+          );
+          if (localVisit && !cancelled) {
+            // Use the locally queued visit data
+            const payload: Visit1Payload = JSON.parse(localVisit.payload);
+            setIsEditMode(false);
+            setExistingVisitId(null);
+            setObjective(payload.objetive || "");
+            setDiagnosis(payload.diagnosis || "");
+            setRecommendations(payload.recommendations || "");
+            setObservations(payload.observations || "");
+            setAttendanceId(payload.attendance_id ? String(payload.attendance_id) : "");
+            setAttendanceName(payload.attendance_name || "");
+            if (payload.registration_date) setRegistrationDate(payload.registration_date);
+            const photos: LocalPhoto[] = JSON.parse(localVisit.photos ?? "[]");
+            const newLocal: (LocalPhoto | null)[] = [null, null, null];
+            photos.slice(0, 3).forEach((p, i) => { newLocal[i] = p; });
+            setLocalPhotos(newLocal);
+            setExistingImages([null, null, null]);
+          }
         }
       } catch (err) {
         console.warn("No se pudo consultar visita existente:", err);
@@ -396,6 +432,21 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
     })();
 
     return () => { cancelled = true; };
+  }, [producerId, projectId, authUser]);
+
+  // Check if method already applied (for apply/re-apply guard)
+  useEffect(() => {
+    if (!producerId || !projectId) return;
+    const pid = Number(producerId);
+    const projId = Number(projectId);
+    (async () => {
+      const applied = await useCharacterizationStore.getState().hasInterventionMethodApplied(
+        pid,
+        projId,
+        VISIT_INTERVENTION_METHOD_ID,
+      );
+      setMethodAlreadyApplied(applied);
+    })();
   }, [producerId, projectId]);
 
   // ── Toggle section ──────────────────────────────────────────────────────
@@ -496,7 +547,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
 
   // ── Save ──────────────────────────────────────────────────────────────
 
-  const handleSave = useCallback(async () => {
+const handleSave = useCallback(async () => {
     if (!objective.trim()) {
       showAlert({ title: "Campo requerido", message: "Ingrese el objetivo del acompañamiento.", type: "warning" });
       return;
@@ -514,7 +565,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
       return;
     }
     if (attendanceId !== "1" && !attendanceName.trim()) {
-      showAlert({ title: "Campo requerido", message: "Ingrese el nombre de la persona que atiende.", type: "warning" });
+      showAlert({ title: "Campo requerido", message: "Ingrese el nombre de la persona que atiene.", type: "warning" });
       return;
     }
 
@@ -527,7 +578,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
         diagnosis: diagnosis.trim(),
         recommendations: recommendations.trim(),
         observations: observations.trim(),
-        compliance_recommendation_id: 3, // "No aplica" for visit 1
+        compliance_recommendation_id: 3,
         registration_date: registrationDate,
         attendance_id: Number(attendanceId),
         attendance_name: attendanceId !== "1" ? attendanceName.trim() : null,
@@ -535,31 +586,49 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
       };
 
       const newPhotos = localPhotos.filter((p): p is LocalPhoto => p !== null);
+      const isOnline = await checkConnectivity();
+      const userId = authUser?.user_id ?? 0;
 
-      if (isEditMode && existingVisitId) {
-        await updateVisit1(existingVisitId, payload);
-        if (newPhotos.length > 0) {
-          try {
-            await uploadVisitImages(existingVisitId, newPhotos);
-          } catch {
-            showAlert({ title: "Aviso", message: "La visita se actualizó pero hubo un error al subir las fotos.", type: "warning" });
+      if (isOnline) {
+        if (isEditMode && existingVisitId) {
+          await updateVisit1(existingVisitId, payload);
+          if (newPhotos.length > 0) {
+            try {
+              await uploadVisitImages(existingVisitId, newPhotos);
+            } catch {
+              showAlert({ title: "Aviso", message: "La visita se actualizó pero hubo un error al subir las fotos.", type: "warning" });
+            }
           }
-        }
-        showAlert({ title: "Éxito", message: "Visita 1 actualizada exitosamente.", type: "success" });
-      } else {
-        let result: Visit1Response;
-        if (newPhotos.length > 0) {
-          result = await createVisit1WithImages(payload, newPhotos);
+          showAlert({ title: "Éxito", message: "Visita 1 actualizada exitosamente.", type: "success" });
         } else {
-          result = await createVisit1(payload);
+          let result: Visit1Response;
+          if (newPhotos.length > 0) {
+            result = await createVisit1WithImages(payload, newPhotos);
+          } else {
+            result = await createVisit1(payload);
+          }
+          setExistingVisitId(result?.id ?? null);
+          setIsEditMode(true);
+          showAlert({ title: "Éxito", message: "Visita 1 guardada exitosamente.", type: "success" });
         }
-        setExistingVisitId(result?.id ?? null);
-        setIsEditMode(true);
-        showAlert({ title: "Éxito", message: "Visita 1 guardada exitosamente.", type: "success" });
+        setLocalPhotos([null, null, null]);
+      } else {
+        const visitUuid = `${producerId}-${projectId}-${Date.now()}`;
+        await enqueueVisit1(visitUuid, payload, newPhotos, userId);
+        await markInterventionMethodApplied(
+          Number(producerId),
+          Number(projectId),
+          VISIT_INTERVENTION_METHOD_ID,
+          userId,
+        );
+        setMethodAlreadyApplied(true);
+        setLocalPhotos([null, null, null]);
+        showAlert({
+          title: "Sin internet",
+          message: "La visita se guardó localmente y se enviará al sincronizar.",
+          type: "warning",
+        });
       }
-
-      // Clear local photos (they are now saved on server)
-      setLocalPhotos([null, null, null]);
     } catch (error) {
       console.error("Error al guardar visita 1:", error);
       showAlert({
@@ -573,7 +642,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   }, [
     objective, diagnosis, recommendations, observations, attendanceId,
     attendanceName, registrationDate, producerId, projectId,
-    localPhotos, isEditMode, existingVisitId, showAlert,
+    localPhotos, isEditMode, existingVisitId, showAlert, authUser,
   ]);
 
   // ── Generate PDF (pdfmake) ──────────────────────────────────────────────

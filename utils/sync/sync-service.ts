@@ -18,12 +18,28 @@ import {
     upsertProjects,
 } from "@/utils/database/repositories/project-repository";
 import {
+    getMetadata,
     getPending,
     markCompleted,
     markFailed,
     setMetadata,
 } from "@/utils/database/repositories/sync-repository";
 import { deleteAnswers } from "@/utils/database/repositories/answer-repository";
+import { getStoredToken } from "@/utils/secure-storage";
+import {
+    getPendingVisit1Items,
+    markVisit1Completed,
+    markVisit1Failed,
+    type Visit1QueueItem,
+} from "@/utils/database/repositories/visit1-repository";
+import {
+    getPendingAnswerUpdates,
+    deleteAnswerUpdate,
+} from "@/utils/database/repositories/answer-update-repository";
+import {
+    hasInterventionMethodApplied,
+    markInterventionMethodApplied,
+} from "@/utils/database/repositories/producer-intervention-repository";
 
 // Map type names to GET-capable detail endpoints.
 // Only "list" type questions support GET /questions-list/:id (returns options).
@@ -61,6 +77,9 @@ export async function downloadAllData(
   const { user } = useAuthStore.getState();
   if (!user) throw new Error("No authenticated user");
 
+  const lastDownload = await getMetadata("last_full_download");
+  const lastDownloadTime = lastDownload ? new Date(lastDownload).getTime() : 0;
+
   const report = (stage: string, current: number, total: number) =>
     onProgress?.({ stage, current, total });
 
@@ -91,6 +110,7 @@ export async function downloadAllData(
 
   // 2. Producers for each project
   let producerCount = 0;
+  const allProducerIds: Array<{ producerId: number; projectId: number }> = [];
   for (let i = 0; i < projects.length; i++) {
     const project = projects[i];
     report(
@@ -130,6 +150,7 @@ export async function downloadAllData(
         for (const p of producers) {
           const id = p.producer_id ?? p.id;
           if (id != null) fetchedProducerIds.push(Number(id));
+          allProducerIds.push({ producerId: Number(id), projectId: project.id });
         }
       }
       page++;
@@ -138,6 +159,48 @@ export async function downloadAllData(
     await deleteProducersNotIn(project.id, fetchedProducerIds);
   }
   report("Usuarios descargados", producerCount, producerCount);
+
+  // 4. Download survey results for all producers across all intervention methods
+  //    This populates local cache AND marks which methods were actually applied.
+  const INTERVENTION_METHOD_IDS = [1, 2, 3, 5, 7, 8];
+
+  let resultCount = 0;
+  for (let i = 0; i < allProducerIds.length; i++) {
+    const { producerId, projectId } = allProducerIds[i]!;
+    if (i % 20 === 0 || i === allProducerIds.length - 1) {
+      report(
+        `Resultados de encuestas (${i + 1}/${allProducerIds.length})`,
+        i + 1,
+        allProducerIds.length,
+      );
+    }
+    for (const methodId of INTERVENTION_METHOD_IDS) {
+      try {
+        const response = await apiFetch<any>(
+          `/surveys/${projectId}/producer/${producerId}/intervention_method/${methodId}`,
+          { method: "GET" },
+        );
+        const rawData = Array.isArray(response?.data)
+          ? response.data
+          : Array.isArray(response)
+            ? response
+            : [];
+        // Only mark as applied AND persist if there are actual answers
+        if (rawData.length > 0) {
+          await markInterventionMethodApplied(
+            producerId,
+            projectId,
+            methodId,
+            user.user_id,
+          );
+          resultCount++;
+        }
+      } catch {
+        // Skip silently — endpoint may not exist or producer has no results
+      }
+    }
+  }
+  report(`Resultados de encuestas`, allProducerIds.length, allProducerIds.length);
 
   // Note: Producer details endpoint (/producers/:id) is not available for extensionists.
   // Producer data from the list is sufficient for offline use.
@@ -267,17 +330,94 @@ export async function downloadAllData(
   report("Descarga completa", 1, 1);
 }
 
+const BASE_URL = "https://playmusic.com.co/agro/api/v1";
+
+function isRateLimited(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.message.includes("429") || error.message.includes("rate");
+  }
+  return false;
+}
+
+function getRetryDelay(attempts: number): number {
+  return Math.min(1000 * Math.pow(2, attempts), 5 * 60 * 1000);
+}
+
+async function uploadVisit1Item(item: Visit1QueueItem): Promise<void> {
+  const token = await getStoredToken();
+  const payload = JSON.parse(item.payload);
+  const photos: LocalPhoto[] = JSON.parse(item.photos ?? "[]");
+  const formData = new FormData();
+  formData.append("project_id", String(payload.project_id));
+  formData.append("producer_id", String(payload.producer_id));
+  formData.append("objetive", payload.objetive);
+  formData.append("diagnosis", payload.diagnosis);
+  formData.append("recommendations", payload.recommendations);
+  formData.append("observations", payload.observations ?? "");
+  formData.append("compliance_recommendation_id", String(payload.compliance_recommendation_id));
+  formData.append("registration_date", payload.registration_date);
+  formData.append("attendance_id", String(payload.attendance_id));
+  formData.append("attendance_name", payload.attendance_name ?? "");
+  formData.append("origin", payload.origin ?? "app");
+  for (const photo of photos) {
+    formData.append("images", {
+      uri: photo.uri,
+      name: photo.fileName,
+      type: photo.type,
+    } as any);
+  }
+  const response = await fetch(`${BASE_URL}/visit-1`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
+  });
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.message || `Error ${response.status}`);
+  }
+}
+
+interface LocalPhoto {
+  uri: string;
+  fileName: string;
+  type: string;
+}
+
 export async function uploadPendingAnswers(
   onProgress?: (progress: SyncProgress) => void,
 ): Promise<{ uploaded: number; failed: number }> {
   const { user } = useAuthStore.getState();
   if (!user) throw new Error("No authenticated user");
 
-  // Only upload items queued by the current user
-  const pending = await getPending(user.user_id);
   let uploaded = 0;
   let failed = 0;
 
+  // 1. Upload answer updates (PUT operations for edited answers)
+  const answerUpdates = await getPendingAnswerUpdates(user.user_id);
+  for (let i = 0; i < answerUpdates.length; i++) {
+    const update = answerUpdates[i]!;
+    onProgress?.({
+      stage: "Subiendo ediciones",
+      current: i,
+      total: answerUpdates.length,
+    });
+    try {
+      await apiFetch(`/surveys/update-answer/${update.answer_id}`, {
+        method: "PUT",
+        body: JSON.stringify({ value: update.new_value }),
+      });
+      await deleteAnswerUpdate(update.answer_id);
+      uploaded++;
+    } catch (error) {
+      failed++;
+    }
+  }
+
+  // 2. Upload survey answers (POST new answers)
+  const pending = await getPending(user.user_id);
   for (let i = 0; i < pending.length; i++) {
     const item = pending[i];
     onProgress?.({
@@ -286,10 +426,12 @@ export async function uploadPendingAnswers(
       total: pending.length,
     });
 
+    const retryDelay = getRetryDelay(item.attempts);
+    await new Promise((r) => setTimeout(r, retryDelay));
+
     try {
       const payload = JSON.parse(item.payload);
 
-      // POST the survey to the API
       await apiFetch(`/surveys`, {
         method: "POST",
         body: JSON.stringify(payload),
@@ -297,7 +439,6 @@ export async function uploadPendingAnswers(
 
       await markCompleted(item.id);
 
-      // Clean up locally cached answers so future loads use the remote source of truth
       if (item.entity_type === "survey_answers") {
         const parts = item.entity_key.split("-").map((n) => Number(n));
         if (parts.length === 4 && parts.every((n) => Number.isFinite(n))) {
@@ -307,6 +448,18 @@ export async function uploadPendingAnswers(
           } catch (e) {
             console.error("Failed to clean local answers after upload:", e);
           }
+        }
+        // Mark intervention method as applied after successful upload
+        try {
+          const parsedPayload = JSON.parse(item.payload);
+          await markInterventionMethodApplied(
+            parsedPayload.producer_id,
+            parsedPayload.project_id,
+            parsedPayload.intervention_method_id,
+            user.user_id,
+          );
+        } catch (e) {
+          console.error("Failed to mark intervention method applied:", e);
         }
       }
 
@@ -319,11 +472,47 @@ export async function uploadPendingAnswers(
     }
   }
 
+  // 3. Upload visit1 entries (including photos)
+  const visit1Pending = await getPendingVisit1Items(user.user_id);
+  for (let i = 0; i < visit1Pending.length; i++) {
+    const item = visit1Pending[i]!;
+    onProgress?.({
+      stage: "Subiendo visitas",
+      current: i,
+      total: visit1Pending.length,
+    });
+
+    const retryDelay = getRetryDelay(item.attempts ?? 0);
+    await new Promise((r) => setTimeout(r, retryDelay));
+
+    try {
+      await uploadVisit1Item(item);
+      await markVisit1Completed(item.id!);
+      // Mark VISIT method as applied after successful upload
+      try {
+        const visitPayload = JSON.parse(item.payload);
+        await markInterventionMethodApplied(
+          visitPayload.producer_id,
+          visitPayload.project_id,
+          5, // VISIT_INTERVENTION_METHOD_ID
+          user.user_id,
+        );
+      } catch (e) {
+        console.error("Failed to mark visit method applied:", e);
+      }
+      uploaded++;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await markVisit1Failed(item.id!, errorMsg);
+      failed++;
+    }
+  }
+
   await setMetadata("last_upload", new Date().toISOString());
   onProgress?.({
     stage: "Subida completa",
-    current: pending.length,
-    total: pending.length,
+    current: uploaded + failed,
+    total: uploaded + failed,
   });
 
   return { uploaded, failed };

@@ -43,6 +43,9 @@ import {
     saveAnswersBatch,
 } from "@/utils/database/repositories/answer-repository";
 import { enqueue } from "@/utils/database/repositories/sync-repository";
+import {
+    markInterventionMethodApplied,
+} from "@/utils/database/repositories/producer-intervention-repository";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
     BottomSheetBackdrop,
@@ -527,6 +530,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
     fetchSurveyResults,
     getProductiveLinesComponent,
     getCanonicalTypeName,
+    hasInterventionMethodApplied,
   } = useCharacterizationStore();
 
   const [showComplementarySheet, setShowComplementarySheet] = useState(false);
@@ -557,6 +561,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
   const [existingFishingLines, setExistingFishingLines] = useState<ExistingFishingLine[]>([]);
   const [existingAquacultureLines, setExistingAquacultureLines] = useState<ExistingAquacultureLine[]>([]);
   const [loadingExisting, setLoadingExisting] = useState(true);
+  const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
 
   // Form state
   const [lineCountInput, setLineCountInput] = useState("1");
@@ -636,6 +641,21 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
     })();
     return () => { cancelled = true; };
   }, [productiveLinesComponent, producerId, projectId, currentUserId, fetchSurveyResults]);
+
+  // Check if method already applied (for apply/re-apply guard)
+  useEffect(() => {
+    if (!producerId || !projectId || !currentUserId) return;
+    const pid = Number(producerId);
+    const projId = Number(projectId);
+    (async () => {
+      const applied = await hasInterventionMethodApplied(
+        pid,
+        projId,
+        PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
+      );
+      setMethodAlreadyApplied(applied);
+    })();
+  }, [producerId, projectId, currentUserId, hasInterventionMethodApplied]);
 
   // Fetch line options when activity type changes (skip pesca/acuicola)
   useEffect(() => {
@@ -1044,10 +1064,13 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
       const isOnline = await checkConnectivity();
       if (isOnline) {
         await apiFetch("/surveys", { method: "POST", body: JSON.stringify(payload) });
+        await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
       } else {
         await saveAnswersBatch(answerRows);
         await enqueue("survey_answers", `${pid}-${projId}-${productiveLinesComponent.id}-${userId}`, payload, userId);
+        await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
       }
+      setMethodAlreadyApplied(true);
       setShowComplementarySheet(false);
       showAlert({ title: isOnline ? "Guardado" : "Sin internet", message: isOnline ? "Los datos complementarios se guardaron correctamente." : "Los datos se guardaron localmente y se enviarán al sincronizar.", type: isOnline ? "success" : "warning" });
     } catch {

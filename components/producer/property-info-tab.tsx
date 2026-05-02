@@ -13,7 +13,13 @@ import {
     getAnswers,
     saveAnswersBatch,
 } from "@/utils/database/repositories/answer-repository";
+import {
+    upsertAnswerUpdate,
+} from "@/utils/database/repositories/answer-update-repository";
 import { enqueue } from "@/utils/database/repositories/sync-repository";
+import {
+    markInterventionMethodApplied,
+} from "@/utils/database/repositories/producer-intervention-repository";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
     ClipboardList,
@@ -143,6 +149,7 @@ export function PropertyInfoTab({
     getPropertyInfoComponent,
     getCanonicalTypeName,
     fetchMunicipalities,
+    hasInterventionMethodApplied,
   } = useCharacterizationStore();
 
   const currentUserId = useAuthStore((state) => state.user?.user_id);
@@ -155,6 +162,7 @@ export function PropertyInfoTab({
   const [savedAnswers, setSavedAnswers] = useState<DisplayAnswer[]>([]);
   const [loadingAnswers, setLoadingAnswers] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
 
   const [localQuestions, setLocalQuestions] = useState<Question[]>([]);
   const hasFetchedQuestions = useRef(false);
@@ -203,32 +211,37 @@ export function PropertyInfoTab({
       const ids: Record<number, number> = {};
       let foundRemote = false;
 
-      try {
-        const remote = await fetchSurveyResults(
-          projId,
-          pid,
-          PROPERTY_INFO_INTERVENTION_METHOD_ID,
-        );
-        for (const item of remote) {
-          if (merged[item.question_id] !== undefined) {
-            if (Array.isArray(merged[item.question_id])) {
-              merged[item.question_id].push(item.answer_value);
+      // 1. Fetch from API (server truth) — only attempt if online
+      const isOnline = await checkConnectivity();
+      if (isOnline) {
+        try {
+          const remote = await fetchSurveyResults(
+            projId,
+            pid,
+            PROPERTY_INFO_INTERVENTION_METHOD_ID,
+          );
+          for (const item of remote) {
+            if (merged[item.question_id] !== undefined) {
+              if (Array.isArray(merged[item.question_id])) {
+                merged[item.question_id].push(item.answer_value);
+              } else {
+                merged[item.question_id] = [
+                  merged[item.question_id],
+                  item.answer_value,
+                ];
+              }
             } else {
-              merged[item.question_id] = [
-                merged[item.question_id],
-                item.answer_value,
-              ];
+              merged[item.question_id] = item.answer_value;
             }
-          } else {
-            merged[item.question_id] = item.answer_value;
+            ids[item.question_id] = item.answer_id;
           }
-          ids[item.question_id] = item.answer_id;
+          foundRemote = remote.length > 0;
+        } catch (e) {
+          console.error("Failed to fetch remote survey results:", e);
         }
-        foundRemote = remote.length > 0;
-      } catch (e) {
-        console.error("Failed to fetch remote survey results:", e);
       }
 
+      // 2. Overlay local SQLite answers (pending upload take precedence) — always available offline
       try {
         const local = await getAnswers(
           pid,
@@ -250,12 +263,32 @@ export function PropertyInfoTab({
         console.error("Failed to load local answers:", e);
       }
 
+      // If no remote data found but we have local data, mark as having survey
+      if (!foundRemote && Object.keys(merged).length > 0) {
+        foundRemote = true;
+      }
+
       setAnswers(merged);
       setAnswerIds(ids);
       setHasSurvey(foundRemote);
       setLoadingAnswers(false);
     })();
   }, [activeComponent, producerId, projectId, currentUserId, fetchSurveyResults, refreshKey]);
+
+  // Check if method already applied (for apply/re-apply guard)
+  useEffect(() => {
+    if (!producerId || !projectId || !currentUserId) return;
+    const pid = Number(producerId);
+    const projId = Number(projectId);
+    (async () => {
+      const applied = await hasInterventionMethodApplied(
+        pid,
+        projId,
+        PROPERTY_INFO_INTERVENTION_METHOD_ID,
+      );
+      setMethodAlreadyApplied(applied);
+    })();
+  }, [producerId, projectId, currentUserId, hasInterventionMethodApplied]);
 
   // Enrich location-type answers that are just codes (from remote API) → "MUNICIPIO-DEPARTAMENTO"
   useEffect(() => {
@@ -435,6 +468,12 @@ export function PropertyInfoTab({
           method: "POST",
           body: JSON.stringify(payload),
         });
+        await markInterventionMethodApplied(
+          pid,
+          projId,
+          PROPERTY_INFO_INTERVENTION_METHOD_ID,
+          userId,
+        );
         showAlert({
           title: "Guardado",
           message: "Las respuestas se guardaron correctamente.",
@@ -448,6 +487,12 @@ export function PropertyInfoTab({
           payload,
           userId,
         );
+        await markInterventionMethodApplied(
+          pid,
+          projId,
+          PROPERTY_INFO_INTERVENTION_METHOD_ID,
+          userId,
+        );
         showAlert({
           title: "Sin internet",
           message:
@@ -456,6 +501,7 @@ export function PropertyInfoTab({
         });
       }
 
+      setMethodAlreadyApplied(true);
       setShowSheet(false);
       setHasSurvey(true);
       setRefreshKey((k) => k + 1);
@@ -486,17 +532,47 @@ export function PropertyInfoTab({
         ? JSON.stringify(rawVal)
         : String(rawVal ?? "");
 
-    try {
-      await updateSurveyAnswer(answerId, newValue);
+    const isOnline = await checkConnectivity();
+
+    if (isOnline) {
+      try {
+        await apiFetch(`/surveys/update-answer/${answerId}`, {
+          method: "PUT",
+          body: JSON.stringify({ value: newValue }),
+        });
+        setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
+        setShowSheet(false);
+        setEditingQuestion(null);
+        showAlert({ title: "Actualizado", message: "La respuesta se actualizó correctamente.", type: "success" });
+      } catch (error) {
+        console.error("Failed to update answer:", error);
+        showAlert({ title: "Error", message: "No se pudo actualizar la respuesta.", type: "error" });
+      }
+    } else {
+      const pid = Number(producerId);
+      const projId = Number(projectId ?? 0);
+      const compId = activeComponent?.id ?? 0;
+      const userId = currentUserId ?? 0;
+      await upsertAnswerUpdate({
+        answer_id: answerId,
+        new_value: newValue,
+        producer_id: pid,
+        project_id: projId,
+        component_id: compId,
+        question_id: editingQuestion.id,
+        user_id: userId,
+        intervention_method_id: PROPERTY_INFO_INTERVENTION_METHOD_ID,
+      });
       setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
       setShowSheet(false);
       setEditingQuestion(null);
-      showAlert({ title: "Actualizado", message: "La respuesta se actualizó correctamente.", type: "success" });
-    } catch (error) {
-      console.error("Failed to update answer:", error);
-      showAlert({ title: "Error", message: "No se pudo actualizar la respuesta.", type: "error" });
+      showAlert({
+        title: "Sin internet",
+        message: "La edición se guardó localmente y se enviará al sincronizar.",
+        type: "warning",
+      });
     }
-  }, [editingQuestion, editAnswers, answerIds, updateSurveyAnswer, showAlert]);
+  }, [editingQuestion, editAnswers, answerIds, activeComponent, producerId, projectId, currentUserId, showAlert]);
 
   if (loadingComponents) {
     return (
@@ -537,8 +613,9 @@ export function PropertyInfoTab({
           Información del Predio
         </ThemedText>
         <ThemedText style={styles.introDescription}>
-          Registre la información del predio del usuario según los campos
-          establecidos.
+          {methodAlreadyApplied
+            ? "Este método ya fue aplicado. Puede editar las respuestas guardadas a continuación."
+            : "Registre la información del predio del usuario según los campos establecidos."}
         </ThemedText>
         <TouchableOpacity
           style={styles.applyButton}
@@ -552,7 +629,7 @@ export function PropertyInfoTab({
             type="defaultSemiBold"
             style={styles.applyButtonText}
           >
-            Registrar Información
+            {methodAlreadyApplied ? "Ver / Editar Respuestas" : "Registrar Información"}
           </ThemedText>
         </TouchableOpacity>
 

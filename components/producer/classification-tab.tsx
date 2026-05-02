@@ -13,7 +13,14 @@ import {
     getAnswers,
     saveAnswersBatch,
 } from "@/utils/database/repositories/answer-repository";
+import {
+    upsertAnswerUpdate,
+    getAnswerUpdates,
+} from "@/utils/database/repositories/answer-update-repository";
 import { enqueue } from "@/utils/database/repositories/sync-repository";
+import {
+    markInterventionMethodApplied,
+} from "@/utils/database/repositories/producer-intervention-repository";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
     ClipboardCheck,
@@ -218,6 +225,7 @@ export function ClassificationTab({
     updateSurveyAnswer,
     getClassificationComponent,
     getCanonicalTypeName,
+    hasInterventionMethodApplied,
   } = useCharacterizationStore();
 
   const currentUserId = useAuthStore((state) => state.user?.user_id);
@@ -230,6 +238,7 @@ export function ClassificationTab({
   const [savedAnswers, setSavedAnswers] = useState<DisplayAnswer[]>([]);
   const [loadingAnswers, setLoadingAnswers] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
 
   // Local copy of classification questions (survives tab switches)
   const [localQuestions, setLocalQuestions] = useState<Question[]>([]);
@@ -283,35 +292,38 @@ export function ClassificationTab({
       const ids: Record<number, number> = {};
       let foundRemote = false;
 
-      // 1. Fetch from API (server truth)
-      try {
-        const remote = await fetchSurveyResults(
-          projId,
-          pid,
-          CLASSIFICATION_INTERVENTION_METHOD_ID,
-        );
-        for (const item of remote) {
-          // Accumulate multiple answers for same question (multi-select)
-          if (merged[item.question_id] !== undefined) {
-            if (Array.isArray(merged[item.question_id])) {
-              merged[item.question_id].push(item.answer_value);
+      // 1. Fetch from API (server truth) — only attempt if online
+      const isOnline = await checkConnectivity();
+      if (isOnline) {
+        try {
+          const remote = await fetchSurveyResults(
+            projId,
+            pid,
+            CLASSIFICATION_INTERVENTION_METHOD_ID,
+          );
+          for (const item of remote) {
+            // Accumulate multiple answers for same question (multi-select)
+            if (merged[item.question_id] !== undefined) {
+              if (Array.isArray(merged[item.question_id])) {
+                merged[item.question_id].push(item.answer_value);
+              } else {
+                merged[item.question_id] = [
+                  merged[item.question_id],
+                  item.answer_value,
+                ];
+              }
             } else {
-              merged[item.question_id] = [
-                merged[item.question_id],
-                item.answer_value,
-              ];
+              merged[item.question_id] = item.answer_value;
             }
-          } else {
-            merged[item.question_id] = item.answer_value;
+            ids[item.question_id] = item.answer_id;
           }
-          ids[item.question_id] = item.answer_id;
+          foundRemote = remote.length > 0;
+        } catch (e) {
+          console.error("Failed to fetch remote survey results:", e);
         }
-        foundRemote = remote.length > 0;
-      } catch (e) {
-        console.error("Failed to fetch remote survey results:", e);
       }
 
-      // 2. Overlay local SQLite answers (pending upload take precedence)
+      // 2. Overlay local SQLite answers (pending upload take precedence) — always available offline
       try {
         const local = await getAnswers(
           pid,
@@ -334,12 +346,32 @@ export function ClassificationTab({
         console.error("Failed to load local answers:", e);
       }
 
+      // If no remote data found but we have local data, mark as having survey
+      if (!foundRemote && Object.keys(merged).length > 0) {
+        foundRemote = true;
+      }
+
       setAnswers(merged);
       setAnswerIds(ids);
       setHasSurvey(foundRemote);
       setLoadingAnswers(false);
     })();
   }, [classificationComponent, producerId, projectId, currentUserId, fetchSurveyResults, refreshKey]);
+
+  // Check if method already applied (for apply/re-apply guard)
+  useEffect(() => {
+    if (!producerId || !projectId || !currentUserId) return;
+    const pid = Number(producerId);
+    const projId = Number(projectId);
+    (async () => {
+      const applied = await hasInterventionMethodApplied(
+        pid,
+        projId,
+        CLASSIFICATION_INTERVENTION_METHOD_ID,
+      );
+      setMethodAlreadyApplied(applied);
+    })();
+  }, [producerId, projectId, currentUserId, hasInterventionMethodApplied]);
 
   // Pre-fetch question details
   useEffect(() => {
@@ -497,6 +529,12 @@ export function ClassificationTab({
           method: "POST",
           body: JSON.stringify(payload),
         });
+        await markInterventionMethodApplied(
+          pid,
+          projId,
+          CLASSIFICATION_INTERVENTION_METHOD_ID,
+          userId,
+        );
         showAlert({
           title: "Guardado",
           message: "Las respuestas se guardaron correctamente.",
@@ -510,6 +548,12 @@ export function ClassificationTab({
           payload,
           userId,
         );
+        await markInterventionMethodApplied(
+          pid,
+          projId,
+          CLASSIFICATION_INTERVENTION_METHOD_ID,
+          userId,
+        );
         showAlert({
           title: "Sin internet",
           message:
@@ -518,6 +562,7 @@ export function ClassificationTab({
         });
       }
 
+      setMethodAlreadyApplied(true);
       setShowSheet(false);
       setHasSurvey(true);
       setRefreshKey((k) => k + 1);
@@ -542,19 +587,52 @@ export function ClassificationTab({
   const handleEditSave = useCallback(async () => {
     if (!editingQuestion) return;
     const answerId = answerIds[editingQuestion.id];
-    const newValue = String(editAnswers[editingQuestion.id] ?? "");
+    const rawVal = editAnswers[editingQuestion.id];
+    const newValue = Array.isArray(rawVal)
+      ? rawVal.join(",")
+      : String(rawVal ?? "");
 
-    try {
-      await updateSurveyAnswer(answerId, newValue);
-      setAnswers((prev) => ({ ...prev, [editingQuestion.id]: newValue }));
+    const isOnline = await checkConnectivity();
+
+    if (isOnline) {
+      try {
+        await apiFetch(`/surveys/update-answer/${answerId}`, {
+          method: "PUT",
+          body: JSON.stringify({ value: newValue }),
+        });
+        setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
+        setShowSheet(false);
+        setEditingQuestion(null);
+        showAlert({ title: "Actualizado", message: "La respuesta se actualizó correctamente.", type: "success" });
+      } catch (error) {
+        console.error("Failed to update answer:", error);
+        showAlert({ title: "Error", message: "No se pudo actualizar la respuesta.", type: "error" });
+      }
+    } else {
+      const pid = Number(producerId);
+      const projId = Number(projectId ?? 0);
+      const compId = classificationComponent?.id ?? 0;
+      const userId = currentUserId ?? 0;
+      await upsertAnswerUpdate({
+        answer_id: answerId,
+        new_value: newValue,
+        producer_id: pid,
+        project_id: projId,
+        component_id: compId,
+        question_id: editingQuestion.id,
+        user_id: userId,
+        intervention_method_id: CLASSIFICATION_INTERVENTION_METHOD_ID,
+      });
+      setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
       setShowSheet(false);
       setEditingQuestion(null);
-      showAlert({ title: "Actualizado", message: "La respuesta se actualizó correctamente.", type: "success" });
-    } catch (error) {
-      console.error("Failed to update answer:", error);
-      showAlert({ title: "Error", message: "No se pudo actualizar la respuesta.", type: "error" });
+      showAlert({
+        title: "Sin internet",
+        message: "La edición se guardó localmente y se enviará al sincronizar.",
+        type: "warning",
+      });
     }
-  }, [editingQuestion, editAnswers, answerIds, updateSurveyAnswer]);
+  }, [editingQuestion, editAnswers, answerIds, classificationComponent, producerId, projectId, currentUserId, showAlert]);
 
   if (loadingComponents) {
     return (
@@ -593,7 +671,7 @@ export function ClassificationTab({
         showsVerticalScrollIndicator={false}
       >
         {/* Apply button — only when no survey exists */}
-        {!hasSurvey && savedAnswers.length === 0 && (
+        {(!hasSurvey && savedAnswers.length === 0) || methodAlreadyApplied ? (
           <TouchableOpacity
             style={styles.applyButton}
             activeOpacity={0.8}
@@ -606,10 +684,10 @@ export function ClassificationTab({
               type="defaultSemiBold"
               style={styles.applyButtonText}
             >
-              Aplicar Clasificación
+              {methodAlreadyApplied ? "Ver / Editar Respuestas" : "Aplicar Clasificación"}
             </ThemedText>
           </TouchableOpacity>
-        )}
+        ) : null}
 
         {/* Answers section */}
         <View style={styles.answersSection}>

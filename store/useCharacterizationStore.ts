@@ -16,6 +16,7 @@ import {
 import { apiFetch } from "@/utils/api";
 import { create } from "zustand";
 
+import { useAuthStore } from "./useAuthStore";
 import {
     getAllComponents,
     getAllInnovaFields,
@@ -28,6 +29,10 @@ import {
     upsertQuestions,
     upsertQuestionTypes,
 } from "@/utils/database/repositories/characterization-repository";
+import {
+    getAppliedInterventionMethods,
+    hasInterventionMethodApplied as hasAppliedInDb,
+} from "@/utils/database/repositories/producer-intervention-repository";
 
 // Component IDs (from backend)
 export const PERSONAL_INFO_COMPONENT_ID = 1;
@@ -112,6 +117,15 @@ interface CharacterizationState {
   fetchDepartments: () => Promise<Department[]>;
   fetchMunicipalities: (departmentCod: string) => Promise<Municipality[]>;
   resetQuestions: () => void;
+  hasInterventionMethodApplied: (
+    producerId: number,
+    projectId: number,
+    interventionMethodId: number,
+  ) => Promise<boolean>;
+  getAppliedInterventionMethods: (
+    producerId: number,
+    projectId: number,
+  ) => Promise<number[]>;
 }
 
 // Map both English and Spanish type names to endpoints
@@ -684,5 +698,25 @@ export const useCharacterizationStore = create<CharacterizationState>(
           limit: 50,
         },
       }),
+
+    hasInterventionMethodApplied: async (producerId, projectId, interventionMethodId) => {
+      const userId = useAuthStore.getState().user?.user_id;
+      if (!userId) return false;
+      try {
+        return await hasAppliedInDb(producerId, projectId, interventionMethodId, userId);
+      } catch {
+        return false;
+      }
+    },
+
+    getAppliedInterventionMethods: async (producerId, projectId) => {
+      const userId = useAuthStore.getState().user?.user_id;
+      if (!userId) return [];
+      try {
+        return await getAppliedInterventionMethods(producerId, projectId, userId);
+      } catch {
+        return [];
+      }
+    },
   }),
 );

@@ -119,6 +119,11 @@ const migrations: Migration[] = [
         );
 
         CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status);
+        CREATE INDEX IF NOT EXISTS idx_sync_queue_user ON sync_queue(user_id);
+
+        -- Prevent duplicate sync queue entries for same entity (UPSERT semantics)
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_queue_entity_key
+          ON sync_queue(entity_type, entity_key);
 
         -- Sync metadata
         CREATE TABLE IF NOT EXISTS sync_metadata (
@@ -222,6 +227,84 @@ const migrations: Migration[] = [
           ALTER TABLE users ADD COLUMN last_name TEXT;
         `);
       }
+    },
+  },
+{
+    version: 5,
+    up: async (db) => {
+      await db.execAsync(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_queue_entity_key
+          ON sync_queue(entity_type, entity_key);
+      `);
+    },
+  },
+  {
+    version: 6,
+    up: async (db) => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS answer_updates (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          answer_id INTEGER NOT NULL,
+          new_value TEXT NOT NULL,
+          producer_id INTEGER NOT NULL,
+          project_id INTEGER NOT NULL,
+          component_id INTEGER NOT NULL,
+          question_id INTEGER NOT NULL,
+          user_id INTEGER NOT NULL,
+          intervention_method_id INTEGER NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(answer_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_answer_updates_user
+          ON answer_updates(user_id);
+
+        CREATE TABLE IF NOT EXISTS visit1_queue (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          visit_uuid TEXT NOT NULL UNIQUE,
+          payload TEXT NOT NULL,
+          photos TEXT NOT NULL DEFAULT '[]',
+          user_id INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_visit1_queue_status ON visit1_queue(status);
+        CREATE INDEX IF NOT EXISTS idx_visit1_queue_user ON visit1_queue(user_id);
+      `);
+    },
+  },
+  {
+    version: 7,
+    up: async (db) => {
+      await db.execAsync(`
+        ALTER TABLE survey_answers ADD COLUMN local_modified_at TEXT;
+      `);
+    },
+  },
+  {
+    version: 8,
+    up: async (db) => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS producer_intervention_methods (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          producer_id INTEGER NOT NULL,
+          project_id INTEGER NOT NULL,
+          intervention_method_id INTEGER NOT NULL,
+          user_id INTEGER NOT NULL,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(producer_id, project_id, intervention_method_id, user_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pim_producer
+          ON producer_intervention_methods(producer_id, project_id);
+
+        CREATE INDEX IF NOT EXISTS idx_pim_user
+          ON producer_intervention_methods(user_id);
+      `);
     },
   },
 ];

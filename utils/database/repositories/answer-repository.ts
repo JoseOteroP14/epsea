@@ -14,8 +14,8 @@ export interface SurveyAnswer {
 export async function saveAnswer(answer: SurveyAnswer): Promise<void> {
   const db = getDb();
   await db.runAsync(
-    `INSERT OR REPLACE INTO survey_answers (producer_id, project_id, component_id, question_id, user_id, value, answered_at)
-     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+    `INSERT OR REPLACE INTO survey_answers (producer_id, project_id, component_id, question_id, user_id, value, answered_at, local_modified_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
     answer.producer_id,
     answer.project_id,
     answer.component_id,
@@ -31,8 +31,8 @@ export async function saveAnswersBatch(answers: SurveyAnswer[]): Promise<void> {
   try {
     for (const answer of answers) {
       await db.runAsync(
-        `INSERT OR REPLACE INTO survey_answers (producer_id, project_id, component_id, question_id, user_id, value, answered_at)
-         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+        `INSERT OR REPLACE INTO survey_answers (producer_id, project_id, component_id, question_id, user_id, value, answered_at, local_modified_at)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
         answer.producer_id,
         answer.project_id,
         answer.component_id,

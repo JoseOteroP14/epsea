@@ -21,8 +21,8 @@ export async function enqueue(
 ): Promise<void> {
   const db = getDb();
   await db.runAsync(
-    `INSERT INTO sync_queue (entity_type, entity_key, payload, user_id, status)
-     VALUES (?, ?, ?, ?, 'pending')`,
+    `INSERT OR REPLACE INTO sync_queue (entity_type, entity_key, payload, user_id, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'pending', datetime('now'), datetime('now'))`,
     entityType,
     entityKey,
     JSON.stringify(payload),

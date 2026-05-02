@@ -8,7 +8,8 @@ import {
   getPendingCount,
   getMetadata,
 } from "@/utils/database/repositories/sync-repository";
-import { getPendingAnswerCount } from "@/utils/database/repositories/answer-repository";
+import { getPendingVisit1Count } from "@/utils/database/repositories/visit1-repository";
+import { getPendingAnswerUpdateCount } from "@/utils/database/repositories/answer-update-repository";
 import { useAuthStore } from "./useAuthStore";
 
 interface SyncState {
@@ -56,9 +57,15 @@ export const useSyncStore = create<SyncState>((set) => ({
       const result = await uploadPendingAnswers((progress) =>
         set({ progress }),
       );
-      const pending = await getPendingAnswerCount(userId);
+      const pendingSurvey = await getPendingCount(userId);
+      const pendingVisit1 = await getPendingVisit1Count(userId);
+      const pendingAnswerUpdates = await getPendingAnswerUpdateCount(userId);
       const lastUpload = await getMetadata("last_upload");
-      set({ isUploading: false, pendingUploads: pending, lastUpload });
+      set({
+        isUploading: false,
+        pendingUploads: pendingSurvey + pendingVisit1 + pendingAnswerUpdates,
+        lastUpload,
+      });
       return result;
     } catch (error) {
       set({
@@ -72,10 +79,16 @@ export const useSyncStore = create<SyncState>((set) => ({
   refreshStatus: async () => {
     try {
       const userId = useAuthStore.getState().user?.user_id;
-      const pending = await getPendingAnswerCount(userId);
+      const pendingSurvey = await getPendingCount(userId);
+      const pendingVisit1 = await getPendingVisit1Count(userId);
+      const pendingAnswerUpdates = await getPendingAnswerUpdateCount(userId);
       const lastDownload = await getMetadata("last_full_download");
       const lastUpload = await getMetadata("last_upload");
-      set({ pendingUploads: pending, lastDownload, lastUpload });
+      set({
+        pendingUploads: pendingSurvey + pendingVisit1 + pendingAnswerUpdates,
+        lastDownload,
+        lastUpload,
+      });
     } catch (error) {
       console.error("Failed to refresh sync status:", error);
     }
