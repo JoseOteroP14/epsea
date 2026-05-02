@@ -1,7 +1,7 @@
 import type {
-  SurveyComponent,
-  QuestionType,
   Question,
+  QuestionType,
+  SurveyComponent,
 } from "@/schemas/characterization";
 import { getDb } from "../client";
 
@@ -81,6 +81,17 @@ export async function getQuestionsByComponent(
   return rows.map((r) => JSON.parse(r.raw_json) as Question);
 }
 
+export async function getQuestionById(
+  questionId: number,
+): Promise<Question | null> {
+  const db = getDb();
+  const row = await db.getFirstAsync<{ raw_json: string }>(
+    "SELECT raw_json FROM questions WHERE id = ?",
+    questionId,
+  );
+  return row ? (JSON.parse(row.raw_json) as Question) : null;
+}
+
 // --- Question Details ---
 
 export async function upsertQuestionDetail(
@@ -113,7 +124,7 @@ export async function getQuestionDetail(
 
 export async function upsertInnovaFields(fields: unknown[]): Promise<void> {
   const db = getDb();
-  for (const f of fields as Array<{ id: number; name: string; field_type?: string }>) {
+  for (const f of fields as { id: number; name: string; field_type?: string }[]) {
     await db.runAsync(
       `INSERT OR REPLACE INTO innova_fields (id, name, field_type, raw_json)
        VALUES (?, ?, ?, ?)`,

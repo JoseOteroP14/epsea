@@ -1,6 +1,7 @@
 import { QuestionRenderer } from "@/components/question-renderer";
 import { ThemedText } from "@/components/themed-text";
 import type { Question } from "@/schemas/characterization";
+import { useCharacterizationStore } from "@/store/useCharacterizationStore";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { ChevronLeft, ChevronRight } from "lucide-react-native";
 import React, { useCallback, useMemo, useRef, useState } from "react";
@@ -42,17 +43,196 @@ export function QuestionWizard({
   const [currentIndex, setCurrentIndex] = useState(0);
   const pagerRef = useRef<GHScrollView>(null);
   const progressWidth = useSharedValue(0);
+  const { questionDetails, fetchQuestionDetail } = useCharacterizationStore();
 
-  const totalQuestions = questions.length;
-  const currentQuestion = questions[currentIndex];
+  const questionById = useMemo(
+    () => new Map(questions.map((q) => [q.id, q])),
+    [questions],
+  );
+
+  React.useEffect(() => {
+    for (const q of questions) {
+      const typeName = getTypeName(q.question_type_id);
+      if (typeName !== "dependent_list") continue;
+      if (questionDetails[q.id] == null) {
+        fetchQuestionDetail(q.id, typeName);
+      }
+    }
+  }, [questions, questionDetails, getTypeName, fetchQuestionDetail]);
+
+  const resolveDependentChildIds = useCallback(
+    (questionId: number, value: any): number[] => {
+      const detail = questionDetails[questionId] as any;
+      const items =
+        detail?.items ??
+        detail?.options ??
+        detail?.data?.items ??
+        detail?.data?.options ??
+        detail?.data ??
+        [];
+
+      if (!Array.isArray(items) || items.length === 0) return [];
+
+      const mainSelection =
+        typeof value === "object" && value !== null && !Array.isArray(value)
+          ? value._main
+          : value;
+
+      if (mainSelection == null || mainSelection === "") return [];
+
+      const selectedValues = Array.isArray(mainSelection)
+        ? mainSelection
+        : [mainSelection];
+
+      const childIds: number[] = [];
+      for (const selectedValue of selectedValues) {
+        const numValue =
+          typeof selectedValue === "string" ? Number(selectedValue) : selectedValue;
+        const option = items.find(
+          (item: any) =>
+            item?.id === numValue ||
+            item?.id === selectedValue ||
+            item?.name === selectedValue ||
+            item?.value === selectedValue,
+        );
+        if (option?.other_question_id) {
+          childIds.push(option.other_question_id);
+        }
+      }
+
+      return childIds;
+    },
+    [questionDetails],
+  );
+
+  const dependentChildIds = useMemo(() => {
+    const ids = new Set<number>();
+
+    for (const q of questions) {
+      if (q.question_parent_id != null) {
+        ids.add(q.id);
+      }
+    }
+
+    for (const q of questions) {
+      const typeName = getTypeName(q.question_type_id);
+      if (typeName !== "dependent_list") continue;
+
+      const detail = questionDetails[q.id] as any;
+      const items =
+        detail?.items ??
+        detail?.options ??
+        detail?.data?.items ??
+        detail?.data?.options ??
+        detail?.data ??
+        [];
+
+      if (!Array.isArray(items)) continue;
+      for (const option of items) {
+        if (option?.other_question_id) {
+          ids.add(option.other_question_id);
+        }
+      }
+    }
+
+    return ids;
+  }, [questions, questionDetails, getTypeName]);
+
+  const visibleQuestions = useMemo(() => {
+    const baseQuestions = questions.filter((q) => !dependentChildIds.has(q.id));
+    const result: Question[] = [];
+    const inserted = new Set<number>();
+
+    const insertQuestionWithDependents = (question: Question) => {
+      if (inserted.has(question.id)) return;
+
+      inserted.add(question.id);
+      result.push(question);
+
+      const typeName = getTypeName(question.question_type_id);
+      if (typeName !== "dependent_list") return;
+
+      const childIds = resolveDependentChildIds(question.id, answers[question.id]);
+      for (const childId of childIds) {
+        if (!childId || inserted.has(childId)) continue;
+        const childQuestion = questionById.get(childId);
+        if (childQuestion) {
+          insertQuestionWithDependents(childQuestion);
+        }
+      }
+    };
+
+    for (const q of baseQuestions) {
+      insertQuestionWithDependents(q);
+    }
+
+    return result;
+  }, [questions, answers, getTypeName, questionById, resolveDependentChildIds, dependentChildIds]);
+
+  const handleAnswerChange = useCallback(
+    (questionId: number, value: any) => {
+      const question = questionById.get(questionId);
+      if (!question) {
+        onAnswerChange(questionId, value);
+        return;
+      }
+
+      const typeName = getTypeName(question.question_type_id);
+      if (typeName === "dependent_list") {
+        const previousChildIds = resolveDependentChildIds(
+          questionId,
+          answers[questionId],
+        );
+        const nextChildIds = resolveDependentChildIds(questionId, value);
+
+        const clearDependentBranch = (
+          childQuestionId: number,
+          visited: Set<number>,
+        ) => {
+          if (visited.has(childQuestionId)) return;
+          visited.add(childQuestionId);
+
+          onAnswerChange(childQuestionId, undefined);
+
+          const childQuestion = questionById.get(childQuestionId);
+          if (!childQuestion) return;
+
+          const childTypeName = getTypeName(childQuestion.question_type_id);
+          if (childTypeName !== "dependent_list") return;
+
+          const nestedChildIds = resolveDependentChildIds(
+            childQuestionId,
+            answers[childQuestionId],
+          );
+
+          for (const nestedChildId of nestedChildIds) {
+            clearDependentBranch(nestedChildId, visited);
+          }
+        };
+
+        const visited = new Set<number>();
+        for (const childId of previousChildIds) {
+          if (!nextChildIds.includes(childId)) {
+            clearDependentBranch(childId, visited);
+          }
+        }
+      }
+
+      onAnswerChange(questionId, value);
+    },
+    [questionById, getTypeName, resolveDependentChildIds, answers, onAnswerChange],
+  );
+
+  const totalQuestions = visibleQuestions.length;
+  const currentQuestion = visibleQuestions[currentIndex];
 
   const answeredCount = useMemo(
     () =>
-      questions.filter((q) => {
+      visibleQuestions.filter((q) => {
         const val = answers[q.id];
         return val !== undefined && val !== null && val !== "";
       }).length,
-    [questions, answers],
+    [visibleQuestions, answers],
   );
 
   // Update progress bar
@@ -89,6 +269,12 @@ export function QuestionWizard({
   const isFirst = currentIndex === 0;
   const isLast = currentIndex === totalQuestions - 1;
 
+  React.useEffect(() => {
+    if (currentIndex >= totalQuestions && totalQuestions > 0) {
+      setCurrentIndex(totalQuestions - 1);
+    }
+  }, [currentIndex, totalQuestions]);
+
   if (!currentQuestion) return null;
 
   return (
@@ -106,7 +292,7 @@ export function QuestionWizard({
           question={currentQuestion}
           typeName={getTypeName(currentQuestion.question_type_id)}
           value={answers[currentQuestion.id]}
-          onChange={onAnswerChange}
+          onChange={handleAnswerChange}
         />
         {currentQuestion.is_required && (
           <ThemedText style={styles.requiredHint}>Campo obligatorio</ThemedText>
@@ -124,7 +310,7 @@ export function QuestionWizard({
           style={styles.pagerScroll}
           nestedScrollEnabled
         >
-          {questions.map((q, index) => {
+          {visibleQuestions.map((q, index) => {
             const isCurrent = index === currentIndex;
             const isAnswered =
               answers[q.id] !== undefined &&

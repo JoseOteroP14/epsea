@@ -229,6 +229,7 @@ export function ClassificationTab({
   const [hasSurvey, setHasSurvey] = useState(false);
   const [savedAnswers, setSavedAnswers] = useState<DisplayAnswer[]>([]);
   const [loadingAnswers, setLoadingAnswers] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Local copy of classification questions (survives tab switches)
   const [localQuestions, setLocalQuestions] = useState<Question[]>([]);
@@ -338,7 +339,7 @@ export function ClassificationTab({
       setHasSurvey(foundRemote);
       setLoadingAnswers(false);
     })();
-  }, [classificationComponent, producerId, projectId, currentUserId, fetchSurveyResults]);
+  }, [classificationComponent, producerId, projectId, currentUserId, fetchSurveyResults, refreshKey]);
 
   // Pre-fetch question details
   useEffect(() => {
@@ -415,11 +416,27 @@ export function ClassificationTab({
   }, [editingQuestion]);
 
   const handleAnswerChange = useCallback((questionId: number, value: any) => {
-    setAnswers((prev) => ({ ...prev, [questionId]: value }));
+    setAnswers((prev) => {
+      if (value === undefined) {
+        if (prev[questionId] === undefined) return prev;
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      }
+      return { ...prev, [questionId]: value };
+    });
   }, []);
 
   const handleEditAnswerChange = useCallback((questionId: number, value: any) => {
-    setEditAnswers((prev) => ({ ...prev, [questionId]: value }));
+    setEditAnswers((prev) => {
+      if (value === undefined) {
+        if (prev[questionId] === undefined) return prev;
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      }
+      return { ...prev, [questionId]: value };
+    });
   }, []);
 
   // Save new survey (apply mode)
@@ -503,6 +520,7 @@ export function ClassificationTab({
 
       setShowSheet(false);
       setHasSurvey(true);
+      setRefreshKey((k) => k + 1);
     } catch (error) {
       console.error("Failed to save answers:", error);
       showAlert({ title: "Error", message: "No se pudieron guardar las respuestas.", type: "error" });

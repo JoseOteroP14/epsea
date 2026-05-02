@@ -2,31 +2,31 @@ import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { NativeDatePicker } from "@/components/ui/native-date-picker";
 import type {
-    Department,
-    Municipality,
-    Question,
-    QuestionBoolDetail,
-    QuestionDateDetail,
-    QuestionDependentListDetail,
-    QuestionDependentListOption,
-    QuestionListDetail,
-    QuestionListOption,
-    QuestionNumericDetail,
-    QuestionTextDetail,
+  Department,
+  Municipality,
+  Question,
+  QuestionBoolDetail,
+  QuestionDateDetail,
+  QuestionDependentListDetail,
+  QuestionDependentListOption,
+  QuestionListDetail,
+  QuestionListOption,
+  QuestionNumericDetail,
+  QuestionTextDetail,
 } from "@/schemas/characterization";
 import { useCharacterizationStore } from "@/store/useCharacterizationStore";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { ChevronDown, Search } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    FlatList,
-    Modal,
-    StyleSheet,
-    TextInput,
-    TouchableOpacity,
-    TouchableWithoutFeedback,
-    View,
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View,
 } from "react-native";
 
 interface QuestionRendererProps {
@@ -657,45 +657,20 @@ function DependentListQuestion({
   value: any;
   onChange: (id: number, val: any) => void;
 }) {
-  const {
-    questionDetails,
-    fetchQuestionDetail,
-    getCanonicalTypeName,
-    loadingQuestionDetail,
-  } = useCharacterizationStore();
-
   const raw = detail as any;
   const items: QuestionDependentListOption[] =
     detail?.items ?? detail?.options ?? raw?.data?.items ?? raw?.data?.options ?? raw?.data ?? [];
 
-  // Parse compound value: "selected_option_id:sub_question_id=sub_answer"
-  // Or simple value for options without other_question_id
-  const parsedValue: Record<string, any> = typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value
-    : {};
-
-  const mainSelection = parsedValue._main ?? value;
+  const mainSelection =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? value._main
+      : value;
 
   const handleMainPress = useCallback(
     (option: QuestionDependentListOption) => {
-      if (option.other_question_id) {
-        // Store as object: { _main: optionId, [sub_question_id]: subAnswer }
-        onChange(question.id, { _main: option.id });
-      } else {
-        onChange(question.id, option.id);
-      }
+      onChange(question.id, option.id);
     },
     [question.id, onChange],
-  );
-
-  const handleSubAnswerChange = useCallback(
-    (subQuestionId: number, subValue: any) => {
-      const current = typeof value === "object" && value !== null && !Array.isArray(value)
-        ? value
-        : { _main: value };
-      onChange(question.id, { ...current, [subQuestionId]: subValue });
-    },
-    [question.id, value, onChange],
   );
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -706,13 +681,14 @@ function DependentListQuestion({
 
   // Find the currently selected option
   const mainId = typeof mainSelection === "number" ? mainSelection : Number(mainSelection);
-  const selectedOption = items.find((i) => i.id === mainId);
 
   return (
     <View>
       <View style={styles.listContainer}>
         {items.map((option) => {
-          const isSelected = option.id === mainId;
+          const isSelected =
+            option.id === mainId ||
+            (mainSelection != null && String(option.id) === String(mainSelection));
           return (
             <TouchableOpacity
               key={option.id}
@@ -733,84 +709,6 @@ function DependentListQuestion({
         })}
       </View>
 
-      {/* Render dependent sub-question if selected option has other_question_id */}
-      {selectedOption?.other_question_id && (
-        <DependentSubQuestion
-          parentQuestionId={question.id}
-          subQuestionId={selectedOption.other_question_id}
-          value={parsedValue[selectedOption.other_question_id]}
-          onChange={handleSubAnswerChange}
-        />
-      )}
-    </View>
-  );
-}
-
-function DependentSubQuestion({
-  parentQuestionId,
-  subQuestionId,
-  value,
-  onChange,
-}: {
-  parentQuestionId: number;
-  subQuestionId: number;
-  value: any;
-  onChange: (subQuestionId: number, val: any) => void;
-}) {
-  const {
-    questionDetails,
-    fetchQuestionDetail,
-    getCanonicalTypeName,
-    loadingQuestionDetail,
-  } = useCharacterizationStore();
-
-  const [subQuestion, setSubQuestion] = useState<Question | null>(null);
-  const [loadingSub, setLoadingSub] = useState(true);
-
-  // Fetch the sub-question metadata
-  useEffect(() => {
-    (async () => {
-      setLoadingSub(true);
-      try {
-        const { apiFetch } = await import("@/utils/api");
-        const response = await apiFetch<any>(`/questions/${subQuestionId}`, {
-          method: "GET",
-        });
-        const q = response?.data ?? response;
-        setSubQuestion(q);
-        // Fetch its detail too
-        if (q) {
-          const typeName = getCanonicalTypeName(q.question_type_id);
-          if (!questionDetails[subQuestionId]) {
-            fetchQuestionDetail(subQuestionId, typeName);
-          }
-        }
-      } catch (e) {
-        console.error("Failed to fetch sub-question:", e);
-      } finally {
-        setLoadingSub(false);
-      }
-    })();
-  }, [subQuestionId, getCanonicalTypeName, fetchQuestionDetail, questionDetails]);
-
-  if (loadingSub || !subQuestion) {
-    return (
-      <View style={styles.subQuestionContainer}>
-        <ActivityIndicator size="small" color="#1a7a3a" style={styles.detailLoader} />
-      </View>
-    );
-  }
-
-  const typeName = getCanonicalTypeName(subQuestion.question_type_id);
-
-  return (
-    <View style={styles.subQuestionContainer}>
-      <QuestionRenderer
-        question={subQuestion}
-        typeName={typeName}
-        value={value}
-        onChange={(_, val) => onChange(subQuestionId, val)}
-      />
     </View>
   );
 }

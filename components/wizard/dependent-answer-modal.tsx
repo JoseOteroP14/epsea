@@ -2,21 +2,21 @@ import { QuestionRenderer } from "@/components/question-renderer";
 import { ThemedText } from "@/components/themed-text";
 import type { Question } from "@/schemas/characterization";
 import { useCharacterizationStore } from "@/store/useCharacterizationStore";
-import { apiFetch } from "@/utils/api";
+import { getQuestionById } from "@/utils/database/repositories/characterization-repository";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
-    BottomSheetBackdrop,
-    BottomSheetModal,
-    BottomSheetScrollView,
-    type BottomSheetBackdropProps,
+  BottomSheetBackdrop,
+  BottomSheetModal,
+  BottomSheetScrollView,
+  type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
 import { X } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    StyleSheet,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 interface DependentAnswerModalProps {
@@ -43,7 +43,7 @@ export function DependentAnswerModal({
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const snapPoints = useMemo(() => ["70%"], []);
 
-  const { questionDetails, fetchQuestionDetail } = useCharacterizationStore();
+  const { questions, questionDetails, fetchQuestionDetail } = useCharacterizationStore();
 
   const [childQuestion, setChildQuestion] = useState<Question | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,12 +58,15 @@ export function DependentAnswerModal({
   useEffect(() => {
     if (!visible || !childQuestionId) return;
     setLoading(true);
+    let ignore = false;
     (async () => {
       try {
-        const response = await apiFetch<any>(`/questions/${childQuestionId}`, {
-          method: "GET",
-        });
-        const q = response?.data ?? response;
+        let q = questions.find((item) => item.id === childQuestionId) ?? null;
+        if (!q) {
+          q = await getQuestionById(childQuestionId);
+        }
+
+        if (ignore) return;
         setChildQuestion(q);
         // Fetch detail for the question type
         if (q) {
@@ -73,12 +76,15 @@ export function DependentAnswerModal({
           }
         }
       } catch (e) {
-        console.error("Failed to fetch child question:", e);
+        console.error("Failed to load child question from cache:", e);
       } finally {
-        setLoading(false);
+        if (!ignore) setLoading(false);
       }
     })();
-  }, [visible, childQuestionId, getTypeName, fetchQuestionDetail, questionDetails]);
+    return () => {
+      ignore = true;
+    };
+  }, [visible, childQuestionId, questions, getTypeName, fetchQuestionDetail, questionDetails]);
 
   useEffect(() => {
     if (visible) {

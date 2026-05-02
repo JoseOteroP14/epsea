@@ -161,7 +161,6 @@ export function PersonalInfoTab({
     fetchQuestionDetail,
     fetchSurveyResults,
     updateSurveyAnswer,
-    updateDependentListAnswer,
     getPersonalInfoComponent,
     getCanonicalTypeName,
   } = useCharacterizationStore();
@@ -377,12 +376,28 @@ export function PersonalInfoTab({
   }, [editingQuestion]);
 
   const handleAnswerChange = useCallback((questionId: number, value: any) => {
-    setAnswers((prev) => ({ ...prev, [questionId]: value }));
+    setAnswers((prev) => {
+      if (value === undefined) {
+        if (prev[questionId] === undefined) return prev;
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      }
+      return { ...prev, [questionId]: value };
+    });
   }, []);
 
   const handleEditAnswerChange = useCallback(
     (questionId: number, value: any) => {
-      setEditAnswers((prev) => ({ ...prev, [questionId]: value }));
+      setEditAnswers((prev) => {
+        if (value === undefined) {
+          if (prev[questionId] === undefined) return prev;
+          const next = { ...prev };
+          delete next[questionId];
+          return next;
+        }
+        return { ...prev, [questionId]: value };
+      });
     },
     [],
   );
@@ -468,6 +483,7 @@ export function PersonalInfoTab({
 
       setShowSheet(false);
       setHasSurvey(true);
+      setRefreshKey((k) => k + 1);
     } catch (error) {
       console.error("Failed to save answers:", error);
       showAlert({ title: "Error", message: "No se pudieron guardar las respuestas.", type: "error" });
@@ -480,69 +496,24 @@ export function PersonalInfoTab({
       const question = localQuestions.find((q) => q.id === questionId);
       if (!question) return;
 
-      let initialValue = answers[questionId];
-      const typeName = getCanonicalTypeName(question.question_type_id);
-
-      // For dependent_list, build compound value including child answer
-      if (typeName === "dependent_list" && initialValue != null) {
-        const childQuestion = localQuestions.find(
-          (q) => q.question_parent_id === questionId,
-        );
-        if (childQuestion && answers[childQuestion.id] != null) {
-          initialValue = {
-            _main: Number(initialValue) || initialValue,
-            [childQuestion.id]: answers[childQuestion.id],
-          };
-        }
-      }
-
       setEditingQuestion(question);
-      setEditAnswers({ [questionId]: initialValue });
+      setEditAnswers({ [questionId]: answers[questionId] });
       setShowSheet(true);
     },
-    [localQuestions, answers, getCanonicalTypeName],
+    [localQuestions, answers],
   );
 
   const handleEditSave = useCallback(async () => {
     if (!editingQuestion) return;
     const answerId = answerIds[editingQuestion.id];
     const rawVal = editAnswers[editingQuestion.id];
-    const typeName = getCanonicalTypeName(editingQuestion.question_type_id);
 
     try {
-      if (typeName === "dependent_list") {
-        let mainValue: string;
-        let childPayload: { question_id: number; value: string } | null = null;
-
-        if (
-          typeof rawVal === "object" &&
-          rawVal !== null &&
-          !Array.isArray(rawVal)
-        ) {
-          mainValue = String(rawVal._main);
-          for (const [key, val] of Object.entries(rawVal)) {
-            if (key !== "_main" && val != null && val !== "") {
-              childPayload = {
-                question_id: Number(key),
-                value: String(val),
-              };
-              break;
-            }
-          }
-        } else {
-          mainValue = String(rawVal ?? "");
-        }
-
-        await updateDependentListAnswer(answerId, mainValue, childPayload);
-        // Refresh answers from API to reflect child creation/deletion
-        setRefreshKey((k) => k + 1);
-      } else {
-        const newValue = Array.isArray(rawVal)
-          ? rawVal.join(",")
-          : String(rawVal ?? "");
-        await updateSurveyAnswer(answerId, newValue);
-        setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
-      }
+      const newValue = Array.isArray(rawVal)
+        ? rawVal.join(",")
+        : String(rawVal ?? "");
+      await updateSurveyAnswer(answerId, newValue);
+      setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
 
       setShowSheet(false);
       setEditingQuestion(null);
@@ -556,8 +527,6 @@ export function PersonalInfoTab({
     editAnswers,
     answerIds,
     updateSurveyAnswer,
-    updateDependentListAnswer,
-    getCanonicalTypeName,
   ]);
 
   if (loadingComponents) {
