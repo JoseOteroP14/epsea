@@ -1,6 +1,4 @@
-import DateTimePicker, {
-  type DateTimePickerEvent,
-} from "@react-native-community/datetimepicker";
+import type { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { Calendar } from "lucide-react-native";
 import React, { useState } from "react";
 import {
@@ -8,6 +6,7 @@ import {
   Platform,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -20,6 +19,14 @@ interface NativeDatePickerProps {
   value: string;
   onChange: (val: string) => void;
   placeholder?: string;
+}
+
+let DateTimePicker: React.ComponentType<any> | null = null;
+try {
+  const module = require("@react-native-community/datetimepicker");
+  DateTimePicker = module?.default ?? module;
+} catch {
+  DateTimePicker = null;
 }
 
 function parseFromDisplay(ddmmyyyy: string): Date {
@@ -44,6 +51,23 @@ export function NativeDatePicker({
   onChange,
   placeholder = "dd/mm/aaaa",
 }: NativeDatePickerProps) {
+  const Picker = DateTimePicker;
+
+  if (!Picker) {
+    return (
+      <View style={styles.selector}>
+        <TextInput
+          style={styles.text}
+          value={value}
+          onChangeText={onChange}
+          placeholder={placeholder}
+          placeholderTextColor="rgba(17, 24, 28, 0.4)"
+        />
+        <Calendar size={responsiveFont(16)} color="#1a7a3a" />
+      </View>
+    );
+  }
+
   const [show, setShow] = useState(false);
   const [tempDate, setTempDate] = useState<Date>(new Date());
 
@@ -82,7 +106,7 @@ export function NativeDatePicker({
       </TouchableOpacity>
 
       {Platform.OS === "android" && show && (
-        <DateTimePicker
+        <Picker
           value={currentDate}
           mode="date"
           display="default"
@@ -102,7 +126,7 @@ export function NativeDatePicker({
                   <Text style={styles.doneText}>Listo</Text>
                 </TouchableOpacity>
               </View>
-              <DateTimePicker
+              <Picker
                 value={tempDate}
                 mode="date"
                 display="spinner"

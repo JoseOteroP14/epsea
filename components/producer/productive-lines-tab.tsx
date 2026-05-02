@@ -70,7 +70,6 @@ import {
     type LayoutChangeEvent,
 } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
-import PagerView from "react-native-pager-view";
 
 interface ProductiveLinesTabProps {
   producerId: string;
@@ -108,6 +107,48 @@ const CARD_WIDTH = Math.min(SCREEN_WIDTH * 0.75, widthScale(280));
 const TAB_BAR_RESERVED = verticalScale(82);
 
 type AllActivityType = 'agricola' | 'pecuaria' | 'forestal' | 'pesca' | 'acuicola';
+
+type PagerViewProps = {
+  children: React.ReactNode;
+  style?: any;
+  initialPage?: number;
+};
+
+const PagerViewImpl: React.ComponentType<any> | null = (() => {
+  try {
+    const module = require("react-native-pager-view");
+    return module?.default ?? module;
+  } catch {
+    return null;
+  }
+})();
+
+function PagerViewCompat({ children, style, initialPage = 0 }: PagerViewProps) {
+  if (PagerViewImpl) {
+    const Component = PagerViewImpl;
+    return (
+      <Component style={style} initialPage={initialPage} overdrag>
+        {children}
+      </Component>
+    );
+  }
+
+  return (
+    <ScrollView
+      horizontal
+      pagingEnabled
+      showsHorizontalScrollIndicator={false}
+      style={style}
+      contentContainerStyle={styles.pagerFallbackContainer}
+    >
+      {React.Children.map(children, (child, index) => (
+        <View key={index} style={styles.pagerFallbackPage}>
+          {child}
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
 
 const ACTIVITY_BADGE_CONFIG: Record<AllActivityType, { label: string; color: string; bg: string }> = {
   agricola: { label: "Agrícola", color: "#1a7a3a", bg: "rgba(26,122,58,0.12)" },
@@ -1155,7 +1196,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
           <View style={styles.carouselHeader}>
             <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>Líneas productivas</ThemedText>
           </View>
-          <PagerView style={[styles.pagerView, { height: pagerHeight }]} initialPage={0} overdrag>
+          <PagerViewCompat style={[styles.pagerView, { height: pagerHeight }]} initialPage={0}>
             {unifiedLines.map((item) => (
               <View key={item.key} style={styles.pagerPage} collapsable={false}>
                 <View style={styles.carouselCardWrapper} onLayout={handleCarouselCardLayout}>
@@ -1163,7 +1204,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
                 </View>
               </View>
             ))}
-          </PagerView>
+          </PagerViewCompat>
           <TouchableOpacity style={styles.complementaryButton} onPress={handleOpenComplementarySheet} activeOpacity={0.8}>
             <ClipboardList size={responsiveFont(18)} color="#fff" />
             <ThemedText lightColor="#fff" darkColor="#fff" type="defaultSemiBold" style={styles.complementaryButtonText}>Datos complementarios</ThemedText>
@@ -1406,6 +1447,8 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: responsiveFont(15), color: "#333" },
   pagerView: { flexGrow: 0 },
   pagerPage: { flex: 1, alignItems: "center", justifyContent: "flex-start", paddingTop: verticalScale(4) },
+  pagerFallbackContainer: { alignItems: "stretch" },
+  pagerFallbackPage: { width: SCREEN_WIDTH, alignItems: "center", justifyContent: "flex-start", paddingTop: verticalScale(4) },
   carouselCardWrapper: { width: CARD_WIDTH },
   complementaryButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#1a7a3a", borderRadius: widthScale(10), marginHorizontal: CAROUSEL_PADDING, marginTop: verticalScale(14), marginBottom: verticalScale(4), paddingVertical: verticalScale(10), gap: widthScale(8) },
   complementaryButtonText: { fontSize: responsiveFont(15) },
