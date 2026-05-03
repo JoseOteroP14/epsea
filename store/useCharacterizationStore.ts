@@ -103,7 +103,6 @@ interface CharacterizationState {
     child: { question_id: number; value: string } | null,
   ) => Promise<void>;
   updateMultipleAnswers: (
-    answerId: number,
     questionId: number,
     surveyId: number,
     answers: { answer_value: string }[],
@@ -550,16 +549,10 @@ export const useCharacterizationStore = create<CharacterizationState>(
             ? response
             : [];
 
+        // Always use the raw `value` field — this is the option value (e.g., "1", "2")
+        // that the API expects. `item_name` is only a display label.
+        // This matches the Vue web app's normalizeMethodResponses() which uses firstAnswer?.value.
         const pickAnswerValue = (answer: any): any => {
-          const itemName =
-            answer?.item_name ??
-            answer?.itemName ??
-            answer?.name ??
-            answer?.answer_name;
-          if (itemName != null) {
-            const text = typeof itemName === "string" ? itemName.trim() : itemName;
-            if (text !== "") return text;
-          }
           return answer?.value ?? answer?.answer_value ?? answer?.answerValue ?? "";
         };
 
@@ -588,8 +581,8 @@ export const useCharacterizationStore = create<CharacterizationState>(
             }
           } else if (item.answer_id != null) {
             // Already in flat format — pass through as-is
+            // Use value fields only (never item_name) to stay consistent
             const flatAnswerValue = pickAnswerValue({
-              item_name: item?.item_name ?? item?.itemName ?? item?.answer?.name,
               value: item?.answer_value ?? item?.value ?? item?.answer?.value,
             });
             flattened.push({
@@ -619,7 +612,7 @@ export const useCharacterizationStore = create<CharacterizationState>(
       });
     },
 
-    updateMultipleAnswers: async (_answerId, questionId, surveyId, answers) => {
+    updateMultipleAnswers: async (questionId: number, surveyId: number, answers: { answer_value: string }[]) => {
       await apiFetch(`/surveys/update-answer-multiple`, {
         method: "PUT",
         body: JSON.stringify({ question_id: questionId, survey_id: surveyId, answers }),

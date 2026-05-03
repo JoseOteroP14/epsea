@@ -146,6 +146,7 @@ export function PropertyInfoTab({
     fetchQuestionDetail,
     fetchSurveyResults,
     updateSurveyAnswer,
+    updateMultipleAnswers,
     getPropertyInfoComponent,
     getCanonicalTypeName,
     fetchMunicipalities,
@@ -158,6 +159,7 @@ export function PropertyInfoTab({
   const [showSheet, setShowSheet] = useState(false);
   const [answers, setAnswers] = useState<Record<number, any>>({});
   const [answerIds, setAnswerIds] = useState<Record<number, number>>({});
+  const [surveyIds, setSurveyIds] = useState<Record<number, number>>({});
   const [hasSurvey, setHasSurvey] = useState(false);
   const [savedAnswers, setSavedAnswers] = useState<DisplayAnswer[]>([]);
   const [loadingAnswers, setLoadingAnswers] = useState(true);
@@ -209,6 +211,7 @@ export function PropertyInfoTab({
     (async () => {
       const merged: Record<number, any> = {};
       const ids: Record<number, number> = {};
+      const sIds: Record<number, number> = {};
       let foundRemote = false;
 
       // 1. Fetch from API (server truth) — only attempt if online
@@ -234,6 +237,7 @@ export function PropertyInfoTab({
               merged[item.question_id] = item.answer_value;
             }
             ids[item.question_id] = item.answer_id;
+            sIds[item.question_id] = item.survey_id;
           }
           foundRemote = remote.length > 0;
         } catch (e) {
@@ -270,6 +274,7 @@ export function PropertyInfoTab({
 
       setAnswers(merged);
       setAnswerIds(ids);
+      setSurveyIds(sIds);
       setHasSurvey(foundRemote);
       setLoadingAnswers(false);
     })();
@@ -525,22 +530,32 @@ export function PropertyInfoTab({
   const handleEditSave = useCallback(async () => {
     if (!editingQuestion) return;
     const answerId = answerIds[editingQuestion.id];
+    const surveyId = surveyIds[editingQuestion.id];
     const rawVal = editAnswers[editingQuestion.id];
-    const newValue = Array.isArray(rawVal)
-      ? rawVal.join(",")
-      : typeof rawVal === "object" && rawVal !== null
-        ? JSON.stringify(rawVal)
-        : String(rawVal ?? "");
+    const isMultiple = editingQuestion.multiple === true;
 
     const isOnline = await checkConnectivity();
 
     if (isOnline) {
       try {
-        await apiFetch(`/surveys/update-answer/${answerId}`, {
-          method: "PUT",
-          body: JSON.stringify({ value: newValue }),
-        });
+        if (isMultiple && surveyId) {
+          const values = Array.isArray(rawVal)
+            ? rawVal.map((v: any) => ({ answer_value: String(v) }))
+            : [{ answer_value: String(rawVal ?? "") }];
+          await updateMultipleAnswers(editingQuestion.id, surveyId, values);
+        } else {
+          const newValue = Array.isArray(rawVal)
+            ? rawVal.join(",")
+            : typeof rawVal === "object" && rawVal !== null
+              ? JSON.stringify(rawVal)
+              : String(rawVal ?? "");
+          await apiFetch(`/surveys/update-answer/${answerId}`, {
+            method: "PUT",
+            body: JSON.stringify({ value: newValue }),
+          });
+        }
         setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
+        setRefreshKey((k) => k + 1);
         setShowSheet(false);
         setEditingQuestion(null);
         showAlert({ title: "Actualizado", message: "La respuesta se actualizó correctamente.", type: "success" });
@@ -553,6 +568,11 @@ export function PropertyInfoTab({
       const projId = Number(projectId ?? 0);
       const compId = activeComponent?.id ?? 0;
       const userId = currentUserId ?? 0;
+      const newValue = Array.isArray(rawVal)
+        ? rawVal.join(",")
+        : typeof rawVal === "object" && rawVal !== null
+          ? JSON.stringify(rawVal)
+          : String(rawVal ?? "");
       await upsertAnswerUpdate({
         answer_id: answerId,
         new_value: newValue,
@@ -572,7 +592,7 @@ export function PropertyInfoTab({
         type: "warning",
       });
     }
-  }, [editingQuestion, editAnswers, answerIds, activeComponent, producerId, projectId, currentUserId, showAlert]);
+  }, [editingQuestion, editAnswers, answerIds, surveyIds, activeComponent, producerId, projectId, currentUserId, showAlert]);
 
   if (loadingComponents) {
     return (

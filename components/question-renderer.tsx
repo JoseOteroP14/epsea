@@ -279,47 +279,23 @@ function ListQuestion({
     : [];
 
   const isOptionSelected = (option: QuestionListOption): boolean => {
+    const optValue = option.value != null ? String(option.value) : String(option.id);
     if (isMultiple) {
-      const numOptId = Number(option.id);
-      return selectedIds.some(
-        (v) =>
-          v === option.id ||
-          Number(v) === numOptId ||
-          v === option.name ||
-          v === option.value,
-      );
+      return selectedIds.some((v) => String(v) === optValue);
     }
-    const numValue = typeof value === "string" ? Number(value) : value;
-    return (
-      value === option.id ||
-      numValue === option.id ||
-      value === option.name ||
-      value === option.value
-    );
+    return String(value) === optValue;
   };
 
   const handlePress = (option: QuestionListOption) => {
+    const optValue = option.value != null ? String(option.value) : String(option.id);
     if (isMultiple) {
-      const numOptId = Number(option.id);
-      const alreadySelected = selectedIds.some(
-        (v) =>
-          v === option.id ||
-          Number(v) === numOptId ||
-          v === option.name ||
-          v === option.value,
-      );
+      const alreadySelected = selectedIds.some((v) => String(v) === optValue);
       const newVal = alreadySelected
-        ? selectedIds.filter(
-            (v) =>
-              v !== option.id &&
-              Number(v) !== numOptId &&
-              v !== option.name &&
-              v !== option.value,
-          )
-        : [...selectedIds, option.id];
+        ? selectedIds.filter((v) => String(v) !== optValue)
+        : [...selectedIds, optValue];
       onChange(question.id, newVal);
     } else {
-      onChange(question.id, option.id);
+      onChange(question.id, optValue);
     }
   };
 
@@ -668,7 +644,8 @@ function DependentListQuestion({
 
   const handleMainPress = useCallback(
     (option: QuestionDependentListOption) => {
-      onChange(question.id, option.id);
+      const optValue = option.value != null ? String(option.value) : String(option.id);
+      onChange(question.id, optValue);
     },
     [question.id, onChange],
   );
@@ -679,16 +656,12 @@ function DependentListQuestion({
     );
   }
 
-  // Find the currently selected option
-  const mainId = typeof mainSelection === "number" ? mainSelection : Number(mainSelection);
-
   return (
     <View>
       <View style={styles.listContainer}>
         {items.map((option) => {
-          const isSelected =
-            option.id === mainId ||
-            (mainSelection != null && String(option.id) === String(mainSelection));
+          const optValue = option.value != null ? String(option.value) : String(option.id);
+          const isSelected = mainSelection != null && String(mainSelection) === optValue;
           return (
             <TouchableOpacity
               key={option.id}
