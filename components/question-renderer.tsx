@@ -279,7 +279,7 @@ function ListQuestion({
     : [];
 
   const isOptionSelected = (option: QuestionListOption): boolean => {
-    const optValue = option.value != null ? String(option.value) : String(option.id);
+    const optValue = String(option.value ?? option.id);
     if (isMultiple) {
       return selectedIds.some((v) => String(v) === optValue);
     }
@@ -287,7 +287,7 @@ function ListQuestion({
   };
 
   const handlePress = (option: QuestionListOption) => {
-    const optValue = option.value != null ? String(option.value) : String(option.id);
+    const optValue = String(option.value ?? option.id);
     if (isMultiple) {
       const alreadySelected = selectedIds.some((v) => String(v) === optValue);
       const newVal = alreadySelected
@@ -644,7 +644,7 @@ function DependentListQuestion({
 
   const handleMainPress = useCallback(
     (option: QuestionDependentListOption) => {
-      const optValue = option.value != null ? String(option.value) : String(option.id);
+      const optValue = String(option.value ?? option.id);
       onChange(question.id, optValue);
     },
     [question.id, onChange],

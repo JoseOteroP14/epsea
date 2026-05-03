@@ -56,26 +56,27 @@ function resolveDisplayValue(
   questionDetails: Record<number, any>,
   getCanonicalTypeName: (typeId: number) => string,
   questionTypeId: number,
+  itemName: string | string[] | null,
 ): string {
   if (rawValue == null || rawValue === "") return "";
 
   // Handle arrays (multi-select)
   if (Array.isArray(rawValue)) {
     const parts = rawValue
-      .map((v) =>
-        resolveDisplayValue(
-          v,
-          questionId,
-          questionDetails,
-          getCanonicalTypeName,
-          questionTypeId,
-        ),
-      )
+      .map((v, i) => {
+        const label = Array.isArray(itemName) ? itemName[i] : itemName;
+        return resolveDisplayValue(v, questionId, questionDetails, getCanonicalTypeName, questionTypeId, label);
+      })
       .filter(Boolean);
     return parts.join(", ");
   }
 
   const typeName = getCanonicalTypeName(questionTypeId);
+
+  // If item_name is available, prefer it over the raw value
+  if (itemName && typeof itemName === "string" && itemName !== "") {
+    return itemName;
+  }
 
   // Location type: value is "department_cod|municipality_code|municipality_name|department_name"
   if (typeName === "location") {
@@ -180,6 +181,7 @@ export function PersonalInfoTab({
   const [answers, setAnswers] = useState<Record<number, any>>({});
   const [answerIds, setAnswerIds] = useState<Record<number, number>>({});
   const [surveyIds, setSurveyIds] = useState<Record<number, number>>({});
+  const [itemNames, setItemNames] = useState<Record<number, string | string[] | null>>({});
   const [hasSurvey, setHasSurvey] = useState(false);
   const [savedAnswers, setSavedAnswers] = useState<DisplayAnswer[]>([]);
   const [loadingAnswers, setLoadingAnswers] = useState(true);
@@ -239,6 +241,7 @@ export function PersonalInfoTab({
       const merged: Record<number, any> = {};
       const ids: Record<number, number> = {};
       const sIds: Record<number, number> = {};
+      const iNames: Record<number, string | string[] | null> = {};
       let foundRemote = false;
 
       // 1. Fetch survey results (store handles offline-first: SQLite cache → API)
@@ -264,6 +267,19 @@ export function PersonalInfoTab({
           }
           ids[item.question_id] = item.answer_id;
           sIds[item.question_id] = item.survey_id;
+          // Prefer item_name when available, accumulate for multi-select
+          if (item.item_name) {
+            const existing = iNames[item.question_id];
+            if (existing !== undefined) {
+              if (Array.isArray(existing)) {
+                existing.push(item.item_name);
+              } else {
+                iNames[item.question_id] = [existing as string, item.item_name as string];
+              }
+            } else {
+              iNames[item.question_id] = item.item_name;
+            }
+          }
         }
         foundRemote = remote.length > 0;
       } catch (e) {
@@ -301,6 +317,7 @@ export function PersonalInfoTab({
       setAnswers(merged);
       setAnswerIds(ids);
       setSurveyIds(sIds);
+      setItemNames(iNames);
       setHasSurvey(foundRemote);
       setLoadingAnswers(false);
     })();
@@ -370,6 +387,7 @@ export function PersonalInfoTab({
           questionDetails,
           getCanonicalTypeName,
           q.question_type_id,
+          itemNames[q.id] ?? null,
         ),
       });
     });
@@ -390,7 +408,7 @@ export function PersonalInfoTab({
     }
 
     setSavedAnswers(display);
-  }, [localQuestions, answers, questionDetails, getCanonicalTypeName, showSheet]);
+  }, [localQuestions, answers, questionDetails, getCanonicalTypeName, showSheet, itemNames]);
 
   const handleApply = useCallback(() => {
     if (!activeComponent) return;

@@ -139,6 +139,7 @@ export const SurveyResultItemSchema = z
     intervention_method_name: z.string(),
     answer_id: z.number(),
     answer_value: z.string(),
+    item_name: z.string().nullable().optional(),
     question_id: z.number(),
     question_description: z.string().nullable().optional(),
     question_type_id: z.number(),

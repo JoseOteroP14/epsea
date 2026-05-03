@@ -6,15 +6,27 @@ let db: SQLite.SQLiteDatabase | null = null;
 export async function initDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (db) return db;
 
-  db = await SQLite.openDatabaseAsync("epsea.db");
+  const instance = await SQLite.openDatabaseAsync("epsea.db");
 
-  // Enable WAL mode for better concurrent read/write performance
-  await db.execAsync("PRAGMA journal_mode = WAL;");
-  await db.execAsync("PRAGMA foreign_keys = ON;");
+  try {
+    // Enable WAL mode for better concurrent read/write performance
+    await instance.execAsync("PRAGMA journal_mode = WAL;");
+    await instance.execAsync("PRAGMA foreign_keys = ON;");
 
-  await runMigrations(db);
+    await runMigrations(instance);
 
-  return db;
+    // Only assign to the singleton after everything succeeds
+    db = instance;
+    return db;
+  } catch (error) {
+    // Close the connection so a retry can start fresh
+    try {
+      await instance.closeAsync();
+    } catch {
+      // ignore close errors
+    }
+    throw error;
+  }
 }
 
 export function getDb(): SQLite.SQLiteDatabase {

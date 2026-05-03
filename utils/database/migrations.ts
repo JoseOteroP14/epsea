@@ -119,7 +119,6 @@ const migrations: Migration[] = [
         );
 
         CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status);
-        CREATE INDEX IF NOT EXISTS idx_sync_queue_user ON sync_queue(user_id);
 
         -- Prevent duplicate sync queue entries for same entity (UPSERT semantics)
         CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_queue_entity_key
@@ -347,6 +346,152 @@ const migrations: Migration[] = [
   },
 ];
 
+/**
+ * Idempotent safety-net schema: ensures all critical tables exist even if a
+ * migration previously failed or was partially applied. Every statement uses
+ * CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS so it is safe to
+ * run an unlimited number of times on the same database.
+ */
+async function ensureCoreSchema(db: SQLiteDatabase): Promise<void> {
+  await db.execAsync(`
+    -- Auth
+    CREATE TABLE IF NOT EXISTS users (
+      user_id INTEGER PRIMARY KEY,
+      username TEXT NOT NULL,
+      roles_json TEXT NOT NULL DEFAULT '[]',
+      first_name TEXT,
+      last_name TEXT
+    );
+
+    -- Projects
+    CREATE TABLE IF NOT EXISTS projects (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      type_id INTEGER,
+      role_name TEXT,
+      raw_json TEXT NOT NULL
+    );
+
+    -- Producers
+    CREATE TABLE IF NOT EXISTS producers (
+      id INTEGER PRIMARY KEY,
+      project_id INTEGER NOT NULL,
+      identification TEXT NOT NULL,
+      first_name TEXT NOT NULL,
+      middle_name TEXT,
+      first_surname TEXT NOT NULL,
+      last_surname TEXT,
+      email TEXT,
+      phone TEXT,
+      raw_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_producers_project_id ON producers(project_id);
+
+    -- Producer details
+    CREATE TABLE IF NOT EXISTS producer_details (
+      id INTEGER PRIMARY KEY,
+      raw_json TEXT NOT NULL
+    );
+
+    -- Survey components
+    CREATE TABLE IF NOT EXISTS components (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      raw_json TEXT NOT NULL
+    );
+
+    -- Question types
+    CREATE TABLE IF NOT EXISTS question_types (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL
+    );
+
+    -- Questions
+    CREATE TABLE IF NOT EXISTS questions (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      component_id INTEGER NOT NULL,
+      question_type_id INTEGER NOT NULL,
+      is_required INTEGER DEFAULT 0,
+      sort_order INTEGER DEFAULT 0,
+      raw_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_questions_component_id ON questions(component_id);
+
+    -- Question details
+    CREATE TABLE IF NOT EXISTS question_details (
+      question_id INTEGER PRIMARY KEY,
+      type_name TEXT NOT NULL,
+      raw_json TEXT NOT NULL
+    );
+
+    -- Innova fields
+    CREATE TABLE IF NOT EXISTS innova_fields (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      field_type TEXT,
+      raw_json TEXT NOT NULL
+    );
+
+    -- Sync metadata
+    CREATE TABLE IF NOT EXISTS sync_metadata (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Sync queue
+    CREATE TABLE IF NOT EXISTS sync_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type TEXT NOT NULL,
+      entity_key TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status);
+
+    -- Survey results
+    CREATE TABLE IF NOT EXISTS survey_results (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      survey_id INTEGER NOT NULL DEFAULT 0,
+      answer_id INTEGER NOT NULL UNIQUE,
+      question_id INTEGER NOT NULL,
+      answer_value TEXT NOT NULL DEFAULT '',
+      question_description TEXT,
+      question_type_id INTEGER NOT NULL DEFAULT 0,
+      question_parent_id INTEGER,
+      intervention_method_id INTEGER NOT NULL,
+      producer_id INTEGER NOT NULL,
+      project_id INTEGER NOT NULL,
+      created_at TEXT,
+      updated_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_survey_results_lookup
+      ON survey_results(producer_id, project_id, intervention_method_id);
+
+    -- Producer intervention methods
+    CREATE TABLE IF NOT EXISTS producer_intervention_methods (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      producer_id INTEGER NOT NULL,
+      project_id INTEGER NOT NULL,
+      intervention_method_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(producer_id, project_id, intervention_method_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pim_producer
+      ON producer_intervention_methods(producer_id, project_id);
+    CREATE INDEX IF NOT EXISTS idx_pim_user
+      ON producer_intervention_methods(user_id);
+  `);
+}
+
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {
   // Ensure _migrations table exists first
   await db.execAsync(`
@@ -365,6 +510,7 @@ export async function runMigrations(db: SQLiteDatabase): Promise<void> {
   for (const migration of migrations) {
     if (appliedVersions.has(migration.version)) continue;
 
+    console.log(`[DB] Running migration v${migration.version}...`);
     await db.execAsync("BEGIN TRANSACTION;");
     try {
       await migration.up(db);
@@ -373,11 +519,30 @@ export async function runMigrations(db: SQLiteDatabase): Promise<void> {
         migration.version,
       );
       await db.execAsync("COMMIT;");
+      console.log(`[DB] Migration v${migration.version} applied successfully.`);
     } catch (error) {
       await db.execAsync("ROLLBACK;");
+      console.error(
+        `[DB] Migration v${migration.version} FAILED:`,
+        error instanceof Error ? error.message : String(error),
+      );
       throw new Error(
         `Migration v${migration.version} failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  // Safety net: ensure all core tables exist regardless of migration state.
+  // This is idempotent (IF NOT EXISTS) and protects against partial migration
+  // failures leaving the database in a broken state.
+  try {
+    await ensureCoreSchema(db);
+    console.log("[DB] Core schema verified.");
+  } catch (error) {
+    console.error(
+      "[DB] ensureCoreSchema failed:",
+      error instanceof Error ? error.message : String(error),
+    );
+    throw error;
   }
 }
