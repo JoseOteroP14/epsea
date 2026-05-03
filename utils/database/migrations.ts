@@ -332,6 +332,19 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 10,
+    up: async (db) => {
+      await db.execAsync(`
+        -- Ensure sync_metadata exists (was added to v1 after initial release)
+        CREATE TABLE IF NOT EXISTS sync_metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {
