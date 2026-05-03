@@ -14,6 +14,7 @@ import {
     type SurveyResultItem,
 } from "@/schemas/characterization";
 import { apiFetch } from "@/utils/api";
+import { checkConnectivity } from "@/hooks/use-network";
 import { create } from "zustand";
 
 import { useAuthStore } from "./useAuthStore";
@@ -33,6 +34,7 @@ import {
     getAppliedInterventionMethods,
     hasInterventionMethodApplied as hasAppliedInDb,
 } from "@/utils/database/repositories/producer-intervention-repository";
+import { getSurveyResults as getSurveyResultsFromDb } from "@/utils/database/repositories/survey-results-repository";
 
 // Component IDs (from backend)
 export const PERSONAL_INFO_COMPONENT_ID = 1;
@@ -230,6 +232,24 @@ export const useCharacterizationStore = create<CharacterizationState>(
 
     fetchComponents: async () => {
       set({ loadingComponents: true, error: null });
+
+      // 1. Load from SQLite first
+      try {
+        const cached = await getAllComponents();
+        if (cached.length > 0) {
+          set({ components: cached, loadingComponents: false, error: null });
+        }
+      } catch (e) {
+        console.error("Failed to load components from SQLite:", e);
+      }
+
+      // 2. If online, refresh from API
+      const isOnline = await checkConnectivity();
+      if (!isOnline) {
+        set({ loadingComponents: false });
+        return;
+      }
+
       try {
         const response = await apiFetch<any>("/components", { method: "GET" });
         const data: SurveyComponent[] = Array.isArray(response?.data)
@@ -247,28 +267,48 @@ export const useCharacterizationStore = create<CharacterizationState>(
 
         set({ components: data, loadingComponents: false });
       } catch (error) {
-        console.error("Error fetching components:", error);
-
-        // Fallback
-        try {
-          const cached = await getAllComponents();
-          if (cached.length > 0) {
-            set({ components: cached, loadingComponents: false, error: null });
-            return;
-          }
-        } catch (e) {
-          console.error("SQLite fallback failed:", e);
+        // API failed but cache may be loaded — only show error if no cache
+        if (get().components.length === 0) {
+          set({
+            error: error instanceof Error ? error.message : "Error desconocido",
+            loadingComponents: false,
+          });
+        } else {
+          set({ loadingComponents: false });
         }
-
-        set({
-          error: error instanceof Error ? error.message : "Error desconocido",
-          loadingComponents: false,
-        });
       }
     },
 
     fetchQuestions: async (componentId, page = 1, limit = 50) => {
       set({ loadingQuestions: true, error: null });
+
+      // 1. Load from SQLite first
+      try {
+        const cached = await getQuestionsByComponent(componentId);
+        if (cached.length > 0) {
+          set({
+            questions: cached,
+            loadingQuestions: false,
+            error: null,
+            questionsPagination: {
+              currentPage: 1,
+              totalPages: 1,
+              totalCount: cached.length,
+              limit,
+            },
+          });
+        }
+      } catch (e) {
+        console.error("Failed to load questions from SQLite:", e);
+      }
+
+      // 2. If online, refresh from API
+      const isOnline = await checkConnectivity();
+      if (!isOnline) {
+        set({ loadingQuestions: false });
+        return;
+      }
+
       try {
         const response = await apiFetch<any>("/questions/", {
           method: "GET",
@@ -325,38 +365,34 @@ export const useCharacterizationStore = create<CharacterizationState>(
           },
         });
       } catch (error) {
-        console.error("Error fetching questions:", error);
-
-        // Fallback
-        try {
-          const cached = await getQuestionsByComponent(componentId);
-          if (cached.length > 0) {
-            set({
-              questions: cached,
-              loadingQuestions: false,
-              error: null,
-              questionsPagination: {
-                currentPage: 1,
-                totalPages: 1,
-                totalCount: cached.length,
-                limit,
-              },
-            });
-            return;
-          }
-        } catch (e) {
-          console.error("SQLite fallback failed:", e);
+        // API failed but cache may be loaded
+        if (get().questions.length === 0) {
+          set({
+            error: error instanceof Error ? error.message : "Error desconocido",
+            loadingQuestions: false,
+            questions: [],
+          });
+        } else {
+          set({ loadingQuestions: false });
         }
-
-        set({
-          error: error instanceof Error ? error.message : "Error desconocido",
-          loadingQuestions: false,
-          questions: [],
-        });
       }
     },
 
     fetchQuestionTypes: async () => {
+      // 1. Load from SQLite first
+      try {
+        const cached = await getAllQuestionTypes();
+        if (cached.length > 0) {
+          set({ questionTypes: cached });
+        }
+      } catch (e) {
+        console.error("Failed to load question types from SQLite:", e);
+      }
+
+      // 2. If online, refresh from API
+      const isOnline = await checkConnectivity();
+      if (!isOnline) return;
+
       try {
         const response = await apiFetch<any>("/questions/types", {
           method: "GET",
@@ -409,18 +445,7 @@ export const useCharacterizationStore = create<CharacterizationState>(
 
         set({ questionTypes: data });
       } catch (error) {
-        console.error("Error fetching question types:", error);
-
-        // Fallback
-        try {
-          const cached = await getAllQuestionTypes();
-          if (cached.length > 0) {
-            set({ questionTypes: cached });
-            return;
-          }
-        } catch (e) {
-          console.error("SQLite fallback failed:", e);
-        }
+        // API failed — cache already loaded above if available
       }
     },
 
@@ -429,8 +454,6 @@ export const useCharacterizationStore = create<CharacterizationState>(
       const canonical = TYPE_NAME_MAP[normalizedType];
 
       // Only "list" type questions support GET on their detail endpoint.
-      // text, date, bool, numeric endpoints only support POST/PUT/DELETE (admin ops).
-      // location uses departments/municipalities assistants instead.
       if (canonical !== "list" && canonical !== "dependent_list") {
         set((state) => ({
           questionDetails: {
@@ -444,6 +467,28 @@ export const useCharacterizationStore = create<CharacterizationState>(
       const endpoint = QUESTION_TYPE_ENDPOINTS[normalizedType];
       if (!endpoint) {
         console.warn(`Unknown question type: ${typeName}`);
+        return;
+      }
+
+      // 1. Load from SQLite first
+      try {
+        const cached = await getQuestionDetailFromDb(questionId);
+        if (cached) {
+          set((state) => ({
+            questionDetails: {
+              ...state.questionDetails,
+              [questionId]: cached as QuestionDetail,
+            },
+          }));
+        }
+      } catch (e) {
+        console.error("Failed to load question detail from SQLite:", e);
+      }
+
+      // 2. If online, refresh from API
+      const isOnline = await checkConnectivity();
+      if (!isOnline) {
+        set({ loadingQuestionDetail: false });
         return;
       }
 
@@ -469,31 +514,35 @@ export const useCharacterizationStore = create<CharacterizationState>(
           loadingQuestionDetail: false,
         }));
       } catch (error) {
-        console.error("Error fetching question detail:", error);
-
-        // Fallback
-        try {
-          const cached = await getQuestionDetailFromDb(questionId);
-          if (cached) {
-            set((state) => ({
-              questionDetails: {
-                ...state.questionDetails,
-                [questionId]: cached as QuestionDetail,
-              },
-              loadingQuestionDetail: false,
-            }));
-            return;
-          }
-        } catch (e) {
-          console.error("SQLite fallback failed:", e);
-        }
-
+        // API failed — cache already loaded above if available
         set({ loadingQuestionDetail: false });
       }
     },
 
     fetchInnovaFields: async () => {
       set({ loadingInnovaFields: true, error: null });
+
+      // 1. Load from SQLite first
+      try {
+        const cached = await getAllInnovaFields();
+        if (cached.length > 0) {
+          set({
+            innovaFields: cached as InnovaField[],
+            loadingInnovaFields: false,
+            error: null,
+          });
+        }
+      } catch (e) {
+        console.error("Failed to load innova fields from SQLite:", e);
+      }
+
+      // 2. If online, refresh from API
+      const isOnline = await checkConnectivity();
+      if (!isOnline) {
+        set({ loadingInnovaFields: false });
+        return;
+      }
+
       try {
         const response = await apiFetch<any>("/assistants/innova-fields", {
           method: "GET",
@@ -513,31 +562,57 @@ export const useCharacterizationStore = create<CharacterizationState>(
 
         set({ innovaFields: data, loadingInnovaFields: false });
       } catch (error) {
-        console.error("Error fetching innova fields:", error);
-
-        // Fallback
-        try {
-          const cached = await getAllInnovaFields();
-          if (cached.length > 0) {
-            set({
-              innovaFields: cached as InnovaField[],
-              loadingInnovaFields: false,
-              error: null,
-            });
-            return;
-          }
-        } catch (e) {
-          console.error("SQLite fallback failed:", e);
+        // API failed — cache already loaded above if available
+        if (get().innovaFields.length === 0) {
+          set({
+            error: error instanceof Error ? error.message : "Error desconocido",
+            loadingInnovaFields: false,
+          });
+        } else {
+          set({ loadingInnovaFields: false });
         }
-
-        set({
-          error: error instanceof Error ? error.message : "Error desconocido",
-          loadingInnovaFields: false,
-        });
       }
     },
 
     fetchSurveyResults: async (projectId, producerId, interventionMethodId) => {
+      // Helper to map SQLite cached rows to SurveyResultItem[]
+      const mapCachedResults = (cached: Awaited<ReturnType<typeof getSurveyResultsFromDb>>): SurveyResultItem[] =>
+        cached.map((r) => ({
+          survey_id: r.survey_id,
+          created_at: r.created_at ?? "",
+          updated_at: r.updated_at ?? "",
+          intervention_method_id: r.intervention_method_id,
+          intervention_method_name: "",
+          answer_id: r.answer_id,
+          answer_value: r.answer_value ?? "",
+          question_id: r.question_id,
+          question_description: r.question_description ?? null,
+          question_type_id: r.question_type_id,
+          question_parent_id: r.question_parent_id ?? null,
+        }));
+
+      // 1. Always load from SQLite cache first (populated during sync download)
+      let cachedResults: SurveyResultItem[] = [];
+      try {
+        const cached = await getSurveyResultsFromDb(
+          producerId,
+          projectId,
+          interventionMethodId,
+        );
+        if (cached.length > 0) {
+          cachedResults = mapCachedResults(cached);
+        }
+      } catch (e) {
+        console.error("Failed to load survey results from SQLite:", e);
+      }
+
+      // 2. If offline, return cached data immediately
+      const isOnline = await checkConnectivity();
+      if (!isOnline) {
+        return cachedResults;
+      }
+
+      // 3. If online, try to fetch from API
       try {
         const response = await apiFetch<any>(
           `/surveys/${projectId}/producer/${producerId}/intervention_method/${interventionMethodId}`,
@@ -551,7 +626,6 @@ export const useCharacterizationStore = create<CharacterizationState>(
 
         // Always use the raw `value` field — this is the option value (e.g., "1", "2")
         // that the API expects. `item_name` is only a display label.
-        // This matches the Vue web app's normalizeMethodResponses() which uses firstAnswer?.value.
         const pickAnswerValue = (answer: any): any => {
           return answer?.value ?? answer?.answer_value ?? answer?.answerValue ?? "";
         };
@@ -580,8 +654,6 @@ export const useCharacterizationStore = create<CharacterizationState>(
               });
             }
           } else if (item.answer_id != null) {
-            // Already in flat format — pass through as-is
-            // Use value fields only (never item_name) to stay consistent
             const flatAnswerValue = pickAnswerValue({
               value: item?.answer_value ?? item?.value ?? item?.answer?.value,
             });
@@ -593,7 +665,10 @@ export const useCharacterizationStore = create<CharacterizationState>(
         }
         return flattened;
       } catch (error) {
-        console.error("Error fetching survey results:", error);
+        // API failed — return cached results if available
+        if (cachedResults.length > 0) {
+          return cachedResults;
+        }
         return [];
       }
     },

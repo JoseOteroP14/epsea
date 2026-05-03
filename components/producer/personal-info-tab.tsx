@@ -227,7 +227,7 @@ export function PersonalInfoTab({
     }
   }, [storeQuestions, activeComponent]);
 
-  // Load answers: first from API, then overlay local pending answers
+  // Load answers: fetch survey results (offline-first via store), then overlay local pending answers
   useEffect(() => {
     if (!activeComponent || !producerId || !projectId || !currentUserId) return;
 
@@ -241,36 +241,33 @@ export function PersonalInfoTab({
       const sIds: Record<number, number> = {};
       let foundRemote = false;
 
-      // 1. Fetch from API (server truth) — only attempt if online
-      const isOnline = await checkConnectivity();
-      if (isOnline) {
-        try {
-          const remote = await fetchSurveyResults(
-            projId,
-            pid,
-            PERSONAL_INFO_INTERVENTION_METHOD_ID,
-          );
-          for (const item of remote) {
-            // Accumulate multiple answers for the same question (multi-select)
-            if (merged[item.question_id] !== undefined) {
-              if (Array.isArray(merged[item.question_id])) {
-                merged[item.question_id].push(item.answer_value);
-              } else {
-                merged[item.question_id] = [
-                  merged[item.question_id],
-                  item.answer_value,
-                ];
-              }
+      // 1. Fetch survey results (store handles offline-first: SQLite cache → API)
+      try {
+        const remote = await fetchSurveyResults(
+          projId,
+          pid,
+          PERSONAL_INFO_INTERVENTION_METHOD_ID,
+        );
+        for (const item of remote) {
+          // Accumulate multiple answers for the same question (multi-select)
+          if (merged[item.question_id] !== undefined) {
+            if (Array.isArray(merged[item.question_id])) {
+              merged[item.question_id].push(item.answer_value);
             } else {
-              merged[item.question_id] = item.answer_value;
+              merged[item.question_id] = [
+                merged[item.question_id],
+                item.answer_value,
+              ];
             }
-            ids[item.question_id] = item.answer_id;
-            sIds[item.question_id] = item.survey_id;
+          } else {
+            merged[item.question_id] = item.answer_value;
           }
-          foundRemote = remote.length > 0;
-        } catch (e) {
-          console.error("Failed to fetch remote survey results:", e);
+          ids[item.question_id] = item.answer_id;
+          sIds[item.question_id] = item.survey_id;
         }
+        foundRemote = remote.length > 0;
+      } catch (e) {
+        console.error("Failed to fetch survey results:", e);
       }
 
       // 2. Overlay local SQLite answers (pending upload take precedence) — always available offline

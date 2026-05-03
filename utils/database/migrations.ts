@@ -307,6 +307,31 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 9,
+    up: async (db) => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS survey_results (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          survey_id INTEGER NOT NULL DEFAULT 0,
+          answer_id INTEGER NOT NULL UNIQUE,
+          question_id INTEGER NOT NULL,
+          answer_value TEXT NOT NULL DEFAULT '',
+          question_description TEXT,
+          question_type_id INTEGER NOT NULL DEFAULT 0,
+          question_parent_id INTEGER,
+          intervention_method_id INTEGER NOT NULL,
+          producer_id INTEGER NOT NULL,
+          project_id INTEGER NOT NULL,
+          created_at TEXT,
+          updated_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_survey_results_lookup
+          ON survey_results(producer_id, project_id, intervention_method_id);
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(db: SQLiteDatabase): Promise<void> {

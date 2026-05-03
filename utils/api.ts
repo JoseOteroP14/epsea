@@ -6,6 +6,14 @@ const BASE_URL = "https://playmusic.com.co/agro/api/v1";
 // Prevent cascading 401 logouts when multiple requests fail simultaneously
 let isLoggingOut = false;
 
+/** Distinguishable error for network failures (no connectivity). */
+export class NetworkError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "NetworkError";
+    }
+}
+
 interface RequestOptions extends RequestInit {
     params?: Record<string, string | number>;
 }
@@ -33,15 +41,29 @@ export async function apiFetch<T>(endpoint: string, options: RequestOptions = {}
         headers.set("Content-Type", "application/json");
     }
 
-    const response = await fetch(url, {
-        ...options,
-        headers,
-    });
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            ...options,
+            headers,
+        });
+    } catch (fetchError) {
+        // Network failure (no connectivity, DNS error, etc.)
+        throw new NetworkError(
+            fetchError instanceof Error ? fetchError.message : "Error de red",
+        );
+    }
 
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         const errorMessage = errorData.message || `Error ${response.status}: ${response.statusText}`;
-        console.error(`API Error [${options.method || 'GET'} ${endpoint}]:`, errorMessage, errorData);
+
+        // Use console.warn for expected 404s (reduces log noise during sync)
+        if (response.status === 404) {
+            console.warn(`API 404 [${options.method || 'GET'} ${endpoint}]`);
+        } else {
+            console.error(`API Error [${options.method || 'GET'} ${endpoint}]:`, errorMessage, errorData);
+        }
 
         // Handle expired/invalid token — log out once (prevent cascading logouts)
         if (response.status === 401 && !isLoggingOut) {

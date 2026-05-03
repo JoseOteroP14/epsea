@@ -1,8 +1,10 @@
 import { apiFetch } from "@/utils/api";
+import { checkConnectivity } from "@/hooks/use-network";
 import {
     getAllProjects,
     upsertProjects,
 } from "@/utils/database/repositories/project-repository";
+import { getProducerCountByProject } from "@/utils/database/repositories/project-stats-repository";
 import { create } from "zustand";
 import { Project } from "../schemas/project";
 import { useAuthStore } from "./useAuthStore";
@@ -33,14 +35,39 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   fetchProjects: async () => {
     set({ loading: true, error: null });
+
+    const { user } = useAuthStore.getState();
+    if (!user) {
+      set({ projects: [], loading: false });
+      return;
+    }
+
+    // 1. Load from SQLite first (instant offline data)
     try {
-      const { user } = useAuthStore.getState();
-
-      if (!user) {
-        set({ projects: [], loading: false });
-        return;
+      const cached = await getAllProjects();
+      if (cached.length > 0) {
+        set({ projects: cached, loading: false, error: null });
+        // Kick off stats for cached projects
+        cached.forEach((project) => {
+          if (project.id) get().fetchProjectStats(project.id);
+        });
       }
+    } catch (e) {
+      console.error("Failed to load projects from SQLite:", e);
+    }
 
+    // 2. If online, refresh from API in background
+    const isOnline = await checkConnectivity();
+    if (!isOnline) {
+      // Already loaded from cache above; if cache was empty, show empty state
+      set((s) => ({ loading: s.projects.length === 0 ? false : s.loading }));
+      if (get().projects.length === 0) {
+        set({ loading: false });
+      }
+      return;
+    }
+
+    try {
       // Obtener todos los proyectos del extensionista
       const response = await apiFetch<any>(`/users/${user.user_id}/projects`, {
         method: "GET",
@@ -86,29 +113,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         }
       });
     } catch (error) {
-      console.error("Error fetching projects:", error);
-
-      // Fallback: read from SQLite
-      try {
-        const cached = await getAllProjects();
-        if (cached.length > 0) {
-          set({ projects: cached, loading: false, error: null });
-          cached.forEach((project) => {
-            if (project.id) {
-              get().fetchProjectStats(project.id);
-            }
-          });
-          return;
-        }
-      } catch (e) {
-        console.error("SQLite fallback failed:", e);
+      // API failed but we may already have cache loaded — only show error if no cache
+      if (get().projects.length === 0) {
+        set({
+          error: error instanceof Error ? error.message : "Error desconocido",
+          loading: false,
+          projects: [],
+        });
+      } else {
+        set({ loading: false });
       }
-
-      set({
-        error: error instanceof Error ? error.message : "Error desconocido",
-        loading: false,
-        projects: [],
-      });
     }
   },
 
@@ -126,6 +140,36 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         },
       },
     }));
+
+    // Check connectivity first — if offline, use local count
+    const isOnline = await checkConnectivity();
+    if (!isOnline) {
+      try {
+        const localCount = await getProducerCountByProject(projectId);
+        set((state) => ({
+          projectStats: {
+            ...state.projectStats,
+            [projectId]: {
+              totalProducers: localCount,
+              characterizedProducers: 0,
+              loading: false,
+            },
+          },
+        }));
+      } catch {
+        set((state) => ({
+          projectStats: {
+            ...state.projectStats,
+            [projectId]: {
+              totalProducers: 0,
+              characterizedProducers: 0,
+              loading: false,
+            },
+          },
+        }));
+      }
+      return;
+    }
 
     try {
       // Fetch producers with limit=1 to get total count from meta
@@ -237,16 +281,31 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }));
     } catch (error) {
       console.error(`Error fetching stats for project ${projectId}:`, error);
-      set((state) => ({
-        projectStats: {
-          ...state.projectStats,
-          [projectId]: {
-            totalProducers: 0,
-            characterizedProducers: 0,
-            loading: false,
+      // Fallback to local count
+      try {
+        const localCount = await getProducerCountByProject(projectId);
+        set((state) => ({
+          projectStats: {
+            ...state.projectStats,
+            [projectId]: {
+              totalProducers: localCount,
+              characterizedProducers: 0,
+              loading: false,
+            },
           },
-        },
-      }));
+        }));
+      } catch {
+        set((state) => ({
+          projectStats: {
+            ...state.projectStats,
+            [projectId]: {
+              totalProducers: 0,
+              characterizedProducers: 0,
+              loading: false,
+            },
+          },
+        }));
+      }
     }
   },
 
@@ -266,3 +325,4 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   setProjects: (projects) => set({ projects }),
 }));
+

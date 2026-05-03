@@ -1,4 +1,5 @@
 import { apiFetch } from "@/utils/api";
+import { checkConnectivity } from "@/hooks/use-network";
 import {
     getProducerDetail as getProducerDetailFromDb,
     getProducersByProject,
@@ -59,6 +60,37 @@ export const useProducerStore = create<ProducerState>((set, get) => ({
 
   fetchProducers: async (projectId, page = 1, limit = 150) => {
     set({ loading: true, error: null });
+
+    // 1. Load from SQLite first (instant offline data)
+    try {
+      const cached = await getProducersByProject(projectId);
+      if (cached.length > 0) {
+        set({
+          producers: cached,
+          loading: false,
+          error: null,
+          pagination: {
+            currentPage: 1,
+            totalPages: 1,
+            totalCount: cached.length,
+            limit,
+          },
+        });
+      }
+    } catch (e) {
+      console.error("Failed to load producers from SQLite:", e);
+    }
+
+    // 2. If online, refresh from API
+    const isOnline = await checkConnectivity();
+    if (!isOnline) {
+      // Already loaded from cache; if cache was empty, show empty state
+      if (get().producers.length === 0) {
+        set({ loading: false });
+      }
+      return;
+    }
+
     try {
       const response = await apiFetch<any>(
         `/producer-assigned-to-extensionist/${projectId}/producers`,
@@ -111,34 +143,16 @@ export const useProducerStore = create<ProducerState>((set, get) => ({
         },
       });
     } catch (error) {
-      console.error("Error fetching producers:", error);
-
-      // Fallback: read from SQLite
-      try {
-        const cached = await getProducersByProject(projectId);
-        if (cached.length > 0) {
-          set({
-            producers: cached,
-            loading: false,
-            error: null,
-            pagination: {
-              currentPage: 1,
-              totalPages: 1,
-              totalCount: cached.length,
-              limit,
-            },
-          });
-          return;
-        }
-      } catch (e) {
-        console.error("SQLite fallback failed:", e);
+      // API failed but we may already have cache — only show error if no cache
+      if (get().producers.length === 0) {
+        set({
+          error: error instanceof Error ? error.message : "Error desconocido",
+          loading: false,
+          producers: [],
+        });
+      } else {
+        set({ loading: false });
       }
-
-      set({
-        error: error instanceof Error ? error.message : "Error desconocido",
-        loading: false,
-        producers: [],
-      });
     }
   },
 

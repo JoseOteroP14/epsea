@@ -25,6 +25,7 @@ import {
     setMetadata,
 } from "@/utils/database/repositories/sync-repository";
 import { deleteAnswers } from "@/utils/database/repositories/answer-repository";
+import { upsertSurveyResults, type SurveyResultRow } from "@/utils/database/repositories/survey-results-repository";
 import { getStoredToken } from "@/utils/secure-storage";
 import {
     getPendingVisit1Items,
@@ -193,6 +194,49 @@ export async function downloadAllData(
             methodId,
             user.user_id,
           );
+
+          // Flatten and persist survey results to SQLite for offline access
+          const flatResults: SurveyResultRow[] = [];
+          for (const item of rawData) {
+            const nestedAnswers = item.answers;
+            if (Array.isArray(nestedAnswers) && nestedAnswers.length > 0) {
+              for (const ans of nestedAnswers) {
+                flatResults.push({
+                  survey_id: ans.survey_id ?? 0,
+                  answer_id: ans.id,
+                  question_id: ans.question_id ?? item.id,
+                  answer_value: ans.value ?? ans.answer_value ?? "",
+                  question_description: item.description ?? null,
+                  question_type_id: item.question_type_id ?? 0,
+                  question_parent_id: item.question_parent_id ?? null,
+                  intervention_method_id: methodId,
+                  producer_id: producerId,
+                  project_id: projectId,
+                  created_at: item.created_at ?? null,
+                  updated_at: item.updated_at ?? null,
+                });
+              }
+            } else if (item.answer_id != null) {
+              flatResults.push({
+                survey_id: item.survey_id ?? 0,
+                answer_id: item.answer_id,
+                question_id: item.question_id ?? 0,
+                answer_value: item.answer_value ?? item.value ?? "",
+                question_description: item.question_description ?? null,
+                question_type_id: item.question_type_id ?? 0,
+                question_parent_id: item.question_parent_id ?? null,
+                intervention_method_id: methodId,
+                producer_id: producerId,
+                project_id: projectId,
+                created_at: item.created_at ?? null,
+                updated_at: item.updated_at ?? null,
+              });
+            }
+          }
+          if (flatResults.length > 0) {
+            await upsertSurveyResults(flatResults);
+          }
+
           resultCount++;
         }
       } catch {
