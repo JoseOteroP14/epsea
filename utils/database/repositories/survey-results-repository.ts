@@ -9,6 +9,7 @@ export interface SurveyResultRow {
   question_description: string | null;
   question_type_id: number;
   question_parent_id: number | null;
+  question_order: number;
   intervention_method_id: number;
   producer_id: number;
   project_id: number;
@@ -30,9 +31,9 @@ export async function upsertSurveyResults(
     await db.runAsync(
       `INSERT OR REPLACE INTO survey_results
         (survey_id, answer_id, question_id, answer_value, item_name, question_description,
-         question_type_id, question_parent_id, intervention_method_id,
+         question_type_id, question_parent_id, question_order, intervention_method_id,
          producer_id, project_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       r.survey_id,
       r.answer_id,
       r.question_id,
@@ -41,6 +42,7 @@ export async function upsertSurveyResults(
       r.question_description ?? null,
       r.question_type_id,
       r.question_parent_id ?? null,
+      r.question_order ?? 0,
       r.intervention_method_id,
       r.producer_id,
       r.project_id,
@@ -62,7 +64,8 @@ export async function getSurveyResults(
   const db = getDb();
   return db.getAllAsync<SurveyResultRow>(
     `SELECT * FROM survey_results
-     WHERE producer_id = ? AND project_id = ? AND intervention_method_id = ?`,
+     WHERE producer_id = ? AND project_id = ? AND intervention_method_id = ?
+     ORDER BY question_order ASC, answer_id ASC`,
     producerId,
     projectId,
     interventionMethodId,
