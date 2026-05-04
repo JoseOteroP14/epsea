@@ -24,11 +24,8 @@ import {
     getAllQuestionTypes,
     getQuestionDetail as getQuestionDetailFromDb,
     getQuestionsByComponent,
-    upsertComponents,
-    upsertInnovaFields,
-    upsertQuestionDetail,
-    upsertQuestions,
-    upsertQuestionTypes,
+    getStaticDepartments,
+    getStaticMunicipalities,
 } from "@/utils/database/repositories/characterization-repository";
 import {
     getAppliedInterventionMethods,
@@ -129,36 +126,6 @@ interface CharacterizationState {
   ) => Promise<number[]>;
 }
 
-// Map both English and Spanish type names to endpoints
-const QUESTION_TYPE_ENDPOINTS: Record<string, string> = {
-  text: "/questions-text",
-  texto: "/questions-text",
-  date: "/questions-date",
-  fecha: "/questions-date",
-  bool: "/questions-bool",
-  boolean: "/questions-bool",
-  booleana: "/questions-bool",
-  booleano: "/questions-bool",
-  "si/no": "/questions-bool",
-  "sí/no": "/questions-bool",
-  numeric: "/questions-numeric",
-  numerica: "/questions-numeric",
-  "numérica": "/questions-numeric",
-  numerico: "/questions-numeric",
-  "numérico": "/questions-numeric",
-  list: "/questions-list",
-  lista: "/questions-list",
-  logica: "/questions-bool",
-  "lógica": "/questions-bool",
-  logico: "/questions-bool",
-  "lógico": "/questions-bool",
-  logic: "/questions-bool",
-  logical: "/questions-bool",
-  dependent_list: "/questions-list",
-  "lista dependiente": "/questions-list",
-  // Location type has no detail endpoint — uses departments/municipalities assistants
-};
-
 // Normalize type names to canonical English keys for the renderer
 const TYPE_NAME_MAP: Record<string, string> = {
   text: "text",
@@ -201,15 +168,6 @@ const QUESTION_TYPE_ID_FALLBACK: Record<number, string> = {
   7: "location",
 };
 
-const CANONICAL_TYPE_DEFAULT_ID: Record<string, number> = {
-  text: 1,
-  date: 2,
-  bool: 3,
-  numeric: 4,
-  list: 5,
-  dependent_list: 6,
-  location: 7,
-};
 
 export const useCharacterizationStore = create<CharacterizationState>(
   (set, get) => ({
@@ -232,154 +190,37 @@ export const useCharacterizationStore = create<CharacterizationState>(
 
     fetchComponents: async () => {
       set({ loadingComponents: true, error: null });
-
-      // 1. Load from SQLite first
       try {
         const cached = await getAllComponents();
-        if (cached.length > 0) {
-          set({ components: cached, loadingComponents: false, error: null });
-        }
+        set({ components: cached, loadingComponents: false, error: null });
       } catch (e) {
         console.error("Failed to load components from SQLite:", e);
-      }
-
-      // 2. If online, refresh from API
-      const isOnline = await checkConnectivity();
-      if (!isOnline) {
         set({ loadingComponents: false });
-        return;
-      }
-
-      try {
-        const response = await apiFetch<any>("/components", { method: "GET" });
-        const data: SurveyComponent[] = Array.isArray(response?.data)
-          ? response.data
-          : Array.isArray(response)
-            ? response
-            : [];
-
-        // Write-through
-        try {
-          await upsertComponents(data);
-        } catch (e) {
-          console.error("Failed to persist components to SQLite:", e);
-        }
-
-        set({ components: data, loadingComponents: false });
-      } catch (error) {
-        // API failed but cache may be loaded — only show error if no cache
-        if (get().components.length === 0) {
-          set({
-            error: error instanceof Error ? error.message : "Error desconocido",
-            loadingComponents: false,
-          });
-        } else {
-          set({ loadingComponents: false });
-        }
       }
     },
 
-    fetchQuestions: async (componentId, page = 1, limit = 50) => {
+    fetchQuestions: async (componentId, _page = 1, limit = 50) => {
       set({ loadingQuestions: true, error: null });
-
-      // 1. Load from SQLite first
       try {
         const cached = await getQuestionsByComponent(componentId);
-        if (cached.length > 0) {
-          set({
-            questions: cached,
-            loadingQuestions: false,
-            error: null,
-            questionsPagination: {
-              currentPage: 1,
-              totalPages: 1,
-              totalCount: cached.length,
-              limit,
-            },
-          });
-        }
-      } catch (e) {
-        console.error("Failed to load questions from SQLite:", e);
-      }
-
-      // 2. If online, refresh from API
-      const isOnline = await checkConnectivity();
-      if (!isOnline) {
-        set({ loadingQuestions: false });
-        return;
-      }
-
-      try {
-        const response = await apiFetch<any>("/questions/", {
-          method: "GET",
-          params: { page, limit, component_id: componentId },
-        });
-
-        let questionsData: Question[] = [];
-        let totalPages = 1;
-        let totalCount = 0;
-
-        if (response?.data?.pagination) {
-          const pag = response.data.pagination;
-          questionsData = Array.isArray(pag.items) ? pag.items : [];
-          totalPages = pag.totalPages ?? pag.total_pages ?? 1;
-          totalCount =
-            pag.totalItems ?? pag.total_items ?? questionsData.length;
-        } else if (response?.meta) {
-          questionsData = Array.isArray(response.data) ? response.data : [];
-          totalPages = Math.ceil((response.meta.total ?? 0) / limit);
-          totalCount = response.meta.total ?? questionsData.length;
-        } else if (Array.isArray(response?.data)) {
-          questionsData = response.data;
-          totalCount = questionsData.length;
-        } else if (Array.isArray(response)) {
-          questionsData = response;
-          totalCount = questionsData.length;
-        }
-
-        // Deduplicate by id (API may return duplicates) and sort ascending
-        const seen = new Set<number>();
-        questionsData = questionsData
-          .filter((q) => {
-            if (seen.has(q.id)) return false;
-            seen.add(q.id);
-            return true;
-          })
-          .sort((a, b) => (a.order ?? a.id) - (b.order ?? b.id));
-
-        // Write-through
-        try {
-          await upsertQuestions(questionsData);
-        } catch (e) {
-          console.error("Failed to persist questions to SQLite:", e);
-        }
-
         set({
-          questions: questionsData,
+          questions: cached,
           loadingQuestions: false,
+          error: null,
           questionsPagination: {
-            currentPage: page,
-            totalPages,
-            totalCount,
+            currentPage: 1,
+            totalPages: 1,
+            totalCount: cached.length,
             limit,
           },
         });
-      } catch (error) {
-        // API failed but cache may be loaded
-        if (get().questions.length === 0) {
-          set({
-            error: error instanceof Error ? error.message : "Error desconocido",
-            loadingQuestions: false,
-            questions: [],
-          });
-        } else {
-          set({ loadingQuestions: false });
-        }
+      } catch (e) {
+        console.error("Failed to load questions from SQLite:", e);
+        set({ loadingQuestions: false, questions: [] });
       }
     },
 
     fetchQuestionTypes: async () => {
-      // 1. Load from SQLite first
       try {
         const cached = await getAllQuestionTypes();
         if (cached.length > 0) {
@@ -388,72 +229,12 @@ export const useCharacterizationStore = create<CharacterizationState>(
       } catch (e) {
         console.error("Failed to load question types from SQLite:", e);
       }
-
-      // 2. If online, refresh from API
-      const isOnline = await checkConnectivity();
-      if (!isOnline) return;
-
-      try {
-        const response = await apiFetch<any>("/questions/types", {
-          method: "GET",
-        });
-        const rawData: any[] = Array.isArray(response?.data)
-          ? response.data
-          : Array.isArray(response)
-            ? response
-            : [];
-
-        const data: QuestionType[] = rawData
-          .map((item: any) => {
-            const rawName =
-              typeof item?.name === "string" ? item.name.trim() : "";
-            const rawType =
-              typeof item?.type === "string" ? item.type.trim() : "";
-
-            const normalizedName = rawName.toLowerCase();
-            const normalizedType = rawType.toLowerCase();
-
-            const canonical =
-              TYPE_NAME_MAP[normalizedType] ?? TYPE_NAME_MAP[normalizedName] ?? null;
-
-            const resolvedId =
-              typeof item?.id === "number"
-                ? item.id
-                : canonical
-                  ? CANONICAL_TYPE_DEFAULT_ID[canonical]
-                  : undefined;
-
-            if (resolvedId == null) return null;
-
-            return {
-              id: resolvedId,
-              name: rawName || rawType || canonical || `type_${resolvedId}`,
-            } as QuestionType;
-          })
-          .filter((item): item is QuestionType => item !== null)
-          .filter(
-            (item, index, arr) =>
-              arr.findIndex((candidate) => candidate.id === item.id) === index,
-          );
-
-        // Write-through
-        try {
-          await upsertQuestionTypes(data);
-        } catch (e) {
-          console.error("Failed to persist question types to SQLite:", e);
-        }
-
-        set({ questionTypes: data });
-      } catch (error) {
-        // API failed — cache already loaded above if available
-      }
     },
 
     fetchQuestionDetail: async (questionId, typeName) => {
       const normalizedType = typeName.toLowerCase();
       const canonical = TYPE_NAME_MAP[normalizedType];
 
-      // Only "list" type questions support GET on their detail endpoint.
       if (canonical !== "list" && canonical !== "dependent_list") {
         set((state) => ({
           questionDetails: {
@@ -464,13 +245,6 @@ export const useCharacterizationStore = create<CharacterizationState>(
         return;
       }
 
-      const endpoint = QUESTION_TYPE_ENDPOINTS[normalizedType];
-      if (!endpoint) {
-        console.warn(`Unknown question type: ${typeName}`);
-        return;
-      }
-
-      // 1. Load from SQLite first
       try {
         const cached = await getQuestionDetailFromDb(questionId);
         if (cached) {
@@ -479,98 +253,25 @@ export const useCharacterizationStore = create<CharacterizationState>(
               ...state.questionDetails,
               [questionId]: cached as QuestionDetail,
             },
+            loadingQuestionDetail: false,
           }));
+        } else {
+          set({ loadingQuestionDetail: false });
         }
       } catch (e) {
         console.error("Failed to load question detail from SQLite:", e);
-      }
-
-      // 2. If online, refresh from API
-      const isOnline = await checkConnectivity();
-      if (!isOnline) {
-        set({ loadingQuestionDetail: false });
-        return;
-      }
-
-      set({ loadingQuestionDetail: true });
-      try {
-        const response = await apiFetch<any>(`${endpoint}/${questionId}`, {
-          method: "GET",
-        });
-        const detail = response?.data ?? response;
-
-        // Write-through
-        try {
-          await upsertQuestionDetail(questionId, normalizedType, detail);
-        } catch (e) {
-          console.error("Failed to persist question detail to SQLite:", e);
-        }
-
-        set((state) => ({
-          questionDetails: {
-            ...state.questionDetails,
-            [questionId]: detail,
-          },
-          loadingQuestionDetail: false,
-        }));
-      } catch (error) {
-        // API failed — cache already loaded above if available
         set({ loadingQuestionDetail: false });
       }
     },
 
     fetchInnovaFields: async () => {
       set({ loadingInnovaFields: true, error: null });
-
-      // 1. Load from SQLite first
       try {
         const cached = await getAllInnovaFields();
-        if (cached.length > 0) {
-          set({
-            innovaFields: cached as InnovaField[],
-            loadingInnovaFields: false,
-            error: null,
-          });
-        }
+        set({ innovaFields: cached as InnovaField[], loadingInnovaFields: false });
       } catch (e) {
         console.error("Failed to load innova fields from SQLite:", e);
-      }
-
-      // 2. If online, refresh from API
-      const isOnline = await checkConnectivity();
-      if (!isOnline) {
         set({ loadingInnovaFields: false });
-        return;
-      }
-
-      try {
-        const response = await apiFetch<any>("/assistants/innova-fields", {
-          method: "GET",
-        });
-        const data: InnovaField[] = Array.isArray(response?.data)
-          ? response.data
-          : Array.isArray(response)
-            ? response
-            : [];
-
-        // Write-through
-        try {
-          await upsertInnovaFields(data);
-        } catch (e) {
-          console.error("Failed to persist innova fields to SQLite:", e);
-        }
-
-        set({ innovaFields: data, loadingInnovaFields: false });
-      } catch (error) {
-        // API failed — cache already loaded above if available
-        if (get().innovaFields.length === 0) {
-          set({
-            error: error instanceof Error ? error.message : "Error desconocido",
-            loadingInnovaFields: false,
-          });
-        } else {
-          set({ loadingInnovaFields: false });
-        }
       }
     },
 
@@ -585,7 +286,7 @@ export const useCharacterizationStore = create<CharacterizationState>(
           intervention_method_name: "",
           answer_id: r.answer_id,
           answer_value: r.answer_value ?? "",
-          item_name: null,
+          item_name: r.item_name ?? null,
           question_id: r.question_id,
           question_description: r.question_description ?? null,
           question_type_id: r.question_type_id,
@@ -733,28 +434,11 @@ export const useCharacterizationStore = create<CharacterizationState>(
     },
 
     fetchDepartments: async () => {
-      const response = await apiFetch<any>("/assistants/departments", {
-        method: "GET",
-      });
-      const data: Department[] = Array.isArray(response?.data)
-        ? response.data
-        : Array.isArray(response)
-          ? response
-          : [];
-      return data;
+      return getStaticDepartments();
     },
 
     fetchMunicipalities: async (departmentCod: string) => {
-      const response = await apiFetch<any>(
-        `/assistants/municipalities/${departmentCod}`,
-        { method: "GET" },
-      );
-      const data: Municipality[] = Array.isArray(response?.data)
-        ? response.data
-        : Array.isArray(response)
-          ? response
-          : [];
-      return data;
+      return getStaticMunicipalities(departmentCod);
     },
 
     resetQuestions: () =>

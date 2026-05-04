@@ -10,7 +10,21 @@
       "Bash(bun expo *)",
       "Bash(rm -rf node_modules)",
       "Bash(bun install *)",
-      "Bash(bun add *)"
+      "Bash(bun add *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\andre\\\\Music\\\\Paginas Web\\\\epsea\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/assistants/departments)",
+      "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/questions/types)",
+      "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/components)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('data', d\\), indent=2\\)\\)\")",
+      "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1__TRACKED_VAR__)",
+      "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/questions/with-options/__TRACKED_VAR__)",
+      "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/questions/with-options/1)",
+      "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/questions/with-options/2)",
+      "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/questions/with-options/3)",
+      "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/questions/with-options/4)",
+      "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/questions/with-options/5)",
+      "Bash(node *)"
     ]
   }
 }

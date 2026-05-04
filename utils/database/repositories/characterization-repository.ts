@@ -1,4 +1,6 @@
 import type {
+  Department,
+  Municipality,
   Question,
   QuestionType,
   SurveyComponent,
@@ -142,6 +144,26 @@ export async function getAllInnovaFields(): Promise<unknown[]> {
     "SELECT raw_json FROM innova_fields",
   );
   return rows.map((r) => JSON.parse(r.raw_json));
+}
+
+// --- Static Departments & Municipalities (pre-seeded, offline-ready) ---
+
+export async function getStaticDepartments(): Promise<Department[]> {
+  const db = getDb();
+  const rows = await db.getAllAsync<{ department_cod: string; department: string }>(
+    "SELECT DISTINCT department_cod, department FROM static_municipalities ORDER BY department",
+  );
+  return rows;
+}
+
+export async function getStaticMunicipalities(departmentCod: string): Promise<Municipality[]> {
+  const db = getDb();
+  const rows = await db.getAllAsync<Municipality>(
+    `SELECT department_cod, department, municipality_code, municipality
+     FROM static_municipalities WHERE department_cod = ? ORDER BY municipality`,
+    departmentCod,
+  );
+  return rows;
 }
 
 // --- Clear all ---

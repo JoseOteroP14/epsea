@@ -21,7 +21,7 @@ interface SyncState {
   lastUpload: string | null;
   error: string | null;
 
-  startDownload: () => Promise<void>;
+  startDownload: (externalProgressCallback?: (p: SyncProgress) => void) => Promise<void>;
   startUpload: () => Promise<{ uploaded: number; failed: number }>;
   refreshStatus: () => Promise<void>;
 }
@@ -35,10 +35,13 @@ export const useSyncStore = create<SyncState>((set) => ({
   lastUpload: null,
   error: null,
 
-  startDownload: async () => {
+  startDownload: async (externalProgressCallback) => {
     set({ isDownloading: true, error: null, progress: null });
     try {
-      await downloadAllData((progress) => set({ progress }));
+      await downloadAllData((progress) => {
+        set({ progress });
+        externalProgressCallback?.(progress);
+      });
       const lastDownload = await getMetadata("last_full_download");
       set({ isDownloading: false, lastDownload });
     } catch (error) {
