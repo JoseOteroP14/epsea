@@ -8,6 +8,7 @@ import {
     PERSONAL_INFO_INTERVENTION_METHOD_ID,
     useCharacterizationStore,
 } from "@/store/useCharacterizationStore";
+import { useSyncStore } from "@/store/useSyncStore";
 import { apiFetch } from "@/utils/api";
 import {
     getAnswers,
@@ -623,6 +624,7 @@ export function PersonalInfoTab({
         user_id: userId,
         intervention_method_id: PERSONAL_INFO_INTERVENTION_METHOD_ID,
       });
+      useSyncStore.getState().refreshStatus();
       setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
       setShowSheet(false);
       setEditingQuestion(null);

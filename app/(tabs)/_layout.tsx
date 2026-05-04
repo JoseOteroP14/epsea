@@ -1,6 +1,7 @@
 import { useAlert } from "@/components/ui/custom-alert";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuthStore } from "@/store/useAuthStore";
+import { useSyncStore } from "@/store/useSyncStore";
 import { responsiveFont, widthScale } from "@/utils/responsive";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
@@ -85,6 +86,7 @@ function TabBar({ state, descriptors, navigation }: any) {
   const isDark = colorScheme === "dark";
   const numTabs = state.routes.length;
   const tabWidth = TAB_BAR_WIDTH / numTabs;
+  const isDownloading = useSyncStore((s) => s.isDownloading);
 
   const translateX = useSharedValue(state.index * tabWidth);
 
@@ -101,7 +103,7 @@ function TabBar({ state, descriptors, navigation }: any) {
     width: tabWidth,
   }));
 
-  const activeColor = "#156b33";
+  const activeColor = isDownloading ? "#7f8c8d" : "#156b33";
   const inactiveColor = isDark ? "#95a5a6" : "#7f8c8d";
 
   return (
@@ -123,6 +125,7 @@ function TabBar({ state, descriptors, navigation }: any) {
           const isFocused = state.index === index;
 
           const onPress = () => {
+            if (isDownloading) return;
             const event = navigation.emit({
               type: "tabPress",
               target: route.key,

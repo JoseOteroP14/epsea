@@ -15,7 +15,8 @@ import {
     CloudOff,
     RefreshCw,
 } from "lucide-react-native";
-import React, { useCallback, useEffect } from "react";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback } from "react";
 import {
     ActivityIndicator,
     StyleSheet,
@@ -53,9 +54,11 @@ export default function SyncScreen() {
   const { showAlert } = useAlert();
   const isBusy = isDownloading || isUploading;
 
-  useEffect(() => {
-    refreshStatus();
-  }, [refreshStatus]);
+  useFocusEffect(
+    useCallback(() => {
+      refreshStatus();
+    }, [refreshStatus])
+  );
 
   const handleDownload = useCallback(async () => {
     if (!isConnected) {

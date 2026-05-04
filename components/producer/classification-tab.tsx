@@ -8,6 +8,7 @@ import {
     CLASSIFICATION_INTERVENTION_METHOD_ID,
     useCharacterizationStore,
 } from "@/store/useCharacterizationStore";
+import { useSyncStore } from "@/store/useSyncStore";
 import { apiFetch } from "@/utils/api";
 import {
     getAnswers,
@@ -658,6 +659,7 @@ export function ClassificationTab({
         user_id: userId,
         intervention_method_id: CLASSIFICATION_INTERVENTION_METHOD_ID,
       });
+      useSyncStore.getState().refreshStatus();
       setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
       setShowSheet(false);
       setEditingQuestion(null);

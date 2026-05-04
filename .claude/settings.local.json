@@ -24,7 +24,8 @@
       "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/questions/with-options/3)",
       "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/questions/with-options/4)",
       "Bash(curl -s -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzOCIsImV4cCI6MTc3Nzg3OTUwOX0.k_4HzlbeBTP5GAWdoUv94NEhThyo9LCf03rDpO9LD2g' https://playmusic.com.co/agro/api/v1/questions/with-options/5)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(Select-Object -First 20 FullName)"
     ]
   }
 }
