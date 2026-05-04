@@ -4,35 +4,34 @@ import { useAuthStore } from "@/store/useAuthStore";
 import { useSyncStore } from "@/store/useSyncStore";
 import { apiFetch } from "@/utils/api";
 import {
-    heightPercent,
-    responsiveFont,
-    verticalScale,
-    widthScale,
+  heightPercent,
+  responsiveFont,
+  verticalScale,
+  widthScale,
 } from "@/utils/responsive";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    Keyboard,
-    KeyboardAvoidingView,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    TextInput,
-    TouchableOpacity,
-    TouchableWithoutFeedback,
-    View
+  ActivityIndicator,
+  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View,
 } from "react-native";
 import Animated, {
-    Easing,
-    useAnimatedStyle,
-    useSharedValue,
-    withRepeat,
-    withSpring,
-    withTiming,
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSpring,
+  withTiming,
 } from "react-native-reanimated";
 
 function normalizeName(value?: string | null): string | undefined {
@@ -83,7 +82,11 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!username || !password) {
-      showAlert({ title: "Error", message: "Por favor ingresa usuario y contraseña", type: "error" });
+      showAlert({
+        title: "Error",
+        message: "Por favor ingresa usuario y contraseña",
+        type: "error",
+      });
       return;
     }
 
@@ -144,10 +147,13 @@ export default function LoginScreen() {
         scale.value = withSpring(1);
 
         // Ask if user wants to sync before entering the app
-        Alert.alert(
-          "Sincronizar datos",
-          "¿Desea sincronizar los datos con el servidor? Esto descargará sus proyectos y encuestas más recientes.",
-          [
+        showAlert({
+          title: "Sincronizar datos",
+          message:
+            "¿Desea sincronizar los datos con el servidor? Esto descargará sus proyectos y encuestas más recientes.",
+          type: "info",
+          cancelable: false,
+          buttons: [
             {
               text: "No, continuar",
               style: "cancel",
@@ -155,6 +161,7 @@ export default function LoginScreen() {
             },
             {
               text: "Sí, sincronizar",
+              style: "default",
               onPress: async () => {
                 setSyncing(true);
                 setSyncStage("Iniciando sincronización...");
@@ -171,11 +178,14 @@ export default function LoginScreen() {
               },
             },
           ],
-          { cancelable: false },
-        );
+        });
         return;
       } else {
-        showAlert({ title: "Error", message: response.message || "Credenciales inválidas", type: "error" });
+        showAlert({
+          title: "Error",
+          message: response.message || "Credenciales inválidas",
+          type: "error",
+        });
         setLoading(false);
         scale.value = withSpring(1);
       }
@@ -206,7 +216,11 @@ export default function LoginScreen() {
       <Modal visible={syncing} transparent animationType="fade">
         <View style={styles.syncOverlay}>
           <View style={styles.syncCard}>
-            <ActivityIndicator size="large" color="#1a7a3a" style={{ marginBottom: verticalScale(16) }} />
+            <ActivityIndicator
+              size="large"
+              color="#1a7a3a"
+              style={{ marginBottom: verticalScale(16) }}
+            />
             <ThemedText style={styles.syncTitle}>Sincronizando...</ThemedText>
             <ThemedText style={styles.syncStage}>{syncStage}</ThemedText>
           </View>
@@ -420,8 +434,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
-  loginButtonDisabled: {
-  },
+  loginButtonDisabled: {},
   buttonGradient: {
     paddingVertical: verticalScale(16),
     alignItems: "center",

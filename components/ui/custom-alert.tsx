@@ -2,24 +2,24 @@ import { ThemedText } from "@/components/themed-text";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { AlertTriangle, CheckCircle, Info, XCircle } from "lucide-react-native";
 import React, {
-    createContext,
-    useCallback,
-    useContext,
-    useRef,
-    useState,
+  createContext,
+  useCallback,
+  useContext,
+  useRef,
+  useState,
 } from "react";
 import {
-    Modal,
-    Pressable,
-    StyleSheet,
-    TouchableOpacity,
-    View,
+  Modal,
+  Pressable,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import Animated, {
-    FadeIn,
-    FadeOut,
-    ZoomIn,
-    ZoomOut,
+  FadeIn,
+  FadeOut,
+  ZoomIn,
+  ZoomOut,
 } from "react-native-reanimated";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -37,6 +37,7 @@ interface AlertConfig {
   message?: string;
   type?: AlertType;
   buttons?: AlertButton[];
+  cancelable?: boolean;
 }
 
 interface AlertContextValue {
@@ -97,15 +98,16 @@ export function AlertProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const handleBackdropPress = useCallback(() => {
-    const cancelBtn = callbacksRef.current.find(
-      (b) => b.style === "cancel",
-    );
+    if (config?.cancelable === false) {
+      return;
+    }
+    const cancelBtn = callbacksRef.current.find((b) => b.style === "cancel");
     if (cancelBtn) {
       handlePress(cancelBtn);
     } else {
       setVisible(false);
     }
-  }, [handlePress]);
+  }, [handlePress, config?.cancelable]);
 
   const alertType = config?.type ?? "info";
   const theme = ALERT_THEME[alertType];
@@ -134,7 +136,9 @@ export function AlertProvider({ children }: { children: React.ReactNode }) {
           >
             <Pressable style={styles.alertCard} onPress={() => {}}>
               {/* Icon */}
-              <View style={[styles.iconCircle, { backgroundColor: theme.bgColor }]}>
+              <View
+                style={[styles.iconCircle, { backgroundColor: theme.bgColor }]}
+              >
                 <Icon size={responsiveFont(28)} color={theme.color} />
               </View>
 
@@ -280,7 +284,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#dc2626",
   },
   buttonCancel: {
-    backgroundColor: "rgba(0,0,0,0.06)",
+    backgroundColor: "rgba(26, 122, 58, 0.12)",
+    borderWidth: 1.5,
+    borderColor: "rgba(26, 122, 58, 0.3)",
   },
   buttonText: {
     fontSize: responsiveFont(15),
@@ -293,6 +299,6 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
   buttonTextCancel: {
-    color: "#555",
+    color: "#1a7a3a",
   },
 });
