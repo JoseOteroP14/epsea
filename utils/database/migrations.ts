@@ -380,6 +380,28 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    version: 13,
+    up: async (db) => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS visit2_queue (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          visit_uuid TEXT NOT NULL UNIQUE,
+          payload TEXT NOT NULL,
+          photos TEXT NOT NULL DEFAULT '[]',
+          user_id INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_visit2_queue_status ON visit2_queue(status);
+        CREATE INDEX IF NOT EXISTS idx_visit2_queue_user ON visit2_queue(user_id);
+      `);
+    },
+  },
 ];
 
 /**
