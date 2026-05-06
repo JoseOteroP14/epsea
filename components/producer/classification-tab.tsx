@@ -15,13 +15,18 @@ import {
     saveAnswersBatch,
 } from "@/utils/database/repositories/answer-repository";
 import {
+    deleteAnswerUpdate,
+    getAnswerUpdatesByMethod,
     upsertAnswerUpdate,
-    getAnswerUpdates,
 } from "@/utils/database/repositories/answer-update-repository";
+import { markInterventionMethodApplied } from "@/utils/database/repositories/producer-intervention-repository";
 import { enqueue } from "@/utils/database/repositories/sync-repository";
+import { findOptionMatchingStoredValue } from "@/utils/survey/option-display";
 import {
-    markInterventionMethodApplied,
-} from "@/utils/database/repositories/producer-intervention-repository";
+  offlinePendingValuesAreEquivalent,
+  serializeClassificationOfflineUpsert,
+  snapshotServerBaselineAnswers,
+} from "@/utils/survey/offline-new-value-serializers";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
     ClipboardCheck,
@@ -29,7 +34,13 @@ import {
     Layers,
     Pencil,
 } from "lucide-react-native";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import {
     ActivityIndicator,
     ScrollView,
@@ -47,6 +58,7 @@ interface DisplayAnswer {
   questionId: number;
   questionName: string;
   displayValue: string;
+  isPending?: boolean;
 }
 
 /**
@@ -90,7 +102,14 @@ function resolveDisplayValue(
     const parts = rawValue
       .map((v, i) => {
         const label = Array.isArray(itemName) ? itemName[i] : itemName;
-        return resolveDisplayValue(v, questionId, questionDetails, getCanonicalTypeName, questionTypeId, label);
+        return resolveDisplayValue(
+          v,
+          questionId,
+          questionDetails,
+          getCanonicalTypeName,
+          questionTypeId,
+          label,
+        );
       })
       .filter(Boolean);
     return parts.join(", ");
@@ -124,27 +143,17 @@ function resolveDisplayValue(
       detail?.data?.items ??
       detail?.data ??
       [];
-    if (Array.isArray(options)) {
-      const numVal = Number(rawValue);
-      const match = options.find(
-        (o: any) =>
-          o.id === numVal ||
-          o.id === rawValue ||
-          o.name === rawValue ||
-          o.value === rawValue,
-      );
-      if (match?.name) return match.name;
-    }
+    const match = findOptionMatchingStoredValue(options, rawValue);
+    if (match?.name) return match.name;
   }
 
   if (typeName === "bool") {
-    return rawValue === true || rawValue === "true" ? "SI" : "NO";
+    return (rawValue === true || rawValue === "true" || rawValue === 1 || rawValue === "1") ? "SI" : "NO";
   }
 
   // Fallback: detect boolean-like values even if questionTypes aren't loaded yet
-  if (rawValue === true || rawValue === "true" || rawValue === false || rawValue === "false") {
-    return rawValue === true || rawValue === "true" ? "SI" : "NO";
-  }
+  if (rawValue === true || rawValue === "true" || rawValue === 1 || rawValue === "1") return "SI";
+  if (rawValue === false || rawValue === "false" || rawValue === 0 || rawValue === "0" || rawValue === 2 || rawValue === "2") return "NO";
 
   return String(rawValue);
 }
@@ -161,7 +170,13 @@ function resolveNumericValue(
   if (Array.isArray(rawValue)) {
     const values = rawValue
       .map((v) =>
-        resolveNumericValue(v, questionId, questionDetails, getCanonicalTypeName, questionTypeId),
+        resolveNumericValue(
+          v,
+          questionId,
+          questionDetails,
+          getCanonicalTypeName,
+          questionTypeId,
+        ),
       )
       .filter((v): v is number => v !== null);
     if (values.length === 0) return null;
@@ -179,19 +194,10 @@ function resolveNumericValue(
       detail?.data?.items ??
       detail?.data ??
       [];
-    if (Array.isArray(options)) {
-      const numVal = Number(rawValue);
-      const match = options.find(
-        (o: any) =>
-          o.id === numVal ||
-          o.id === rawValue ||
-          o.name === rawValue ||
-          o.value === rawValue,
-      );
-      if (match?.value != null) {
-        const val = Number(match.value);
-        if (!Number.isNaN(val)) return val;
-      }
+    const match = findOptionMatchingStoredValue(options, rawValue);
+    if (match?.value != null) {
+      const val = Number(match.value);
+      if (!Number.isNaN(val)) return val;
     }
   }
 
@@ -242,7 +248,12 @@ export function ClassificationTab({
   const [loadingAnswers, setLoadingAnswers] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
-  const [itemNames, setItemNames] = useState<Record<number, string | string[] | null>>({});
+  const [itemNames, setItemNames] = useState<
+    Record<number, string | string[] | null>
+  >({});
+  const [pendingQuestionIds, setPendingQuestionIds] = useState<Set<number>>(
+    new Set(),
+  );
 
   // Local copy of classification questions (survives tab switches)
   const [localQuestions, setLocalQuestions] = useState<Question[]>([]);
@@ -255,6 +266,20 @@ export function ClassificationTab({
 
   // Snapshot of answers before opening sheet, used to restore on close without save
   const answersSnapshotRef = useRef<Record<number, any>>({});
+
+  const baselineAnswersRef = useRef<Record<number, unknown>>({});
+  const baselineItemNamesRef = useRef<Record<number, string | string[] | null>>({});
+  const baselineDataScopeRef = useRef<string>("");
+
+  // Refresh answers when upload completes so pending badges clear
+  const isUploading = useSyncStore((state) => state.isUploading);
+  const prevIsUploadingRef = useRef(false);
+  useEffect(() => {
+    if (prevIsUploadingRef.current && !isUploading) {
+      setRefreshKey((k) => k + 1);
+    }
+    prevIsUploadingRef.current = isUploading;
+  }, [isUploading]);
 
   useEffect(() => {
     if (components.length === 0) {
@@ -285,7 +310,8 @@ export function ClassificationTab({
 
   // Load answers: first from API, then overlay local pending answers
   useEffect(() => {
-    if (!classificationComponent || !producerId || !projectId || !currentUserId) return;
+    if (!classificationComponent || !producerId || !projectId || !currentUserId)
+      return;
 
     const pid = Number(producerId);
     const projId = Number(projectId);
@@ -298,6 +324,15 @@ export function ClassificationTab({
       const iNames: Record<number, string | string[] | null> = {};
       let foundRemote = false;
 
+      const baselineScopeKey = `${pid}-${projId}-${CLASSIFICATION_INTERVENTION_METHOD_ID}`;
+      if (baselineDataScopeRef.current !== baselineScopeKey) {
+        baselineDataScopeRef.current = baselineScopeKey;
+        baselineAnswersRef.current = {};
+        baselineItemNamesRef.current = {};
+      }
+
+      let remoteSurveyRowCount = 0;
+
       // 1. Fetch survey results (store handles offline-first: SQLite cache → API)
       try {
         const remote = await fetchSurveyResults(
@@ -305,6 +340,7 @@ export function ClassificationTab({
           pid,
           CLASSIFICATION_INTERVENTION_METHOD_ID,
         );
+        remoteSurveyRowCount = remote.length;
         for (const item of remote) {
           // Accumulate multiple answers for same question (multi-select)
           if (merged[item.question_id] !== undefined) {
@@ -327,7 +363,10 @@ export function ClassificationTab({
               if (Array.isArray(existing)) {
                 existing.push(item.item_name);
               } else {
-                iNames[item.question_id] = [existing as string, item.item_name as string];
+                iNames[item.question_id] = [
+                  existing as string,
+                  item.item_name as string,
+                ];
               }
             } else {
               iNames[item.question_id] = item.item_name;
@@ -339,7 +378,14 @@ export function ClassificationTab({
         console.error("Failed to fetch survey results:", e);
       }
 
+      if (remoteSurveyRowCount > 0) {
+        const serverBaselineSnap = snapshotServerBaselineAnswers(merged, iNames);
+        baselineAnswersRef.current = serverBaselineSnap.baselineAnswers;
+        baselineItemNamesRef.current = serverBaselineSnap.baselineItemNames;
+      }
+
       // 2. Overlay local SQLite answers (pending upload take precedence) — always available offline
+      const pendingIds = new Set<number>();
       try {
         const local = await getAnswers(
           pid,
@@ -353,10 +399,12 @@ export function ClassificationTab({
             const parsed = JSON.parse(a.value ?? "");
             if (Array.isArray(parsed)) {
               merged[a.question_id] = parsed;
+              pendingIds.add(a.question_id);
               continue;
             }
           } catch {}
           merged[a.question_id] = a.value;
+          pendingIds.add(a.question_id);
         }
       } catch (e) {
         console.error("Failed to load local answers:", e);
@@ -367,14 +415,52 @@ export function ClassificationTab({
         foundRemote = true;
       }
 
+      // 3. Overlay offline pending answer_updates (edits saved without internet)
+      //    These take top priority and mark those questions as pending
+      try {
+        const updates = await getAnswerUpdatesByMethod(
+          pid,
+          projId,
+          currentUserId,
+          CLASSIFICATION_INTERVENTION_METHOD_ID,
+        );
+        for (const upd of updates) {
+          let usedParsed = false;
+          try {
+            const parsed = JSON.parse(upd.new_value ?? "");
+            if (
+              Array.isArray(parsed) ||
+              (parsed && typeof parsed === "object")
+            ) {
+              merged[upd.question_id] = parsed;
+              usedParsed = true;
+            }
+          } catch {}
+          if (!usedParsed) {
+            merged[upd.question_id] = upd.new_value;
+          }
+          pendingIds.add(upd.question_id);
+        }
+      } catch (e) {
+        console.error("Failed to load pending answer updates:", e);
+      }
+
       setAnswers(merged);
       setAnswerIds(ids);
       setSurveyIds(sIds);
       setItemNames(iNames);
+      setPendingQuestionIds(pendingIds);
       setHasSurvey(foundRemote);
       setLoadingAnswers(false);
     })();
-  }, [classificationComponent, producerId, projectId, currentUserId, fetchSurveyResults, refreshKey]);
+  }, [
+    classificationComponent,
+    producerId,
+    projectId,
+    currentUserId,
+    fetchSurveyResults,
+    refreshKey,
+  ]);
 
   // Check if method already applied (for apply/re-apply guard)
   useEffect(() => {
@@ -406,12 +492,20 @@ export function ClassificationTab({
 
   // Compute geometric mean from answer values
   const geometricMean = useMemo(() => {
-    if (localQuestions.length === 0 || Object.keys(answers).length === 0) return null;
+    if (localQuestions.length === 0 || Object.keys(answers).length === 0)
+      return null;
     const numericValues: number[] = [];
     for (const q of localQuestions) {
       const raw = answers[q.id];
-      if (raw == null || raw === "" || (Array.isArray(raw) && raw.length === 0)) continue;
-      const val = resolveNumericValue(raw, q.id, questionDetails, getCanonicalTypeName, q.question_type_id);
+      if (raw == null || raw === "" || (Array.isArray(raw) && raw.length === 0))
+        continue;
+      const val = resolveNumericValue(
+        raw,
+        q.id,
+        questionDetails,
+        getCanonicalTypeName,
+        q.question_type_id,
+      );
       if (val !== null) numericValues.push(val);
     }
     return computeGeometricMean(numericValues);
@@ -445,10 +539,19 @@ export function ClassificationTab({
           q.question_type_id,
           itemNames[q.id],
         ),
+        isPending: pendingQuestionIds.has(q.id),
       });
     });
     setSavedAnswers(display);
-  }, [localQuestions, answers, questionDetails, getCanonicalTypeName, showSheet, itemNames]);
+  }, [
+    localQuestions,
+    answers,
+    questionDetails,
+    getCanonicalTypeName,
+    showSheet,
+    itemNames,
+    pendingQuestionIds,
+  ]);
 
   const handleApply = useCallback(() => {
     if (!classificationComponent) return;
@@ -478,21 +581,25 @@ export function ClassificationTab({
     });
   }, []);
 
-  const handleEditAnswerChange = useCallback((questionId: number, value: any) => {
-    setEditAnswers((prev) => {
-      if (value === undefined) {
-        if (prev[questionId] === undefined) return prev;
-        const next = { ...prev };
-        delete next[questionId];
-        return next;
-      }
-      return { ...prev, [questionId]: value };
-    });
-  }, []);
+  const handleEditAnswerChange = useCallback(
+    (questionId: number, value: any) => {
+      setEditAnswers((prev) => {
+        if (value === undefined) {
+          if (prev[questionId] === undefined) return prev;
+          const next = { ...prev };
+          delete next[questionId];
+          return next;
+        }
+        return { ...prev, [questionId]: value };
+      });
+    },
+    [],
+  );
 
   // Save new survey (apply mode)
   const handleSave = useCallback(async () => {
-    if (!classificationComponent || !producerId || !projectId || !currentUserId) return;
+    if (!classificationComponent || !producerId || !projectId || !currentUserId)
+      return;
 
     const pid = Number(producerId);
     const projId = Number(projectId);
@@ -515,7 +622,10 @@ export function ClassificationTab({
       }));
 
       // Build sync payload — multi-select uses nested `answers` array format
-      const syncAnswers: ({ question_id: number; answer_value: string } | { question_id: number; answers: { answer_value: string }[] })[] = [];
+      const syncAnswers: (
+        | { question_id: number; answer_value: string }
+        | { question_id: number; answers: { answer_value: string }[] }
+      )[] = [];
       for (const row of answerRows) {
         try {
           const parsed = JSON.parse(row.value ?? "");
@@ -587,9 +697,20 @@ export function ClassificationTab({
       setRefreshKey((k) => k + 1);
     } catch (error) {
       console.error("Failed to save answers:", error);
-      showAlert({ title: "Error", message: "No se pudieron guardar las respuestas.", type: "error" });
+      showAlert({
+        title: "Error",
+        message: "No se pudieron guardar las respuestas.",
+        type: "error",
+      });
     }
-  }, [answers, classificationComponent, producerId, projectId, currentUserId, showAlert]);
+  }, [
+    answers,
+    classificationComponent,
+    producerId,
+    projectId,
+    currentUserId,
+    showAlert,
+  ]);
 
   // Edit single answer
   const handleEditPress = useCallback(
@@ -630,37 +751,107 @@ export function ClassificationTab({
             body: JSON.stringify({ value: newValue }),
           });
         }
+        await deleteAnswerUpdate(answerId);
         setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
-        setRefreshKey((k) => k + 1);
+        setItemNames((prev) => { const next = { ...prev }; delete next[editingQuestion.id]; return next; });
+        setPendingQuestionIds((prev) => { const next = new Set(prev); next.delete(editingQuestion.id); return next; });
         setShowSheet(false);
         setEditingQuestion(null);
-        showAlert({ title: "Actualizado", message: "La respuesta se actualizó correctamente.", type: "success" });
+        showAlert({
+          title: "Actualizado",
+          message: "La respuesta se actualizó correctamente.",
+          type: "success",
+        });
       } catch (error) {
         console.error("Failed to update answer:", error);
-        showAlert({ title: "Error", message: "No se pudo actualizar la respuesta.", type: "error" });
+        showAlert({
+          title: "Error",
+          message: "No se pudo actualizar la respuesta.",
+          type: "error",
+        });
       }
     } else {
       const pid = Number(producerId);
       const projId = Number(projectId ?? 0);
       const compId = classificationComponent?.id ?? 0;
       const userId = currentUserId ?? 0;
-      const newValue = Array.isArray(rawVal)
-        ? rawVal.join(",")
-        : typeof rawVal === "object" && rawVal !== null
-          ? String(rawVal._main ?? rawVal.value ?? JSON.stringify(rawVal))
-          : String(rawVal ?? "");
+
+      const proposedStored = serializeClassificationOfflineUpsert(
+        editingQuestion,
+        rawVal,
+      );
+
+      const baselineRow = baselineAnswersRef.current;
+      const qid = editingQuestion.id;
+      const hasServerBaseline = Object.prototype.hasOwnProperty.call(
+        baselineRow,
+        qid,
+      );
+
+      if (hasServerBaseline) {
+        const baselineStored = serializeClassificationOfflineUpsert(
+          editingQuestion,
+          baselineRow[qid],
+        );
+        if (
+          offlinePendingValuesAreEquivalent({
+            proposed: proposedStored,
+            baseline: baselineStored,
+            isCommaMultiselect: editingQuestion.multiple === true,
+          })
+        ) {
+          await deleteAnswerUpdate(answerId);
+          const base = baselineAnswersRef.current as Record<number, any>;
+          const baseNames = baselineItemNamesRef.current;
+          setAnswers((prev) => ({
+            ...prev,
+            [qid]: base[qid],
+          }));
+          setItemNames((prev) => {
+            const next = { ...prev };
+            if (Object.prototype.hasOwnProperty.call(baseNames, qid)) {
+              next[qid] = baseNames[qid] as string | string[] | null;
+            } else {
+              delete next[qid];
+            }
+            return next;
+          });
+          setPendingQuestionIds((prev) => {
+            const next = new Set(prev);
+            next.delete(qid);
+            return next;
+          });
+          useSyncStore.getState().refreshStatus();
+          setShowSheet(false);
+          setEditingQuestion(null);
+          showAlert({
+            title: "Sin cambios pendientes",
+            message:
+              "La respuesta coincidió con la última versión sincronizada. No hay edición pendiente por subir.",
+            type: "success",
+          });
+          return;
+        }
+      }
+
       await upsertAnswerUpdate({
         answer_id: answerId,
-        new_value: newValue,
+        new_value: proposedStored,
         producer_id: pid,
         project_id: projId,
         component_id: compId,
-        question_id: editingQuestion.id,
+        question_id: qid,
         user_id: userId,
         intervention_method_id: CLASSIFICATION_INTERVENTION_METHOD_ID,
       });
       useSyncStore.getState().refreshStatus();
       setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
+      setItemNames((prev) => {
+        const next = { ...prev };
+        delete next[editingQuestion.id];
+        return next;
+      });
+      setPendingQuestionIds((prev) => new Set([...prev, editingQuestion.id]));
       setShowSheet(false);
       setEditingQuestion(null);
       showAlert({
@@ -669,7 +860,17 @@ export function ClassificationTab({
         type: "warning",
       });
     }
-  }, [editingQuestion, editAnswers, answerIds, surveyIds, classificationComponent, producerId, projectId, currentUserId, showAlert]);
+  }, [
+    editingQuestion,
+    editAnswers,
+    answerIds,
+    surveyIds,
+    classificationComponent,
+    producerId,
+    projectId,
+    currentUserId,
+    showAlert,
+  ]);
 
   if (loadingComponents) {
     return (
@@ -691,11 +892,16 @@ export function ClassificationTab({
     );
   }
 
-  if (loadingAnswers || (!showSheet && Object.keys(answers).length > 0 && savedAnswers.length === 0)) {
+  if (
+    loadingAnswers ||
+    (!showSheet && Object.keys(answers).length > 0 && savedAnswers.length === 0)
+  ) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#1a7a3a" />
-        <ThemedText style={styles.loadingText}>Cargando respuestas...</ThemedText>
+        <ThemedText style={styles.loadingText}>
+          Cargando respuestas...
+        </ThemedText>
       </View>
     );
   }
@@ -721,7 +927,9 @@ export function ClassificationTab({
               type="defaultSemiBold"
               style={styles.applyButtonText}
             >
-              {methodAlreadyApplied ? "Ver / Editar Respuestas" : "Aplicar Clasificación"}
+              {methodAlreadyApplied
+                ? "Ver / Editar Respuestas"
+                : "Aplicar Clasificación"}
             </ThemedText>
           </TouchableOpacity>
         ) : null}
@@ -729,7 +937,10 @@ export function ClassificationTab({
         {/* Answers section */}
         <View style={styles.answersSection}>
           <View style={styles.answersTitleRow}>
-            <ThemedText type="defaultSemiBold" style={styles.answersSectionTitle}>
+            <ThemedText
+              type="defaultSemiBold"
+              style={styles.answersSectionTitle}
+            >
               Respuestas
             </ThemedText>
             {geometricMean !== null && (
@@ -743,23 +954,54 @@ export function ClassificationTab({
 
           {savedAnswers.length > 0 ? (
             savedAnswers.map((item, index) => (
-              <View key={index} style={styles.answerCard}>
+              <View
+                key={index}
+                style={[
+                  styles.answerCard,
+                  item.isPending && styles.answerCardPending,
+                ]}
+              >
                 <View style={styles.answerHeader}>
                   <ThemedText style={styles.answerQuestion}>
                     {item.questionName}
                   </ThemedText>
-                  {answerIds[item.questionId] != null && (
-                    <TouchableOpacity
-                      style={styles.editButton}
-                      onPress={() => handleEditPress(item.questionId)}
-                      activeOpacity={0.7}
-                    >
-                      <Pencil size={responsiveFont(16)} color="#1a7a3a" />
-                    </TouchableOpacity>
-                  )}
+                  <View style={styles.answerHeaderRight}>
+                    {item.isPending && (
+                      <View style={styles.pendingBadge}>
+                        <ThemedText style={styles.pendingBadgeText}>
+                          PENDIENTE
+                        </ThemedText>
+                      </View>
+                    )}
+                    {answerIds[item.questionId] != null && (
+                      <TouchableOpacity
+                        style={[
+                          styles.editButton,
+                          item.isPending && styles.editButtonPending,
+                        ]}
+                        onPress={() => handleEditPress(item.questionId)}
+                        activeOpacity={0.7}
+                      >
+                        <Pencil
+                          size={responsiveFont(16)}
+                          color={item.isPending ? "#92400e" : "#1a7a3a"}
+                        />
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
-                <View style={styles.answerValueContainer}>
-                  <ThemedText style={styles.answerValue}>
+                <View
+                  style={[
+                    styles.answerValueContainer,
+                    item.isPending && styles.answerValueContainerPending,
+                  ]}
+                >
+                  <ThemedText
+                    style={[
+                      styles.answerValue,
+                      item.isPending && styles.answerValuePending,
+                    ]}
+                  >
                     {item.displayValue}
                   </ThemedText>
                 </View>
@@ -782,7 +1024,9 @@ export function ClassificationTab({
           visible={showSheet}
           onClose={handleCloseSheet}
           title={classificationComponent.name}
-          questions={localQuestions.length > 0 ? localQuestions : storeQuestions}
+          questions={
+            localQuestions.length > 0 ? localQuestions : storeQuestions
+          }
           answers={answers}
           onAnswerChange={handleAnswerChange}
           onSave={handleSave}
@@ -887,11 +1131,38 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
+  answerCardPending: {
+    backgroundColor: "#fffbeb",
+    borderWidth: 1.5,
+    borderColor: "#f59e0b",
+    shadowColor: "#f59e0b",
+    shadowOpacity: 0.15,
+  },
   answerHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: widthScale(8),
+  },
+  answerHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: widthScale(6),
+    flexShrink: 0,
+  },
+  pendingBadge: {
+    backgroundColor: "#fef3c7",
+    borderRadius: widthScale(6),
+    borderWidth: 1,
+    borderColor: "#f59e0b",
+    paddingVertical: verticalScale(2),
+    paddingHorizontal: widthScale(6),
+  },
+  pendingBadgeText: {
+    fontSize: responsiveFont(10),
+    fontWeight: "700",
+    color: "#92400e",
+    letterSpacing: 0.5,
   },
   answerQuestion: {
     flex: 1,
@@ -907,15 +1178,24 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  editButtonPending: {
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+  },
   answerValueContainer: {
     backgroundColor: "rgba(26, 122, 58, 0.12)",
     borderRadius: widthScale(8),
     paddingVertical: verticalScale(10),
     paddingHorizontal: widthScale(12),
   },
+  answerValueContainerPending: {
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+  },
   answerValue: {
     fontSize: responsiveFont(16),
     fontWeight: "500",
+  },
+  answerValuePending: {
+    color: "#92400e",
   },
   noAnswersContainer: {
     alignItems: "center",

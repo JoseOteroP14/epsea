@@ -15,13 +15,20 @@ import {
     saveAnswersBatch,
 } from "@/utils/database/repositories/answer-repository";
 import {
-    getAnswerUpdatesByProducerProject,
+    deleteAnswerUpdate,
+    getAnswerUpdatesByMethod,
     upsertAnswerUpdate,
 } from "@/utils/database/repositories/answer-update-repository";
 import { enqueue } from "@/utils/database/repositories/sync-repository";
 import {
+    offlinePendingValuesAreEquivalent,
+    serializeCharacterizationOfflineUpsert,
+    snapshotServerBaselineAnswers,
+} from "@/utils/survey/offline-new-value-serializers";
+import {
     markInterventionMethodApplied,
 } from "@/utils/database/repositories/producer-intervention-repository";
+import { findOptionMatchingStoredValue } from "@/utils/survey/option-display";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
     ClipboardList,
@@ -100,28 +107,30 @@ function resolveDisplayValue(
       detail?.data?.items ??
       detail?.data ??
       [];
-    if (Array.isArray(options)) {
-      const numVal = Number(rawValue);
-      const match = options.find(
-        (o: any) =>
-          o.id === numVal ||
-          o.id === rawValue ||
-          o.name === rawValue ||
-          o.value === rawValue ||
-          String(o.value) === String(rawValue),
-      );
-      if (match?.name) return match.name;
+    let lookupVal: any = rawValue;
+    if (
+      typeName === "dependent_list" &&
+      typeof rawValue === "object" &&
+      rawValue !== null &&
+      !Array.isArray(rawValue) &&
+      (rawValue as { _main?: unknown })._main != null
+    ) {
+      lookupVal = (rawValue as { _main: unknown })._main;
+    }
+    const match = findOptionMatchingStoredValue(options, lookupVal);
+    if (match?.name) return match.name;
+    if (typeName === "dependent_list" && lookupVal != null && lookupVal !== "") {
+      return String(lookupVal);
     }
   }
 
   if (typeName === "bool") {
-    return rawValue === true || rawValue === "true" ? "SI" : "NO";
+    return (rawValue === true || rawValue === "true" || rawValue === 1 || rawValue === "1") ? "SI" : "NO";
   }
 
   // Fallback: detect boolean-like values even if questionTypes aren't loaded yet
-  if (rawValue === true || rawValue === "true" || rawValue === false || rawValue === "false") {
-    return rawValue === true || rawValue === "true" ? "SI" : "NO";
-  }
+  if (rawValue === true || rawValue === "true" || rawValue === 1 || rawValue === "1") return "SI";
+  if (rawValue === false || rawValue === "false" || rawValue === 0 || rawValue === "0" || rawValue === 2 || rawValue === "2") return "NO";
 
   return String(rawValue);
 }
@@ -175,6 +184,20 @@ export function CharacterizationTab({
   // Snapshot of answers before opening sheet, used to restore on close without save
   const answersSnapshotRef = useRef<Record<number, any>>({});
 
+  const baselineAnswersRef = useRef<Record<number, unknown>>({});
+  const baselineItemNamesRef = useRef<Record<number, string | string[] | null>>({});
+  const baselineDataScopeRef = useRef<string>("");
+
+  // Refresh answers when upload completes so pending badges clear
+  const isUploading = useSyncStore((state) => state.isUploading);
+  const prevIsUploadingRef = useRef(false);
+  useEffect(() => {
+    if (prevIsUploadingRef.current && !isUploading) {
+      setRefreshKey((k) => k + 1);
+    }
+    prevIsUploadingRef.current = isUploading;
+  }, [isUploading]);
+
   useEffect(() => {
     if (components.length === 0) {
       fetchComponents();
@@ -217,6 +240,15 @@ export function CharacterizationTab({
       const iNames: Record<number, string | string[] | null> = {};
       let foundRemote = false;
 
+      const baselineScopeKey = `${pid}-${projId}-${CHARACTERIZATION_INTERVENTION_METHOD_ID}`;
+      if (baselineDataScopeRef.current !== baselineScopeKey) {
+        baselineDataScopeRef.current = baselineScopeKey;
+        baselineAnswersRef.current = {};
+        baselineItemNamesRef.current = {};
+      }
+
+      let remoteSurveyRowCount = 0;
+
       // 1. Fetch survey results (store handles offline-first: SQLite cache → API)
       try {
         const remote = await fetchSurveyResults(
@@ -224,6 +256,7 @@ export function CharacterizationTab({
           pid,
           CHARACTERIZATION_INTERVENTION_METHOD_ID,
         );
+        remoteSurveyRowCount = remote.length;
         for (const item of remote) {
           if (merged[item.question_id] !== undefined) {
             if (Array.isArray(merged[item.question_id])) {
@@ -257,7 +290,14 @@ export function CharacterizationTab({
         console.error("Failed to fetch survey results:", e);
       }
 
+      if (remoteSurveyRowCount > 0) {
+        const serverBaselineSnap = snapshotServerBaselineAnswers(merged, iNames);
+        baselineAnswersRef.current = serverBaselineSnap.baselineAnswers;
+        baselineItemNamesRef.current = serverBaselineSnap.baselineItemNames;
+      }
+
       // 2. Overlay local SQLite answers (pending upload take precedence) — always available offline
+      const pendingIds = new Set<number>();
       try {
         const local = await getAnswers(pid, projId, activeComponent.id, currentUserId);
         for (const a of local) {
@@ -265,10 +305,12 @@ export function CharacterizationTab({
             const parsed = JSON.parse(a.value ?? "");
             if (Array.isArray(parsed)) {
               merged[a.question_id] = parsed;
+              pendingIds.add(a.question_id);
               continue;
             }
           } catch {}
           merged[a.question_id] = a.value;
+          pendingIds.add(a.question_id);
         }
       } catch (e) {
         console.error("Failed to load local answers:", e);
@@ -281,11 +323,20 @@ export function CharacterizationTab({
 
       // 3. Overlay offline pending answer_updates (edits saved without internet)
       //    These take top priority and mark those questions as pending
-      const pendingIds = new Set<number>();
       try {
-        const updates = await getAnswerUpdatesByProducerProject(pid, projId, currentUserId);
+        const updates = await getAnswerUpdatesByMethod(pid, projId, currentUserId, CHARACTERIZATION_INTERVENTION_METHOD_ID);
         for (const upd of updates) {
-          merged[upd.question_id] = upd.new_value;
+          let usedParsed = false;
+          try {
+            const parsed = JSON.parse(upd.new_value ?? "");
+            if (Array.isArray(parsed) || (parsed && typeof parsed === "object")) {
+              merged[upd.question_id] = parsed;
+              usedParsed = true;
+            }
+          } catch {}
+          if (!usedParsed) {
+            merged[upd.question_id] = upd.new_value;
+          }
           pendingIds.add(upd.question_id);
         }
       } catch (e) {
@@ -544,8 +595,10 @@ export function CharacterizationTab({
             body: JSON.stringify({ value: newValue }),
           });
         }
+        await deleteAnswerUpdate(answerId);
         setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
-        setRefreshKey((k) => k + 1);
+        setItemNames((prev) => { const next = { ...prev }; delete next[editingQuestion.id]; return next; });
+        setPendingQuestionIds((prev) => { const next = new Set(prev); next.delete(editingQuestion.id); return next; });
         setShowSheet(false);
         setEditingQuestion(null);
         showAlert({ title: "Actualizado", message: "La respuesta se actualizó correctamente.", type: "success" });
@@ -558,21 +611,68 @@ export function CharacterizationTab({
       const projId = Number(projectId ?? 0);
       const compId = activeComponent?.id ?? 0;
       const userId = currentUserId ?? 0;
-      const newValue = typeof rawVal === "object" && rawVal !== null && !Array.isArray(rawVal)
-        ? String(rawVal._main ?? rawVal.value ?? JSON.stringify(rawVal))
-        : String(rawVal ?? "");
+
+      const proposedStored = serializeCharacterizationOfflineUpsert(rawVal);
+      const baselineRow = baselineAnswersRef.current;
+      const qId = editingQuestion.id;
+      const hasServerBaseline = Object.prototype.hasOwnProperty.call(
+        baselineRow,
+        qId,
+      );
+
+      if (hasServerBaseline) {
+        const baselineStored = serializeCharacterizationOfflineUpsert(
+          baselineRow[qId],
+        );
+        if (
+          offlinePendingValuesAreEquivalent({
+            proposed: proposedStored,
+            baseline: baselineStored,
+            isCommaMultiselect: editingQuestion.multiple === true,
+          })
+        ) {
+          await deleteAnswerUpdate(answerId);
+          const base = baselineAnswersRef.current as Record<number, any>;
+          const baseNames = baselineItemNamesRef.current;
+          setAnswers((prev) => ({ ...prev, [qId]: base[qId] }));
+          setItemNames((prev) => {
+            const next = { ...prev };
+            if (Object.prototype.hasOwnProperty.call(baseNames, qId)) {
+              next[qId] = baseNames[qId] as string | string[] | null;
+            } else {
+              delete next[qId];
+            }
+            return next;
+          });
+          setPendingQuestionIds((prev) => {
+            const next = new Set(prev);
+            next.delete(qId);
+            return next;
+          });
+          useSyncStore.getState().refreshStatus();
+          setShowSheet(false);
+          setEditingQuestion(null);
+          showAlert({
+            title: "Sin cambios pendientes",
+            message:
+              "La respuesta coincidió con la última versión sincronizada. No hay edición pendiente por subir.",
+            type: "success",
+          });
+          return;
+        }
+      }
+
       await upsertAnswerUpdate({
         answer_id: answerId,
-        new_value: newValue,
+        new_value: proposedStored,
         producer_id: pid,
         project_id: projId,
         component_id: compId,
-        question_id: editingQuestion.id,
+        question_id: qId,
         user_id: userId,
         intervention_method_id: CHARACTERIZATION_INTERVENTION_METHOD_ID,
       });
       useSyncStore.getState().refreshStatus();
-      const qId = editingQuestion.id;
       setAnswers((prev) => ({ ...prev, [qId]: rawVal }));
       setPendingQuestionIds((prev) => new Set([...prev, qId]));
       setShowSheet(false);

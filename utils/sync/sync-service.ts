@@ -41,17 +41,43 @@ export interface SyncProgress {
   total: number;
 }
 
+type DownloadPhaseKey = "projects" | "producers" | "results" | "finalize";
+
+const DOWNLOAD_PHASES: Record<DownloadPhaseKey, { start: number; weight: number }> = {
+  projects: { start: 0, weight: 0.1 },
+  producers: { start: 0.1, weight: 0.25 },
+  results: { start: 0.35, weight: 0.55 },
+  finalize: { start: 0.9, weight: 0.1 },
+};
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function calcPhasePercent(phase: { start: number; weight: number }, current: number, total: number): number {
+  const safeTotal = total > 0 ? total : 1;
+  const ratio = clamp(current / safeTotal, 0, 1);
+  return (phase.start + phase.weight * ratio) * 100;
+}
+
 export async function downloadAllData(
   onProgress?: (progress: SyncProgress) => void,
 ): Promise<void> {
   const { user } = useAuthStore.getState();
   if (!user) throw new Error("No authenticated user");
 
-  const report = (stage: string, current: number, total: number) =>
-    onProgress?.({ stage, current, total });
+  const reportPhase = (
+    stage: string,
+    phase: { start: number; weight: number },
+    current: number,
+    total: number,
+  ) => {
+    const percent = Math.round(calcPhasePercent(phase, current, total));
+    onProgress?.({ stage, current: percent, total: 100 });
+  };
 
   // 1. Projects
-  report("Descargando proyectos", 0, 1);
+  reportPhase("Descargando proyectos", DOWNLOAD_PHASES.projects, 0, 1);
   const projectsResponse = await apiFetch<any>(
     `/users/${user.user_id}/projects`,
     { method: "GET" },
@@ -73,74 +99,88 @@ export async function downloadAllData(
   if (projects.length > 0) {
     await deleteProjectsNotIn(projects.map((p) => p.id));
   }
-  report("Descargando proyectos", 1, 1);
+  reportPhase("Descargando proyectos", DOWNLOAD_PHASES.projects, 1, 1);
 
   // 2. Producers for each project
   let producerCount = 0;
   const allProducerIds: Array<{ producerId: number; projectId: number }> = [];
-  for (let i = 0; i < projects.length; i++) {
-    const project = projects[i];
-    report(
-      `Usuarios (proyecto ${i + 1}/${projects.length})`,
-      i,
-      projects.length,
-    );
+  if (projects.length === 0) {
+    reportPhase("Usuarios descargados", DOWNLOAD_PHASES.producers, 1, 1);
+  } else {
+    for (let i = 0; i < projects.length; i++) {
+      const project = projects[i];
 
-    // Fetch all pages
-    let page = 1;
-    let hasMore = true;
-    const fetchedProducerIds: number[] = [];
-    while (hasMore) {
-      const response = await apiFetch<any>(
-        `/producer-assigned-to-extensionist/${project.id}/producers`,
-        { method: "GET", params: { page, limit: 100 } },
-      );
+      // Fetch all pages
+      let page = 1;
+      let hasMore = true;
+      let totalPages = 1;
+      const fetchedProducerIds: number[] = [];
+      while (hasMore) {
+        const response = await apiFetch<any>(
+          `/producer-assigned-to-extensionist/${project.id}/producers`,
+          { method: "GET", params: { page, limit: 100 } },
+        );
 
-      let producers: any[] = [];
-      if (response?.data?.pagination) {
-        const pag = response.data.pagination;
-        producers = Array.isArray(pag.items) ? pag.items : [];
-        hasMore = page < (pag.totalPages ?? pag.total_pages ?? 1);
-      } else if (Array.isArray(response?.data)) {
-        producers = response.data;
-        hasMore = false;
-      } else if (Array.isArray(response)) {
-        producers = response;
-        hasMore = false;
-      } else {
-        hasMore = false;
-      }
-
-      if (producers.length > 0) {
-        await upsertProducers(producers, project.id);
-        producerCount += producers.length;
-        for (const p of producers) {
-          const id = p.producer_id ?? p.id;
-          if (id != null) fetchedProducerIds.push(Number(id));
-          allProducerIds.push({ producerId: Number(id), projectId: project.id });
+        let producers: any[] = [];
+        if (response?.data?.pagination) {
+          const pag = response.data.pagination;
+          producers = Array.isArray(pag.items) ? pag.items : [];
+          totalPages = pag.totalPages ?? pag.total_pages ?? 1;
+          hasMore = page < totalPages;
+        } else if (Array.isArray(response?.data)) {
+          producers = response.data;
+          totalPages = 1;
+          hasMore = false;
+        } else if (Array.isArray(response)) {
+          producers = response;
+          totalPages = 1;
+          hasMore = false;
+        } else {
+          totalPages = 1;
+          hasMore = false;
         }
+
+        if (producers.length > 0) {
+          await upsertProducers(producers, project.id);
+          producerCount += producers.length;
+          for (const p of producers) {
+            const id = p.producer_id ?? p.id;
+            if (id != null) fetchedProducerIds.push(Number(id));
+            allProducerIds.push({ producerId: Number(id), projectId: project.id });
+          }
+        }
+
+        const pageProgress = Math.min(page, totalPages) / Math.max(totalPages, 1);
+        reportPhase(
+          `Productores ${i + 1} de ${projects.length}`,
+          DOWNLOAD_PHASES.producers,
+          i + pageProgress,
+          projects.length,
+        );
+
+        page++;
       }
-      page++;
+      // Remove producers no longer assigned to this project
+      await deleteProducersNotIn(project.id, fetchedProducerIds);
+      reportPhase(
+        `Productores ${i + 1} de ${projects.length}`,
+        DOWNLOAD_PHASES.producers,
+        i + 1,
+        projects.length,
+      );
     }
-    // Remove producers no longer assigned to this project
-    await deleteProducersNotIn(project.id, fetchedProducerIds);
+    reportPhase("Usuarios descargados", DOWNLOAD_PHASES.producers, 1, 1);
   }
-  report("Usuarios descargados", producerCount, producerCount);
 
   // 4. Download survey results for all producers across all intervention methods
-  //    This populates local cache AND marks which methods were actually applied.
   const INTERVENTION_METHOD_IDS = [1, 2, 3, 5, 7, 8];
+  const totalProducers = allProducerIds.length;
 
-  let resultCount = 0;
-  for (let i = 0; i < allProducerIds.length; i++) {
+  reportPhase("Descargando resultados", DOWNLOAD_PHASES.results, 0, totalProducers || 1);
+
+  for (let i = 0; i < totalProducers; i++) {
     const { producerId, projectId } = allProducerIds[i]!;
-    if (i % 20 === 0 || i === allProducerIds.length - 1) {
-      report(
-        `Resultados de encuestas (${i + 1}/${allProducerIds.length})`,
-        i + 1,
-        allProducerIds.length,
-      );
-    }
+
     for (const methodId of INTERVENTION_METHOD_IDS) {
       try {
         const response = await apiFetch<any>(
@@ -152,16 +192,10 @@ export async function downloadAllData(
           : Array.isArray(response)
             ? response
             : [];
-        // Only mark as applied AND persist if there are actual answers
-        if (rawData.length > 0) {
-          await markInterventionMethodApplied(
-            producerId,
-            projectId,
-            methodId,
-            user.user_id,
-          );
 
-          // Flatten and persist survey results to SQLite for offline access
+        if (rawData.length > 0) {
+          await markInterventionMethodApplied(producerId, projectId, methodId, user.user_id);
+
           const flatResults: SurveyResultRow[] = [];
           for (const item of rawData) {
             const nestedAnswers = item.answers;
@@ -206,22 +240,31 @@ export async function downloadAllData(
           if (flatResults.length > 0) {
             await upsertSurveyResults(flatResults);
           }
-
-          resultCount++;
         }
       } catch {
         // Skip silently — endpoint may not exist or producer has no results
       }
     }
+
+    // Report once per producer (not per method) to avoid visual jumps
+    reportPhase(
+      `Resultados ${i + 1} de ${totalProducers}`,
+      DOWNLOAD_PHASES.results,
+      i + 1,
+      totalProducers,
+    );
   }
-  report(`Resultados de encuestas`, allProducerIds.length, allProducerIds.length);
+
+  reportPhase("Resultados descargados", DOWNLOAD_PHASES.results, 1, 1);
+
 
   // Note: Producer details endpoint (/producers/:id) is not available for extensionists.
   // Components, questions, question types, and innova fields are pre-seeded in the DB.
 
   // Mark last download time
+  reportPhase("Finalizando descarga", DOWNLOAD_PHASES.finalize, 0, 1);
   await setMetadata("last_full_download", new Date().toISOString());
-  report("Descarga completa", 1, 1);
+  reportPhase("Descarga completa", DOWNLOAD_PHASES.finalize, 1, 1);
 }
 
 const BASE_URL = "https://playmusic.com.co/agro/api/v1";
@@ -299,9 +342,21 @@ export async function uploadPendingAnswers(
       total: answerUpdates.length,
     });
     try {
-      await apiFetch(`/surveys/update-answer/${update.answer_id}`, {
+      // Detect dependent_list updates encoded as JSON with __type: "dependent"
+      let endpoint = `/surveys/update-answer/${update.answer_id}`;
+      let body: any = { value: update.new_value };
+      try {
+        const parsed = JSON.parse(update.new_value ?? "");
+        if (parsed && typeof parsed === "object" && parsed.__type === "dependent") {
+          endpoint = `/questions-dependent-list/${update.answer_id}`;
+          body = { value: parsed.value };
+          if (parsed.child) body.child = parsed.child;
+        }
+      } catch {}
+
+      await apiFetch(endpoint, {
         method: "PUT",
-        body: JSON.stringify({ value: update.new_value }),
+        body: JSON.stringify(body),
       });
       await deleteAnswerUpdate(update.answer_id);
       uploaded++;

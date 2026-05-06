@@ -2,9 +2,13 @@ import { QuestionRenderer } from "@/components/question-renderer";
 import { ThemedText } from "@/components/themed-text";
 import type { Question } from "@/schemas/characterization";
 import { useCharacterizationStore } from "@/store/useCharacterizationStore";
+import {
+  isSurveyAnswerEmpty,
+  resolveDependentChildIdsFromDetail,
+} from "@/utils/survey/dependent-child-ids";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { ChevronLeft, ChevronRight } from "lucide-react-native";
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ScrollView,
     StyleSheet,
@@ -62,45 +66,8 @@ export function QuestionWizard({
 
   const resolveDependentChildIds = useCallback(
     (questionId: number, value: any): number[] => {
-      const detail = questionDetails[questionId] as any;
-      const items =
-        detail?.items ??
-        detail?.options ??
-        detail?.data?.items ??
-        detail?.data?.options ??
-        detail?.data ??
-        [];
-
-      if (!Array.isArray(items) || items.length === 0) return [];
-
-      const mainSelection =
-        typeof value === "object" && value !== null && !Array.isArray(value)
-          ? value._main
-          : value;
-
-      if (mainSelection == null || mainSelection === "") return [];
-
-      const selectedValues = Array.isArray(mainSelection)
-        ? mainSelection
-        : [mainSelection];
-
-      const childIds: number[] = [];
-      for (const selectedValue of selectedValues) {
-        const numValue =
-          typeof selectedValue === "string" ? Number(selectedValue) : selectedValue;
-        const option = items.find(
-          (item: any) =>
-            item?.id === numValue ||
-            item?.id === selectedValue ||
-            item?.name === selectedValue ||
-            item?.value === selectedValue,
-        );
-        if (option?.other_question_id) {
-          childIds.push(option.other_question_id);
-        }
-      }
-
-      return childIds;
+      const detail = questionDetails[questionId];
+      return resolveDependentChildIdsFromDetail(detail, value);
     },
     [questionDetails],
   );
@@ -168,6 +135,20 @@ export function QuestionWizard({
 
     return result;
   }, [questions, answers, getTypeName, questionById, resolveDependentChildIds, dependentChildIds]);
+
+  /** Block Guardar when a lista dependiente opción exige hija y aún no tiene respuesta. */
+  const dependentChildrenIncomplete = useMemo(() => {
+    for (const q of visibleQuestions) {
+      const typeName = getTypeName(q.question_type_id);
+      if (typeName !== "dependent_list") continue;
+      const detail = questionDetails[q.id];
+      const childIds = resolveDependentChildIdsFromDetail(detail, answers[q.id]);
+      for (const cid of childIds) {
+        if (isSurveyAnswerEmpty(answers[cid])) return true;
+      }
+    }
+    return false;
+  }, [visibleQuestions, answers, questionDetails, getTypeName]);
 
   const handleAnswerChange = useCallback(
     (questionId: number, value: any) => {
@@ -238,7 +219,9 @@ export function QuestionWizard({
   // Update progress bar
   const progressPercent =
     totalQuestions > 0 ? (answeredCount / totalQuestions) * 100 : 0;
-  progressWidth.value = withTiming(progressPercent, { duration: 300 });
+  useEffect(() => {
+    progressWidth.value = withTiming(progressPercent, { duration: 300 });
+  }, [progressPercent]);
 
   const progressStyle = useAnimatedStyle(() => ({
     width: `${progressWidth.value}%`,
@@ -371,11 +354,22 @@ export function QuestionWizard({
 
           {onSave ? (
             <TouchableOpacity
-              style={styles.saveButton}
+              style={[
+                styles.saveButton,
+                dependentChildrenIncomplete && styles.saveButtonDisabled,
+              ]}
               onPress={onSave}
+              disabled={dependentChildrenIncomplete}
               activeOpacity={0.7}
             >
-              <ThemedText style={styles.saveButtonText}>Guardar</ThemedText>
+              <ThemedText
+                style={[
+                  styles.saveButtonText,
+                  dependentChildrenIncomplete && styles.saveButtonTextDisabled,
+                ]}
+              >
+                Guardar
+              </ThemedText>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
@@ -535,9 +529,15 @@ const styles = StyleSheet.create({
     borderRadius: widthScale(8),
     backgroundColor: "#1a7a3a",
   },
+  saveButtonDisabled: {
+    backgroundColor: "rgba(26, 122, 58, 0.35)",
+  },
   saveButtonText: {
     fontSize: responsiveFont(17),
     color: "#ffffff",
     fontWeight: "600",
+  },
+  saveButtonTextDisabled: {
+    color: "rgba(255,255,255,0.85)",
   },
 });

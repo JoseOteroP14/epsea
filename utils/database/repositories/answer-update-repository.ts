@@ -80,6 +80,22 @@ export async function getAnswerUpdatesByProducerProject(
   );
 }
 
+export async function getAnswerUpdatesByMethod(
+  producerId: number,
+  projectId: number,
+  userId: number,
+  interventionMethodId: number,
+): Promise<AnswerUpdateRow[]> {
+  const db = getDb();
+  return db.getAllAsync<AnswerUpdateRow>(
+    "SELECT * FROM answer_updates WHERE producer_id = ? AND project_id = ? AND user_id = ? AND intervention_method_id = ? ORDER BY created_at ASC",
+    producerId,
+    projectId,
+    userId,
+    interventionMethodId,
+  );
+}
+
 export async function getPendingAnswerUpdateCount(userId?: number): Promise<number> {
   const db = getDb();
   if (userId != null) {

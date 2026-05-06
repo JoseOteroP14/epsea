@@ -15,12 +15,23 @@ import {
     saveAnswersBatch,
 } from "@/utils/database/repositories/answer-repository";
 import {
+    deleteAnswerUpdate,
+    getAnswerUpdatesByMethod,
     upsertAnswerUpdate,
 } from "@/utils/database/repositories/answer-update-repository";
+import { markInterventionMethodApplied } from "@/utils/database/repositories/producer-intervention-repository";
 import { enqueue } from "@/utils/database/repositories/sync-repository";
 import {
-    markInterventionMethodApplied,
-} from "@/utils/database/repositories/producer-intervention-repository";
+  isSurveyAnswerEmpty,
+  resolveDependentChildIdsFromDetail,
+} from "@/utils/survey/dependent-child-ids";
+import { findOptionMatchingStoredValue } from "@/utils/survey/option-display";
+import {
+  getPrimaryDependentChildSerializationContext,
+  offlinePendingValuesAreEquivalent,
+  serializePersonalOfflineUpsert,
+  snapshotServerBaselineAnswers,
+} from "@/utils/survey/offline-new-value-serializers";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
     ChevronDown,
@@ -49,6 +60,7 @@ interface DisplayAnswer {
   questionName: string;
   displayValue: string;
   children?: DisplayAnswer[];
+  isPending?: boolean;
 }
 
 function resolveDisplayValue(
@@ -66,7 +78,14 @@ function resolveDisplayValue(
     const parts = rawValue
       .map((v, i) => {
         const label = Array.isArray(itemName) ? itemName[i] : itemName;
-        return resolveDisplayValue(v, questionId, questionDetails, getCanonicalTypeName, questionTypeId, label);
+        return resolveDisplayValue(
+          v,
+          questionId,
+          questionDetails,
+          getCanonicalTypeName,
+          questionTypeId,
+          label,
+        );
       })
       .filter(Boolean);
     return parts.join(", ");
@@ -101,17 +120,8 @@ function resolveDisplayValue(
       detail?.data?.items ??
       detail?.data ??
       [];
-    if (Array.isArray(options)) {
-      const numVal = Number(rawValue);
-      const match = options.find(
-        (o: any) =>
-          o.id === numVal ||
-          o.id === rawValue ||
-          o.name === rawValue ||
-          o.value === rawValue,
-      );
-      if (match?.name) return match.name;
-    }
+    const match = findOptionMatchingStoredValue(options, rawValue);
+    if (match?.name) return match.name;
   }
 
   if (typeName === "dependent_list") {
@@ -127,27 +137,13 @@ function resolveDisplayValue(
       typeof rawValue === "object" && rawValue?._main != null
         ? rawValue._main
         : rawValue;
-    if (Array.isArray(items)) {
-      const numVal = Number(mainVal);
-      const match = items.find(
-        (o: any) => o.id === numVal || o.id === mainVal || o.name === mainVal,
-      );
-      if (match?.name) return match.name;
-    }
-    return String(mainVal);
+    const match = findOptionMatchingStoredValue(items, mainVal);
+    if (match?.name) return match.name;
+    return String(mainVal ?? "");
   }
 
   if (typeName === "bool") {
-    return rawValue === true || rawValue === "true" ? "SI" : "NO";
-  }
-
-  if (
-    rawValue === true ||
-    rawValue === "true" ||
-    rawValue === false ||
-    rawValue === "false"
-  ) {
-    return rawValue === true || rawValue === "true" ? "SI" : "NO";
+    return (rawValue === true || rawValue === "true" || rawValue === 1 || rawValue === "1") ? "SI" : "NO";
   }
 
   return String(rawValue);
@@ -182,7 +178,9 @@ export function PersonalInfoTab({
   const [answers, setAnswers] = useState<Record<number, any>>({});
   const [answerIds, setAnswerIds] = useState<Record<number, number>>({});
   const [surveyIds, setSurveyIds] = useState<Record<number, number>>({});
-  const [itemNames, setItemNames] = useState<Record<number, string | string[] | null>>({});
+  const [itemNames, setItemNames] = useState<
+    Record<number, string | string[] | null>
+  >({});
   const [hasSurvey, setHasSurvey] = useState(false);
   const [savedAnswers, setSavedAnswers] = useState<DisplayAnswer[]>([]);
   const [loadingAnswers, setLoadingAnswers] = useState(true);
@@ -196,13 +194,33 @@ export function PersonalInfoTab({
 
   // Edit mode
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
+  const [editQuestions, setEditQuestions] = useState<Question[]>([]);
   const [editAnswers, setEditAnswers] = useState<Record<number, any>>({});
 
   // Snapshot of answers before opening sheet, used to restore on close without save
   const answersSnapshotRef = useRef<Record<number, any>>({});
 
+  /** Answers + item_names tal como vinieron del remoto antes de overlays locales pendientes */
+  const baselineAnswersRef = useRef<Record<number, unknown>>({});
+  const baselineItemNamesRef = useRef<Record<number, string | string[] | null>>({});
+  /** Evita pisar baseline con `{}` cuando se reabre la pestaña offline sin cache SQLite. */
+  const baselineDataScopeRef = useRef<string>("");
+
+  // Refresh answers when upload completes so pending badges clear
+  const isUploading = useSyncStore((state) => state.isUploading);
+  const prevIsUploadingRef = useRef(false);
+  useEffect(() => {
+    if (prevIsUploadingRef.current && !isUploading) {
+      setRefreshKey((k) => k + 1);
+    }
+    prevIsUploadingRef.current = isUploading;
+  }, [isUploading]);
+
   // Accordion: track which parent cards have their children expanded
   const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
+  const [pendingQuestionIds, setPendingQuestionIds] = useState<Set<number>>(
+    new Set(),
+  );
 
   useEffect(() => {
     if (components.length === 0) {
@@ -245,6 +263,15 @@ export function PersonalInfoTab({
       const iNames: Record<number, string | string[] | null> = {};
       let foundRemote = false;
 
+      const baselineScopeKey = `${pid}-${projId}-${PERSONAL_INFO_INTERVENTION_METHOD_ID}`;
+      if (baselineDataScopeRef.current !== baselineScopeKey) {
+        baselineDataScopeRef.current = baselineScopeKey;
+        baselineAnswersRef.current = {};
+        baselineItemNamesRef.current = {};
+      }
+
+      let remoteSurveyRowCount = 0;
+
       // 1. Fetch survey results (store handles offline-first: SQLite cache → API)
       try {
         const remote = await fetchSurveyResults(
@@ -252,6 +279,7 @@ export function PersonalInfoTab({
           pid,
           PERSONAL_INFO_INTERVENTION_METHOD_ID,
         );
+        remoteSurveyRowCount = remote.length;
         for (const item of remote) {
           // Accumulate multiple answers for the same question (multi-select)
           if (merged[item.question_id] !== undefined) {
@@ -275,7 +303,10 @@ export function PersonalInfoTab({
               if (Array.isArray(existing)) {
                 existing.push(item.item_name);
               } else {
-                iNames[item.question_id] = [existing as string, item.item_name as string];
+                iNames[item.question_id] = [
+                  existing as string,
+                  item.item_name as string,
+                ];
               }
             } else {
               iNames[item.question_id] = item.item_name;
@@ -287,7 +318,19 @@ export function PersonalInfoTab({
         console.error("Failed to fetch survey results:", e);
       }
 
+      // Solo cuando hay datos remotos/recién descargados: actualizar baseline.
+      // Si no, conservar ref (reaperturas offline sin filas en survey_results locales).
+      if (remoteSurveyRowCount > 0) {
+        const serverBaselineSnap = snapshotServerBaselineAnswers(
+          merged,
+          iNames,
+        );
+        baselineAnswersRef.current = serverBaselineSnap.baselineAnswers;
+        baselineItemNamesRef.current = serverBaselineSnap.baselineItemNames;
+      }
+
       // 2. Overlay local SQLite answers (pending upload take precedence) — always available offline
+      const pendingIds = new Set<number>();
       try {
         const local = await getAnswers(
           pid,
@@ -301,10 +344,12 @@ export function PersonalInfoTab({
             const parsed = JSON.parse(a.value ?? "");
             if (Array.isArray(parsed)) {
               merged[a.question_id] = parsed;
+              pendingIds.add(a.question_id);
               continue;
             }
           } catch {}
           merged[a.question_id] = a.value;
+          pendingIds.add(a.question_id);
         }
       } catch (e) {
         console.error("Failed to load local answers:", e);
@@ -315,14 +360,52 @@ export function PersonalInfoTab({
         foundRemote = true;
       }
 
+      // 3. Overlay offline pending answer_updates (edits saved without internet)
+      //    These take top priority and mark those questions as pending
+      try {
+        const updates = await getAnswerUpdatesByMethod(
+          pid,
+          projId,
+          currentUserId,
+          PERSONAL_INFO_INTERVENTION_METHOD_ID,
+        );
+        for (const upd of updates) {
+          let usedParsed = false;
+          try {
+            const parsed = JSON.parse(upd.new_value ?? "");
+            if (
+              Array.isArray(parsed) ||
+              (parsed && typeof parsed === "object")
+            ) {
+              merged[upd.question_id] = parsed;
+              usedParsed = true;
+            }
+          } catch {}
+          if (!usedParsed) {
+            merged[upd.question_id] = upd.new_value;
+          }
+          pendingIds.add(upd.question_id);
+        }
+      } catch (e) {
+        console.error("Failed to load pending answer updates:", e);
+      }
+
       setAnswers(merged);
       setAnswerIds(ids);
       setSurveyIds(sIds);
       setItemNames(iNames);
+      setPendingQuestionIds(pendingIds);
       setHasSurvey(foundRemote);
       setLoadingAnswers(false);
     })();
-  }, [activeComponent, producerId, projectId, currentUserId, fetchSurveyResults, refreshKey]);
+  }, [
+    activeComponent,
+    producerId,
+    projectId,
+    currentUserId,
+    fetchSurveyResults,
+    refreshKey,
+  ]);
 
   // Check if method already applied (for apply/re-apply guard)
   useEffect(() => {
@@ -390,6 +473,7 @@ export function PersonalInfoTab({
           q.question_type_id,
           itemNames[q.id] ?? null,
         ),
+        isPending: pendingQuestionIds.has(q.id),
       });
     });
 
@@ -409,7 +493,15 @@ export function PersonalInfoTab({
     }
 
     setSavedAnswers(display);
-  }, [localQuestions, answers, questionDetails, getCanonicalTypeName, showSheet, itemNames]);
+  }, [
+    localQuestions,
+    answers,
+    questionDetails,
+    getCanonicalTypeName,
+    showSheet,
+    itemNames,
+    pendingQuestionIds,
+  ]);
 
   const handleApply = useCallback(() => {
     if (!activeComponent) return;
@@ -479,7 +571,10 @@ export function PersonalInfoTab({
       }));
 
       // Build sync payload — multi-select uses nested `answers` array format
-      const syncAnswers: ({ question_id: number; answer_value: string } | { question_id: number; answers: { answer_value: string }[] })[] = [];
+      const syncAnswers: (
+        | { question_id: number; answer_value: string }
+        | { question_id: number; answers: { answer_value: string }[] }
+      )[] = [];
       for (const row of answerRows) {
         try {
           const parsed = JSON.parse(row.value ?? "");
@@ -551,21 +646,62 @@ export function PersonalInfoTab({
       setRefreshKey((k) => k + 1);
     } catch (error) {
       console.error("Failed to save answers:", error);
-      showAlert({ title: "Error", message: "No se pudieron guardar las respuestas.", type: "error" });
+      showAlert({
+        title: "Error",
+        message: "No se pudieron guardar las respuestas.",
+        type: "error",
+      });
     }
-  }, [answers, activeComponent, producerId, projectId, currentUserId, showAlert]);
+  }, [
+    answers,
+    activeComponent,
+    producerId,
+    projectId,
+    currentUserId,
+    showAlert,
+  ]);
 
-  // Edit single answer
+  // Edit single answer — for dependent_list parents, also include child questions
   const handleEditPress = useCallback(
     (questionId: number) => {
       const question = localQuestions.find((q) => q.id === questionId);
       if (!question) return;
 
+      const typeName = getCanonicalTypeName(question.question_type_id);
+      let questionsForEdit: Question[] = [question];
+
+      if (typeName === "dependent_list") {
+        const detail = questionDetails[question.id] as any;
+        const items: any[] =
+          detail?.items ??
+          detail?.options ??
+          detail?.data?.items ??
+          detail?.data?.options ??
+          detail?.data ??
+          [];
+        const childIds = new Set<number>();
+        if (Array.isArray(items)) {
+          for (const opt of items) {
+            if (opt?.other_question_id) childIds.add(Number(opt.other_question_id));
+          }
+        }
+        const childQuestions = localQuestions.filter((q) => childIds.has(q.id));
+        questionsForEdit = [question, ...childQuestions];
+      }
+
+      const initialAnswers: Record<number, any> = {};
+      for (const q of questionsForEdit) {
+        if (answers[q.id] !== undefined) {
+          initialAnswers[q.id] = answers[q.id];
+        }
+      }
+
       setEditingQuestion(question);
-      setEditAnswers({ [questionId]: answers[questionId] });
+      setEditQuestions(questionsForEdit);
+      setEditAnswers(initialAnswers);
       setShowSheet(true);
     },
-    [localQuestions, answers],
+    [localQuestions, answers, getCanonicalTypeName, questionDetails],
   );
 
   const handleEditSave = useCallback(async () => {
@@ -574,16 +710,123 @@ export function PersonalInfoTab({
     const surveyId = surveyIds[editingQuestion.id];
     const rawVal = editAnswers[editingQuestion.id];
     const isMultiple = editingQuestion.multiple === true;
+    const typeName = getCanonicalTypeName(editingQuestion.question_type_id);
+    const isDependent = typeName === "dependent_list";
+
+    const detailParent = questionDetails[editingQuestion.id];
+    const requiredChildIds = isDependent
+      ? resolveDependentChildIdsFromDetail(detailParent, rawVal)
+      : [];
+
+    if (isDependent) {
+      for (const cid of requiredChildIds) {
+        if (isSurveyAnswerEmpty(editAnswers[cid])) {
+          showAlert({
+            title: "Respuesta incompleta",
+            message:
+              "Seleccione una respuesta para la pregunta relacionada antes de guardar.",
+            type: "warning",
+          });
+          return;
+        }
+      }
+    }
+
+    // API actual acepta un `child` por PUT; la primera hija activa según la selección.
+    const primaryChildId =
+      requiredChildIds.length > 0 ? requiredChildIds[0] : undefined;
+    const childQuestion =
+      primaryChildId != null
+        ? editQuestions.find((q) => q.id === primaryChildId) ??
+          localQuestions.find((q) => q.id === primaryChildId)
+        : undefined;
+    const childValue =
+      childQuestion != null ? editAnswers[childQuestion.id] : undefined;
+
+    const resolveItemName = (qId: number, val: any): string | null => {
+      const detail = questionDetails[qId] as any;
+      const opts: any[] =
+        detail?.options ?? detail?.items ?? detail?.data?.options ?? detail?.data?.items ?? detail?.data ?? [];
+      if (!Array.isArray(opts) || val == null) return null;
+      const match = findOptionMatchingStoredValue(opts, val);
+      return match?.name ?? null;
+    };
 
     const isOnline = await checkConnectivity();
 
     if (isOnline) {
       try {
-        if (isMultiple && surveyId) {
+        if (isDependent) {
+          const parentValue =
+            typeof rawVal === "object" && rawVal !== null && !Array.isArray(rawVal)
+              ? String(rawVal._main ?? rawVal.value ?? JSON.stringify(rawVal))
+              : String(rawVal ?? "");
+
+          const body: any = { value: parentValue };
+          if (childQuestion && childValue != null) {
+            body.child = {
+              question_id: childQuestion.id,
+              answer_value: String(childValue),
+            };
+          }
+
+          await apiFetch(`/questions-dependent-list/${answerId}`, {
+            method: "PUT",
+            body: JSON.stringify(body),
+          });
+          await deleteAnswerUpdate(answerId);
+
+          setAnswers((prev) => {
+            const next = { ...prev, [editingQuestion.id]: rawVal };
+            const childIdsInEdit = editQuestions
+              .filter((q) => q.id !== editingQuestion.id)
+              .map((q) => q.id);
+            for (const cid of childIdsInEdit) {
+              if (requiredChildIds.includes(cid)) {
+                const cv = editAnswers[cid];
+                if (!isSurveyAnswerEmpty(cv)) next[cid] = cv;
+                else delete next[cid];
+              } else {
+                delete next[cid];
+              }
+            }
+            return next;
+          });
+          setItemNames((prev) => {
+            const next = { ...prev };
+            delete next[editingQuestion.id];
+            const childIdsInEdit = editQuestions
+              .filter((q) => q.id !== editingQuestion.id)
+              .map((q) => q.id);
+            for (const cid of childIdsInEdit) {
+              if (requiredChildIds.includes(cid)) {
+                const cv = editAnswers[cid];
+                const name = !isSurveyAnswerEmpty(cv)
+                  ? resolveItemName(cid, cv)
+                  : null;
+                if (name) next[cid] = name;
+                else delete next[cid];
+              } else {
+                delete next[cid];
+              }
+            }
+            return next;
+          });
+          setPendingQuestionIds((prev) => {
+            const next = new Set(prev);
+            next.delete(editingQuestion.id);
+            for (const cid of requiredChildIds) next.delete(cid);
+            return next;
+          });
+        } else if (isMultiple && surveyId) {
           const values = Array.isArray(rawVal)
             ? rawVal.map((v: any) => ({ answer_value: String(v) }))
             : [{ answer_value: String(rawVal ?? "") }];
           await updateMultipleAnswers(editingQuestion.id, surveyId, values);
+          await deleteAnswerUpdate(answerId);
+          setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
+          setItemNames((prev) => { const next = { ...prev }; delete next[editingQuestion.id]; return next; });
+          setPendingQuestionIds((prev) => { const next = new Set(prev); next.delete(editingQuestion.id); return next; });
         } else {
           const newValue = Array.isArray(rawVal)
             ? rawVal.join(",")
@@ -594,29 +837,126 @@ export function PersonalInfoTab({
             method: "PUT",
             body: JSON.stringify({ value: newValue }),
           });
+          await deleteAnswerUpdate(answerId);
+          setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
+          setItemNames((prev) => { const next = { ...prev }; delete next[editingQuestion.id]; return next; });
+          setPendingQuestionIds((prev) => { const next = new Set(prev); next.delete(editingQuestion.id); return next; });
         }
-        setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
-        setRefreshKey((k) => k + 1);
+
         setShowSheet(false);
         setEditingQuestion(null);
-        showAlert({ title: "Actualizado", message: "La respuesta se actualizó correctamente.", type: "success" });
+        showAlert({
+          title: "Actualizado",
+          message: "La respuesta se actualizó correctamente.",
+          type: "success",
+        });
       } catch (error) {
         console.error("Failed to update answer:", error);
-        showAlert({ title: "Error", message: "No se pudo actualizar la respuesta.", type: "error" });
+        showAlert({
+          title: "Error",
+          message: "No se pudo actualizar la respuesta.",
+          type: "error",
+        });
       }
     } else {
       const pid = Number(producerId);
       const projId = Number(projectId ?? 0);
       const compId = activeComponent?.id ?? 0;
       const userId = currentUserId ?? 0;
-      const newValue = Array.isArray(rawVal)
-        ? rawVal.join(",")
-        : typeof rawVal === "object" && rawVal !== null
-          ? String(rawVal._main ?? rawVal.value ?? JSON.stringify(rawVal))
-          : String(rawVal ?? "");
+
+      const editSerializationCtx = getPrimaryDependentChildSerializationContext(
+        typeName,
+        detailParent,
+        rawVal,
+        editAnswers as Record<number, unknown>,
+      );
+
+      const proposedStored = serializePersonalOfflineUpsert({
+        question: editingQuestion,
+        typeName,
+        rawVal,
+        primaryChildQuestionId: editSerializationCtx.primaryChildQuestionId,
+        rawChildVal: editSerializationCtx.rawChildVal,
+      });
+
+      const baselineRow = baselineAnswersRef.current;
+      const hasServerBaselineForQuestion = Object.prototype.hasOwnProperty.call(
+        baselineRow,
+        editingQuestion.id,
+      );
+
+      if (hasServerBaselineForQuestion) {
+        const baselineRaw = baselineRow[editingQuestion.id];
+        const baseSerializationCtx = getPrimaryDependentChildSerializationContext(
+          typeName,
+          detailParent,
+          baselineRaw,
+          baselineRow as Record<number, unknown>,
+        );
+        const baselineStored = serializePersonalOfflineUpsert({
+          question: editingQuestion,
+          typeName,
+          rawVal: baselineRaw,
+          primaryChildQuestionId: baseSerializationCtx.primaryChildQuestionId,
+          rawChildVal: baseSerializationCtx.rawChildVal,
+        });
+
+        if (
+          offlinePendingValuesAreEquivalent({
+            proposed: proposedStored,
+            baseline: baselineStored,
+            isCommaMultiselect:
+              editingQuestion.multiple === true && typeName !== "dependent_list",
+          })
+        ) {
+          await deleteAnswerUpdate(answerId);
+          const baseAnswers = baselineAnswersRef.current as Record<number, any>;
+          const baseNames = baselineItemNamesRef.current;
+          setAnswers((prev) => {
+            const next = { ...prev };
+            for (const q of editQuestions) {
+              const id = q.id;
+              if (Object.prototype.hasOwnProperty.call(baseAnswers, id)) {
+                next[id] = baseAnswers[id];
+              } else {
+                delete next[id];
+              }
+            }
+            return next;
+          });
+          setItemNames((prev) => {
+            const next = { ...prev };
+            for (const q of editQuestions) {
+              const id = q.id;
+              if (Object.prototype.hasOwnProperty.call(baseNames, id)) {
+                next[id] = baseNames[id] as string | string[] | null;
+              } else {
+                delete next[id];
+              }
+            }
+            return next;
+          });
+          setPendingQuestionIds((prev) => {
+            const next = new Set(prev);
+            for (const q of editQuestions) next.delete(q.id);
+            return next;
+          });
+          useSyncStore.getState().refreshStatus();
+          setShowSheet(false);
+          setEditingQuestion(null);
+          showAlert({
+            title: "Sin cambios pendientes",
+            message:
+              "La respuesta coincidió con la última versión sincronizada. No hay edición pendiente por subir.",
+            type: "success",
+          });
+          return;
+        }
+      }
+
       await upsertAnswerUpdate({
         answer_id: answerId,
-        new_value: newValue,
+        new_value: proposedStored,
         producer_id: pid,
         project_id: projId,
         component_id: compId,
@@ -624,8 +964,56 @@ export function PersonalInfoTab({
         user_id: userId,
         intervention_method_id: PERSONAL_INFO_INTERVENTION_METHOD_ID,
       });
+
+      if (isDependent) {
+        setAnswers((prev) => {
+          const next = { ...prev, [editingQuestion.id]: rawVal };
+          const childIdsInEdit = editQuestions
+            .filter((q) => q.id !== editingQuestion.id)
+            .map((q) => q.id);
+          for (const cid of childIdsInEdit) {
+            if (requiredChildIds.includes(cid)) {
+              const cv = editAnswers[cid];
+              if (!isSurveyAnswerEmpty(cv)) next[cid] = cv;
+              else delete next[cid];
+            } else {
+              delete next[cid];
+            }
+          }
+          return next;
+        });
+        setItemNames((prev) => {
+          const next = { ...prev };
+          delete next[editingQuestion.id];
+          const childIdsInEdit = editQuestions
+            .filter((q) => q.id !== editingQuestion.id)
+            .map((q) => q.id);
+          for (const cid of childIdsInEdit) {
+            if (requiredChildIds.includes(cid)) {
+              const cv = editAnswers[cid];
+              const name = !isSurveyAnswerEmpty(cv)
+                ? resolveItemName(cid, cv)
+                : null;
+              if (name) next[cid] = name;
+              else delete next[cid];
+            } else {
+              delete next[cid];
+            }
+          }
+          return next;
+        });
+        setPendingQuestionIds((prev) => new Set([...prev, editingQuestion.id]));
+      } else {
+        setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
+        setItemNames((prev) => {
+          const next = { ...prev };
+          delete next[editingQuestion.id];
+          return next;
+        });
+        setPendingQuestionIds((prev) => new Set([...prev, editingQuestion.id]));
+      }
+
       useSyncStore.getState().refreshStatus();
-      setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
       setShowSheet(false);
       setEditingQuestion(null);
       showAlert({
@@ -634,7 +1022,22 @@ export function PersonalInfoTab({
         type: "warning",
       });
     }
-  }, [editingQuestion, editAnswers, answerIds, surveyIds, activeComponent, producerId, projectId, currentUserId, showAlert]);
+  }, [
+    editingQuestion,
+    editQuestions,
+    editAnswers,
+    answerIds,
+    surveyIds,
+    activeComponent,
+    producerId,
+    projectId,
+    currentUserId,
+    showAlert,
+    getCanonicalTypeName,
+    questionDetails,
+    updateMultipleAnswers,
+    localQuestions,
+  ]);
 
   if (loadingComponents) {
     return (
@@ -656,11 +1059,16 @@ export function PersonalInfoTab({
     );
   }
 
-  if (loadingAnswers || (!showSheet && Object.keys(answers).length > 0 && savedAnswers.length === 0)) {
+  if (
+    loadingAnswers ||
+    (!showSheet && Object.keys(answers).length > 0 && savedAnswers.length === 0)
+  ) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#1a7a3a" />
-        <ThemedText style={styles.loadingText}>Cargando respuestas...</ThemedText>
+        <ThemedText style={styles.loadingText}>
+          Cargando respuestas...
+        </ThemedText>
       </View>
     );
   }
@@ -692,7 +1100,9 @@ export function PersonalInfoTab({
             type="defaultSemiBold"
             style={styles.applyButtonText}
           >
-            {methodAlreadyApplied ? "Ver / Editar Respuestas" : "Registrar Información"}
+            {methodAlreadyApplied
+              ? "Ver / Editar Respuestas"
+              : "Registrar Información"}
           </ThemedText>
         </TouchableOpacity>
 
@@ -700,7 +1110,9 @@ export function PersonalInfoTab({
           visible={showSheet}
           onClose={handleCloseSheet}
           title={activeComponent.name}
-          questions={localQuestions.length > 0 ? localQuestions : storeQuestions}
+          questions={
+            localQuestions.length > 0 ? localQuestions : storeQuestions
+          }
           answers={answers}
           onAnswerChange={handleAnswerChange}
           onSave={handleSave}
@@ -726,23 +1138,54 @@ export function PersonalInfoTab({
 
           {savedAnswers.length > 0 ? (
             savedAnswers.map((item, index) => (
-              <View key={index} style={styles.answerCard}>
+              <View
+                key={index}
+                style={[
+                  styles.answerCard,
+                  item.isPending && styles.answerCardPending,
+                ]}
+              >
                 <View style={styles.answerHeader}>
                   <ThemedText style={styles.answerQuestion}>
                     {item.questionName}
                   </ThemedText>
-                  {answerIds[item.questionId] != null && (
-                    <TouchableOpacity
-                      style={styles.editButton}
-                      onPress={() => handleEditPress(item.questionId)}
-                      activeOpacity={0.7}
-                    >
-                      <Pencil size={responsiveFont(16)} color="#1a7a3a" />
-                    </TouchableOpacity>
-                  )}
+                  <View style={styles.answerHeaderRight}>
+                    {item.isPending && (
+                      <View style={styles.pendingBadge}>
+                        <ThemedText style={styles.pendingBadgeText}>
+                          PENDIENTE
+                        </ThemedText>
+                      </View>
+                    )}
+                    {answerIds[item.questionId] != null && (
+                      <TouchableOpacity
+                        style={[
+                          styles.editButton,
+                          item.isPending && styles.editButtonPending,
+                        ]}
+                        onPress={() => handleEditPress(item.questionId)}
+                        activeOpacity={0.7}
+                      >
+                        <Pencil
+                          size={responsiveFont(16)}
+                          color={item.isPending ? "#92400e" : "#1a7a3a"}
+                        />
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
-                <View style={styles.answerValueContainer}>
-                  <ThemedText style={styles.answerValue}>
+                <View
+                  style={[
+                    styles.answerValueContainer,
+                    item.isPending && styles.answerValueContainerPending,
+                  ]}
+                >
+                  <ThemedText
+                    style={[
+                      styles.answerValue,
+                      item.isPending && styles.answerValuePending,
+                    ]}
+                  >
                     {item.displayValue}
                   </ThemedText>
                 </View>
@@ -773,29 +1216,69 @@ export function PersonalInfoTab({
                       {expandedCards.has(item.questionId) ? (
                         <ChevronUp size={responsiveFont(16)} color="#1a7a3a" />
                       ) : (
-                        <ChevronDown size={responsiveFont(16)} color="#1a7a3a" />
+                        <ChevronDown
+                          size={responsiveFont(16)}
+                          color="#1a7a3a"
+                        />
                       )}
                     </TouchableOpacity>
 
                     {expandedCards.has(item.questionId) &&
                       item.children.map((child, childIdx) => (
-                        <View key={childIdx} style={styles.childAnswerCard}>
+                        <View
+                          key={childIdx}
+                          style={[
+                            styles.childAnswerCard,
+                            child.isPending && styles.childAnswerCardPending,
+                          ]}
+                        >
                           <View style={styles.answerHeader}>
                             <ThemedText style={styles.childAnswerQuestion}>
                               {child.questionName}
                             </ThemedText>
-                            {answerIds[child.questionId] != null && (
-                              <TouchableOpacity
-                                style={styles.editButton}
-                                onPress={() => handleEditPress(child.questionId)}
-                                activeOpacity={0.7}
-                              >
-                                <Pencil size={responsiveFont(14)} color="#1a7a3a" />
-                              </TouchableOpacity>
-                            )}
+                            <View style={styles.answerHeaderRight}>
+                              {child.isPending && (
+                                <View style={styles.pendingBadge}>
+                                  <ThemedText style={styles.pendingBadgeText}>
+                                    PENDIENTE
+                                  </ThemedText>
+                                </View>
+                              )}
+                              {answerIds[child.questionId] != null && (
+                                <TouchableOpacity
+                                  style={[
+                                    styles.editButton,
+                                    child.isPending && styles.editButtonPending,
+                                  ]}
+                                  onPress={() =>
+                                    handleEditPress(child.questionId)
+                                  }
+                                  activeOpacity={0.7}
+                                >
+                                  <Pencil
+                                    size={responsiveFont(14)}
+                                    color={
+                                      child.isPending ? "#92400e" : "#1a7a3a"
+                                    }
+                                  />
+                                </TouchableOpacity>
+                              )}
+                            </View>
                           </View>
-                          <View style={styles.childAnswerValueContainer}>
-                            <ThemedText style={styles.childAnswerValue}>
+                          <View
+                            style={[
+                              styles.childAnswerValueContainer,
+                              child.isPending &&
+                                styles.childAnswerValueContainerPending,
+                            ]}
+                          >
+                            <ThemedText
+                              style={[
+                                styles.childAnswerValue,
+                                child.isPending &&
+                                  styles.childAnswerValuePending,
+                              ]}
+                            >
                               {child.displayValue}
                             </ThemedText>
                           </View>
@@ -826,7 +1309,7 @@ export function PersonalInfoTab({
             editingQuestion.name ??
             "Editar respuesta"
           }
-          questions={[editingQuestion]}
+          questions={editQuestions}
           answers={editAnswers}
           onAnswerChange={handleEditAnswerChange}
           onSave={handleEditSave}
@@ -922,11 +1405,38 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
+  answerCardPending: {
+    backgroundColor: "#fffbeb",
+    borderWidth: 1.5,
+    borderColor: "#f59e0b",
+    shadowColor: "#f59e0b",
+    shadowOpacity: 0.15,
+  },
   answerHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: widthScale(8),
+  },
+  answerHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: widthScale(6),
+    flexShrink: 0,
+  },
+  pendingBadge: {
+    backgroundColor: "#fef3c7",
+    borderRadius: widthScale(6),
+    borderWidth: 1,
+    borderColor: "#f59e0b",
+    paddingVertical: verticalScale(2),
+    paddingHorizontal: widthScale(6),
+  },
+  pendingBadgeText: {
+    fontSize: responsiveFont(10),
+    fontWeight: "700",
+    color: "#92400e",
+    letterSpacing: 0.5,
   },
   answerQuestion: {
     flex: 1,
@@ -942,15 +1452,24 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  editButtonPending: {
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+  },
   answerValueContainer: {
     backgroundColor: "rgba(26, 122, 58, 0.12)",
     borderRadius: widthScale(8),
     paddingVertical: verticalScale(10),
     paddingHorizontal: widthScale(12),
   },
+  answerValueContainerPending: {
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+  },
   answerValue: {
     fontSize: responsiveFont(16),
     fontWeight: "500",
+  },
+  answerValuePending: {
+    color: "#92400e",
   },
   accordionToggle: {
     flexDirection: "row",
@@ -972,6 +1491,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(26, 122, 58, 0.04)",
     borderRadius: widthScale(8),
   },
+  childAnswerCardPending: {
+    backgroundColor: "#fffbeb",
+    borderWidth: 1.5,
+    borderColor: "#f59e0b",
+  },
   childAnswerQuestion: {
     flex: 1,
     fontSize: responsiveFont(14),
@@ -985,9 +1509,15 @@ const styles = StyleSheet.create({
     paddingVertical: verticalScale(8),
     paddingHorizontal: widthScale(10),
   },
+  childAnswerValueContainerPending: {
+    backgroundColor: "rgba(245, 158, 11, 0.12)",
+  },
   childAnswerValue: {
     fontSize: responsiveFont(15),
     fontWeight: "500",
+  },
+  childAnswerValuePending: {
+    color: "#92400e",
   },
   noAnswersContainer: {
     alignItems: "center",

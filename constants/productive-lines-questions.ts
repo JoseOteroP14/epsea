@@ -1,17 +1,28 @@
 // Backward compat alias for repository
 export type LineAnswers = Record<string, string>;
 
-export type ActivityType = 'agricola' | 'pecuaria' | 'forestal' | 'pesca' | 'acuicola';
+export type ActivityType =
+  | "agricola"
+  | "pecuaria"
+  | "forestal"
+  | "pesca"
+  | "acuicola";
 
 export const ACTIVITY_TYPE_LABELS: Record<ActivityType, string> = {
-  agricola: 'Agrícola',
-  pecuaria: 'Pecuaria',
-  forestal: 'Forestal',
-  pesca: 'Pesca',
-  acuicola: 'Acuícola',
+  agricola: "Agrícola",
+  pecuaria: "Pecuaria",
+  forestal: "Forestal",
+  pesca: "Pesca",
+  acuicola: "Acuícola",
 };
 
-export const ACTIVITY_TYPES: ActivityType[] = ['agricola', 'pecuaria', 'forestal', 'pesca', 'acuicola'];
+export const ACTIVITY_TYPES: ActivityType[] = [
+  "agricola",
+  "pecuaria",
+  "forestal",
+  "pesca",
+  "acuicola",
+];
 
 export const ACTIVITY_IDS: Record<ActivityType, number> = {
   agricola: 1,
@@ -44,7 +55,7 @@ export interface UnitOfMeasureItem {
 }
 
 export interface UnitConfig {
-  mode: 'fixed' | 'select';
+  mode: "fixed" | "select";
   value?: string;
   options?: string[];
 }
@@ -55,24 +66,58 @@ export const LIVESTOCK_UNIT_MAP: Record<string, UnitConfig> = {
   "Bovino - Carne": { mode: "fixed", value: "Kilogramos en pie al sacrificio" },
   "Bovino - Carne y leche (doble propósito)": {
     mode: "select",
-    options: ["Litros / día", "Kilogramos en pie al destete", "Kilogramos en pie al sacrificio"],
+    options: [
+      "Litros / día",
+      "Kilogramos en pie al destete",
+      "Kilogramos en pie al sacrificio",
+    ],
   },
   "Búfalo - Carne": { mode: "fixed", value: "Kilogramos en pie al sacrificio" },
   "Búfalo - Leche": { mode: "fixed", value: "Litros / día" },
-  "Avícola - Gallina Ponedora - Levante": { mode: "fixed", value: "Número de aves" },
-  "Avícola - Gallina Ponedora - Ponedora": { mode: "fixed", value: "Huevos / día (Promedio)" },
-  "Avícola - Pollo engorde": { mode: "select", options: ["Kilogramos de carne", "Número de aves"] },
-  "Avícola - Aves de Traspatio - Pato": { mode: "fixed", value: "Número de aves" },
-  "Avícola - Aves de Traspatio - Ganzo": { mode: "fixed", value: "Número de aves" },
-  "Avícola - Aves de Traspatio - Pavos": { mode: "fixed", value: "Número de aves" },
-  "Avícola - Aves de Traspatio - Codornices": { mode: "fixed", value: "Kilogramos de carne" },
+  "Avícola - Gallina Ponedora - Levante": {
+    mode: "fixed",
+    value: "Número de aves",
+  },
+  "Avícola - Gallina Ponedora - Ponedora": {
+    mode: "fixed",
+    value: "Huevos / día (Promedio)",
+  },
+  "Avícola - Pollo engorde": {
+    mode: "select",
+    options: ["Kilogramos de carne", "Número de aves"],
+  },
+  "Avícola - Aves de Traspatio - Pato": {
+    mode: "fixed",
+    value: "Número de aves",
+  },
+  "Avícola - Aves de Traspatio - Ganzo": {
+    mode: "fixed",
+    value: "Número de aves",
+  },
+  "Avícola - Aves de Traspatio - Pavos": {
+    mode: "fixed",
+    value: "Número de aves",
+  },
+  "Avícola - Aves de Traspatio - Codornices": {
+    mode: "fixed",
+    value: "Kilogramos de carne",
+  },
   "Avícola - Aves de Traspatio - Gallinas de Campo": {
     mode: "select",
     options: ["Número de aves", "Huevos / día (Promedio)"],
   },
-  "Apicultura - Miel": { mode: "select", options: ["Kilogramo", "Número de colmenas"] },
-  "Apicultura - Polen": { mode: "select", options: ["Kilogramo", "Número de colmenas"] },
-  "Apicultura - Cera": { mode: "select", options: ["Kilogramo", "Número de colmenas"] },
+  "Apicultura - Miel": {
+    mode: "select",
+    options: ["Kilogramo", "Número de colmenas"],
+  },
+  "Apicultura - Polen": {
+    mode: "select",
+    options: ["Kilogramo", "Número de colmenas"],
+  },
+  "Apicultura - Cera": {
+    mode: "select",
+    options: ["Kilogramo", "Número de colmenas"],
+  },
   "Conejos - Carne": { mode: "fixed", value: "Kilogramo" },
   "Conejos - Piel": { mode: "fixed", value: "Número de pieles" },
   "Cuy - Carne": { mode: "fixed", value: "Kilogramo" },
@@ -80,22 +125,44 @@ export const LIVESTOCK_UNIT_MAP: Record<string, UnitConfig> = {
   "Ovino - Lana": { mode: "fixed", value: "Kilogramos promedio por animal" },
   "Ovino - Carne y lana (doble propósito)": {
     mode: "select",
-    options: ["Kilogramos en pie al sacrificio", "Kilogramos promedio por animal"],
+    options: [
+      "Kilogramos en pie al sacrificio",
+      "Kilogramos promedio por animal",
+    ],
   },
   "Caprino - Leche": { mode: "fixed", value: "Litros / día" },
-  "Caprino - Carne": { mode: "fixed", value: "Kilogramos en pie al sacrificio" },
+  "Caprino - Carne": {
+    mode: "fixed",
+    value: "Kilogramos en pie al sacrificio",
+  },
   "Caprino - Carne y lana (doble propósito)": {
     mode: "select",
     options: ["Litros / día", "Kilogramos en pie al sacrificio"],
   },
-  "Mulares/Asnales/Equinos - Carne": { mode: "fixed", value: "Kilogramos en pie al sacrificio" },
-  "Mulares/Asnales/Equinos - Trabajo": { mode: "fixed", value: "Número de animales" },
-  "Mulares/Asnales/Equinos - Exposición": { mode: "fixed", value: "Andares (animales de exposición)" },
-  "Zoocría - Babillas": { mode: "select", options: ["Kilogramos carne", "Kilogramos piel"] },
+  "Mulares/Asnales/Equinos - Carne": {
+    mode: "fixed",
+    value: "Kilogramos en pie al sacrificio",
+  },
+  "Mulares/Asnales/Equinos - Trabajo": {
+    mode: "fixed",
+    value: "Número de animales",
+  },
+  "Mulares/Asnales/Equinos - Exposición": {
+    mode: "fixed",
+    value: "Andares (animales de exposición)",
+  },
+  "Zoocría - Babillas": {
+    mode: "select",
+    options: ["Kilogramos carne", "Kilogramos piel"],
+  },
   "Zoocría - Ofidios": { mode: "fixed", value: "Número de animales" },
   "Avestruces - Exhibición": {
     mode: "select",
-    options: ["Número de animales", "Kilogramos en pie al sacrificio", "Huevos / año"],
+    options: [
+      "Número de animales",
+      "Kilogramos en pie al sacrificio",
+      "Huevos / año",
+    ],
   },
   "Chigüiros - Carne": {
     mode: "select",
@@ -117,7 +184,7 @@ export const UNIT_NAME_TO_ID: Record<string, number> = {
   "Huevos / día (Promedio)": 5,
   "Kilogramos de carne": 6,
   "Número de colmenas": 7,
-  "Kilogramo": 8,
+  Kilogramo: 8,
   "Número de pieles": 9,
   "Kilogramos promedio por animal": 10,
   "Número de animales": 11,
@@ -190,23 +257,66 @@ export interface AquacultureLineForm {
 // ── Factory functions ──────────────────────────────────────────────────────────
 
 export function createEmptyAgriculturalForm(): AgriculturalLineForm {
-  return { line_id: null, line_name: '', area: '', harvests: '', production: '', date: '' };
+  return {
+    line_id: null,
+    line_name: "",
+    area: "",
+    harvests: "",
+    production: "",
+    date: "",
+  };
 }
 
 export function createEmptyLivestockForm(): LivestockLineForm {
-  return { line_id: null, line_name: '', unit_of_measure: '', area: '', cycles: '', production: '', date: '' };
+  return {
+    line_id: null,
+    line_name: "",
+    unit_of_measure: "",
+    area: "",
+    cycles: "",
+    production: "",
+    date: "",
+  };
 }
 
 export function createEmptyForestForm(): ForestLineForm {
-  return { line_id: null, line_name: '', unit_of_measure_id: '', unit_of_measure_name: '', area: '', cycles: '', production: '', date: '' };
+  return {
+    line_id: null,
+    line_name: "",
+    unit_of_measure_id: "",
+    unit_of_measure_name: "",
+    area: "",
+    cycles: "",
+    production: "",
+    date: "",
+  };
 }
 
 export function createEmptyFishingForm(): FishingLineForm {
-  return { type_id: '', type_name: '', fishing_area_id: '', fishing_area_name: '', species: [], weight: '', date: '' };
+  return {
+    type_id: "",
+    type_name: "",
+    fishing_area_id: "",
+    fishing_area_name: "",
+    species: [],
+    weight: "",
+    date: "",
+  };
 }
 
 export function createEmptyAquacultureForm(): AquacultureLineForm {
-  return { type_id: '', type_name: '', area_crop_id: '', area_crop_name: '', area_value_crop: '', number_of_animals: '', cycles: '', production: '', date: '', species: [] };
+  return {
+    type_id: "",
+    type_name: "",
+    area_crop_id: "",
+    area_crop_name: "",
+    area_value_crop: "",
+    number_of_animals: "",
+    cycles: "",
+    production: "",
+    date: "",
+    species: [],
+  };
 }
 
 // ── Existing line types from GET endpoints ────────────────────────────────────

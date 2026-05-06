@@ -386,10 +386,17 @@ export const useCharacterizationStore = create<CharacterizationState>(
       });
     },
 
-    updateDependentListAnswer: async (answerId, value, _child) => {
-      await apiFetch(`/surveys/update-answer/${answerId}`, {
+    updateDependentListAnswer: async (answerId, value, child) => {
+      const body: any = { value };
+      if (child) {
+        body.child = {
+          question_id: child.question_id,
+          answer_value: child.value,
+        };
+      }
+      await apiFetch(`/questions-dependent-list/${answerId}`, {
         method: "PUT",
-        body: JSON.stringify({ value }),
+        body: JSON.stringify(body),
       });
     },
 
