@@ -15,6 +15,7 @@ import {
     saveAnswersBatch,
 } from "@/utils/database/repositories/answer-repository";
 import {
+    getAnswerUpdatesByProducerProject,
     upsertAnswerUpdate,
 } from "@/utils/database/repositories/answer-update-repository";
 import { enqueue } from "@/utils/database/repositories/sync-repository";
@@ -46,6 +47,7 @@ interface DisplayAnswer {
   questionId: number;
   questionName: string;
   displayValue: string;
+  isPending?: boolean;
 }
 
 function resolveDisplayValue(
@@ -159,6 +161,7 @@ export function CharacterizationTab({
   const [refreshKey, setRefreshKey] = useState(0);
   const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
   const [itemNames, setItemNames] = useState<Record<number, string | string[] | null>>({});
+  const [pendingQuestionIds, setPendingQuestionIds] = useState<Set<number>>(new Set());
 
   // Local copy of characterization questions (survives tab switches)
   const [localQuestions, setLocalQuestions] = useState<Question[]>([]);
@@ -276,10 +279,24 @@ export function CharacterizationTab({
         foundRemote = true;
       }
 
+      // 3. Overlay offline pending answer_updates (edits saved without internet)
+      //    These take top priority and mark those questions as pending
+      const pendingIds = new Set<number>();
+      try {
+        const updates = await getAnswerUpdatesByProducerProject(pid, projId, currentUserId);
+        for (const upd of updates) {
+          merged[upd.question_id] = upd.new_value;
+          pendingIds.add(upd.question_id);
+        }
+      } catch (e) {
+        console.error("Failed to load pending answer updates:", e);
+      }
+
       setAnswers(merged);
       setAnswerIds(ids);
       setSurveyIds(sIds);
       setItemNames(iNames);
+      setPendingQuestionIds(pendingIds);
       setHasSurvey(foundRemote);
       setLoadingAnswers(false);
     })();
@@ -341,10 +358,11 @@ export function CharacterizationTab({
           q.question_type_id,
           itemNames[q.id],
         ),
+        isPending: pendingQuestionIds.has(q.id),
       });
     });
     setSavedAnswers(display);
-  }, [localQuestions, answers, questionDetails, getCanonicalTypeName, showSheet, itemNames]);
+  }, [localQuestions, answers, questionDetails, getCanonicalTypeName, showSheet, itemNames, pendingQuestionIds]);
 
   const handleApply = useCallback(() => {
     if (!activeComponent) return;
@@ -554,7 +572,9 @@ export function CharacterizationTab({
         intervention_method_id: CHARACTERIZATION_INTERVENTION_METHOD_ID,
       });
       useSyncStore.getState().refreshStatus();
-      setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
+      const qId = editingQuestion.id;
+      setAnswers((prev) => ({ ...prev, [qId]: rawVal }));
+      setPendingQuestionIds((prev) => new Set([...prev, qId]));
       setShowSheet(false);
       setEditingQuestion(null);
       showAlert({
@@ -657,23 +677,33 @@ export function CharacterizationTab({
 
           {savedAnswers.length > 0 ? (
             savedAnswers.map((item, index) => (
-              <View key={index} style={styles.answerCard}>
+              <View
+                key={index}
+                style={[styles.answerCard, item.isPending && styles.answerCardPending]}
+              >
                 <View style={styles.answerHeader}>
                   <ThemedText style={styles.answerQuestion}>
                     {item.questionName}
                   </ThemedText>
-                  {answerIds[item.questionId] != null && (
-                    <TouchableOpacity
-                      style={styles.editButton}
-                      onPress={() => handleEditPress(item.questionId)}
-                      activeOpacity={0.7}
-                    >
-                      <Pencil size={responsiveFont(16)} color="#1a7a3a" />
-                    </TouchableOpacity>
-                  )}
+                  <View style={styles.answerHeaderRight}>
+                    {item.isPending && (
+                      <View style={styles.pendingBadge}>
+                        <ThemedText style={styles.pendingBadgeText}>PENDIENTE</ThemedText>
+                      </View>
+                    )}
+                    {answerIds[item.questionId] != null && (
+                      <TouchableOpacity
+                        style={[styles.editButton, item.isPending && styles.editButtonPending]}
+                        onPress={() => handleEditPress(item.questionId)}
+                        activeOpacity={0.7}
+                      >
+                        <Pencil size={responsiveFont(16)} color={item.isPending ? "#92400e" : "#1a7a3a"} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
-                <View style={styles.answerValueContainer}>
-                  <ThemedText style={styles.answerValue}>
+                <View style={[styles.answerValueContainer, item.isPending && styles.answerValueContainerPending]}>
+                  <ThemedText style={[styles.answerValue, item.isPending && styles.answerValuePending]}>
                     {item.displayValue}
                   </ThemedText>
                 </View>
@@ -792,17 +822,44 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
+  answerCardPending: {
+    backgroundColor: "#fffbeb",
+    borderWidth: 1.5,
+    borderColor: "#f59e0b",
+    shadowColor: "#f59e0b",
+    shadowOpacity: 0.15,
+  },
   answerHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: widthScale(8),
   },
+  answerHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: widthScale(6),
+    flexShrink: 0,
+  },
   answerQuestion: {
     flex: 1,
     fontSize: responsiveFont(15),
     fontWeight: "600",
     marginBottom: verticalScale(8),
+  },
+  pendingBadge: {
+    backgroundColor: "#fef3c7",
+    borderRadius: widthScale(6),
+    borderWidth: 1,
+    borderColor: "#f59e0b",
+    paddingVertical: verticalScale(2),
+    paddingHorizontal: widthScale(6),
+  },
+  pendingBadgeText: {
+    fontSize: responsiveFont(10),
+    fontWeight: "700",
+    color: "#92400e",
+    letterSpacing: 0.5,
   },
   editButton: {
     width: widthScale(32),
@@ -812,15 +869,24 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  editButtonPending: {
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+  },
   answerValueContainer: {
     backgroundColor: "rgba(26, 122, 58, 0.12)",
     borderRadius: widthScale(8),
     paddingVertical: verticalScale(10),
     paddingHorizontal: widthScale(12),
   },
+  answerValueContainerPending: {
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+  },
   answerValue: {
     fontSize: responsiveFont(16),
     fontWeight: "500",
+  },
+  answerValuePending: {
+    color: "#92400e",
   },
   noAnswersContainer: {
     alignItems: "center",

@@ -66,6 +66,20 @@ export async function deleteAnswerUpdate(answerId: number): Promise<void> {
   );
 }
 
+export async function getAnswerUpdatesByProducerProject(
+  producerId: number,
+  projectId: number,
+  userId: number,
+): Promise<AnswerUpdateRow[]> {
+  const db = getDb();
+  return db.getAllAsync<AnswerUpdateRow>(
+    "SELECT * FROM answer_updates WHERE producer_id = ? AND project_id = ? AND user_id = ? ORDER BY created_at ASC",
+    producerId,
+    projectId,
+    userId,
+  );
+}
+
 export async function getPendingAnswerUpdateCount(userId?: number): Promise<number> {
   const db = getDb();
   if (userId != null) {

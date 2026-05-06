@@ -335,8 +335,10 @@ export const useCharacterizationStore = create<CharacterizationState>(
         // The API returns questions with nested `answers` arrays:
         //   { id, description, answers: [{ id, survey_id, question_id, value }] }
         // Flatten into SurveyResultItem[] expected by the tabs.
+        // Sort by `order` first — Hermes (APK) does not guarantee JSON key/array order.
+        const sortedData = [...rawData].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
         const flattened: SurveyResultItem[] = [];
-        for (const item of rawData) {
+        for (const item of sortedData) {
           const nestedAnswers = item.answers;
           if (Array.isArray(nestedAnswers) && nestedAnswers.length > 0) {
             for (const ans of nestedAnswers) {
