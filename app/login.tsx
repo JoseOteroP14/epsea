@@ -9,6 +9,7 @@ import {
   verticalScale,
   widthScale,
 } from "@/utils/responsive";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -43,6 +44,7 @@ function normalizeName(value?: string | null): string | undefined {
 export default function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncStage, setSyncStage] = useState("");
@@ -297,17 +299,39 @@ export default function LoginScreen() {
                 </View>
 
                 <View style={styles.inputWrapper}>
-                  <TextInput
-                    ref={passwordRef}
-                    style={styles.input}
-                    placeholder="Contraseña"
-                    placeholderTextColor="rgba(0,0,0,0.35)"
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry
-                    returnKeyType="done"
-                    onSubmitEditing={handleLogin}
-                  />
+                  <View style={styles.passwordRow}>
+                    <TextInput
+                      ref={passwordRef}
+                      style={[styles.input, styles.passwordField]}
+                      placeholder="Contraseña"
+                      placeholderTextColor="rgba(0,0,0,0.35)"
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry={!passwordVisible}
+                      returnKeyType="done"
+                      onSubmitEditing={handleLogin}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    <TouchableOpacity
+                      style={styles.passwordToggle}
+                      onPress={() => setPasswordVisible((v) => !v)}
+                      activeOpacity={0.6}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        passwordVisible
+                          ? "Ocultar contraseña"
+                          : "Mostrar contraseña"
+                      }
+                      hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+                    >
+                      <MaterialIcons
+                        name={passwordVisible ? "visibility-off" : "visibility"}
+                        size={22}
+                        color="rgba(0,0,0,0.45)"
+                      />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
 
@@ -424,6 +448,20 @@ const styles = StyleSheet.create({
     paddingVertical: verticalScale(14),
     fontSize: responsiveFont(17),
     color: "#11181C",
+  },
+  passwordRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  passwordField: {
+    flex: 1,
+    paddingRight: widthScale(6),
+  },
+  passwordToggle: {
+    paddingRight: widthScale(12),
+    paddingVertical: verticalScale(12),
+    justifyContent: "center",
+    alignItems: "center",
   },
   loginButton: {
     borderRadius: 12,

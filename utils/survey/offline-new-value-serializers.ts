@@ -24,17 +24,19 @@ export function serializePersonalOfflineUpsert(params: {
           )
         : String(rawVal ?? "");
 
-    const payload: Record<string, unknown> = { __type: "dependent", value: parentValue };
-    if (
-      primaryChildQuestionId !== undefined &&
-      rawChildVal != null &&
-      String(rawChildVal) !== ""
-    ) {
-      payload.child = {
-        question_id: primaryChildQuestionId,
-        answer_value: String(rawChildVal),
-      };
-    }
+    const payload: Record<string, unknown> = {
+      __type: "dependent",
+      value: parentValue,
+      child:
+        primaryChildQuestionId !== undefined &&
+        rawChildVal != null &&
+        String(rawChildVal) !== ""
+          ? {
+              question_id: primaryChildQuestionId,
+              answer_value: String(rawChildVal),
+            }
+          : null,
+    };
     return JSON.stringify(payload);
   }
 
@@ -56,6 +58,7 @@ export function getPrimaryDependentChildSerializationContext(
   detail: unknown,
   parentRawVal: unknown,
   getAnswersMap: Record<number, unknown>,
+  question?: Question,
 ): {
   primaryChildQuestionId?: number;
   rawChildVal: unknown;
@@ -63,7 +66,7 @@ export function getPrimaryDependentChildSerializationContext(
   if (typeName !== "dependent_list") {
     return { rawChildVal: undefined };
   }
-  const ids = resolveDependentChildIdsFromDetail(detail, parentRawVal);
+  const ids = resolveDependentChildIdsFromDetail(detail, parentRawVal, question);
   const primaryChildQuestionId = ids[0];
   if (primaryChildQuestionId === undefined || primaryChildQuestionId === null) {
     return { rawChildVal: undefined };

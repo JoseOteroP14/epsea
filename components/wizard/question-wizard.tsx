@@ -3,6 +3,7 @@ import { ThemedText } from "@/components/themed-text";
 import type { Question } from "@/schemas/characterization";
 import { useCharacterizationStore } from "@/store/useCharacterizationStore";
 import {
+  getEffectiveDependentListItems,
   isSurveyAnswerEmpty,
   resolveDependentChildIdsFromDetail,
 } from "@/utils/survey/dependent-child-ids";
@@ -67,9 +68,10 @@ export function QuestionWizard({
   const resolveDependentChildIds = useCallback(
     (questionId: number, value: any): number[] => {
       const detail = questionDetails[questionId];
-      return resolveDependentChildIdsFromDetail(detail, value);
+      const q = questionById.get(questionId);
+      return resolveDependentChildIdsFromDetail(detail, value, q);
     },
-    [questionDetails],
+    [questionDetails, questionById],
   );
 
   const dependentChildIds = useMemo(() => {
@@ -85,19 +87,12 @@ export function QuestionWizard({
       const typeName = getTypeName(q.question_type_id);
       if (typeName !== "dependent_list") continue;
 
-      const detail = questionDetails[q.id] as any;
-      const items =
-        detail?.items ??
-        detail?.options ??
-        detail?.data?.items ??
-        detail?.data?.options ??
-        detail?.data ??
-        [];
+      const detail = questionDetails[q.id];
+      const items = getEffectiveDependentListItems(detail, q);
 
-      if (!Array.isArray(items)) continue;
       for (const option of items) {
         if (option?.other_question_id) {
-          ids.add(option.other_question_id);
+          ids.add(Number(option.other_question_id));
         }
       }
     }
@@ -142,7 +137,7 @@ export function QuestionWizard({
       const typeName = getTypeName(q.question_type_id);
       if (typeName !== "dependent_list") continue;
       const detail = questionDetails[q.id];
-      const childIds = resolveDependentChildIdsFromDetail(detail, answers[q.id]);
+      const childIds = resolveDependentChildIdsFromDetail(detail, answers[q.id], q);
       for (const cid of childIds) {
         if (isSurveyAnswerEmpty(answers[cid])) return true;
       }

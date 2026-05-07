@@ -55,6 +55,15 @@ export async function getAllQuestionTypes(): Promise<QuestionType[]> {
 
 // --- Questions ---
 
+/** Sort key for listing: API `order` in raw_json wins, else DB sort_order column, else 0. */
+function effectiveQuestionListOrder(question: Question, rowSortOrder: number): number {
+  const fromJson = Number(question.order);
+  if (Number.isFinite(fromJson)) return fromJson;
+  const fromRow = Number(rowSortOrder);
+  if (Number.isFinite(fromRow)) return fromRow;
+  return 0;
+}
+
 export async function upsertQuestions(questions: Question[]): Promise<void> {
   const db = getDb();
   for (const q of questions) {
@@ -76,11 +85,20 @@ export async function getQuestionsByComponent(
   componentId: number,
 ): Promise<Question[]> {
   const db = getDb();
-  const rows = await db.getAllAsync<{ raw_json: string }>(
-    "SELECT raw_json FROM questions WHERE component_id = ? ORDER BY sort_order",
+  // Many seeded rows share sort_order=0; SQLite does not guarantee order among ties, so APK vs dev can differ.
+  const rows = await db.getAllAsync<{ raw_json: string; sort_order: number }>(
+    `SELECT raw_json, sort_order FROM questions
+     WHERE component_id = ?
+     ORDER BY sort_order ASC, id ASC`,
     componentId,
   );
-  return rows.map((r) => JSON.parse(r.raw_json) as Question);
+  const parsed = rows.map((r) => {
+    const q = JSON.parse(r.raw_json) as Question;
+    return { q, order: effectiveQuestionListOrder(q, r.sort_order) };
+  });
+  // Prefer API order from JSON; tie-break by id so order is identical on Hermes/APK and dev.
+  parsed.sort((a, b) => a.order - b.order || (a.q.id ?? 0) - (b.q.id ?? 0));
+  return parsed.map(({ q }) => q);
 }
 
 export async function getQuestionById(

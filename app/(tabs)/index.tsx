@@ -261,6 +261,7 @@ export default function HomeScreen() {
         dark: "#0a1a10"
       }}
       headerTitle={extensionistDisplayName}
+      centerContentVertical
       headerImage={
         <View style={styles.headerActionsRow}>
           <TouchableOpacity

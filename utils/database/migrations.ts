@@ -402,6 +402,248 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 14,
+    up: async (db) => {
+      const COMPONENT_ID = 5;
+
+      const q13Payload = {
+        id: 13,
+        component_id: COMPONENT_ID,
+        question_type_id: 5,
+        description:
+          "¿En qué grupo del Sisben se encuentra ubicado?",
+        active: true,
+        multiple: false,
+        required: true,
+        levels: null,
+        maxlength: null,
+        field_innova_id: 12,
+        question_parent_id: null,
+        question_type_name: "LISTA",
+        component_name: "CARACTERIZACIÓN",
+        field_innova_name: "sisben_level",
+        options: [
+          {
+            id: 49,
+            question_id: 13,
+            name: "Grupo A = Pobreza extrema A1 a A5",
+            value: "1",
+            other_question_id: null,
+          },
+          {
+            id: 50,
+            question_id: 13,
+            name: "Grupo B = Pobreza moderada B1 a B7",
+            value: "2",
+            other_question_id: null,
+          },
+          {
+            id: 51,
+            question_id: 13,
+            name: "Grupo C = Vulnerable C1 a C18",
+            value: "3",
+            other_question_id: null,
+          },
+        ],
+        intervention_method_id: null,
+        intervention_method_name: null,
+        order: 2,
+        name: "¿En qué grupo del Sisben se encuentra ubicado?",
+        is_required: true,
+      };
+
+      const q56Payload = {
+        id: 56,
+        component_id: COMPONENT_ID,
+        question_type_id: 6,
+        description: "¿Cuenta con Sisben?",
+        active: true,
+        multiple: false,
+        required: true,
+        levels: null,
+        maxlength: null,
+        field_innova_id: 11,
+        question_parent_id: null,
+        question_type_name: "LISTA DEPENDIENTE",
+        component_name: "CARACTERIZACIÓN",
+        field_innova_name: "sisben",
+        options: [
+          {
+            id: 206,
+            question_id: 56,
+            name: "SI",
+            value: "1",
+            other_question_id: 13,
+          },
+          {
+            id: 207,
+            question_id: 56,
+            name: "NO",
+            value: "2",
+            other_question_id: null,
+          },
+        ],
+        intervention_method_id: null,
+        intervention_method_name: null,
+        order: 1,
+        name: "¿Cuenta con Sisben?",
+        is_required: true,
+      };
+
+      await db.runAsync(
+        `INSERT OR REPLACE INTO questions (id, name, component_id, question_type_id, is_required, sort_order, raw_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          13,
+          q13Payload.name ?? "",
+          COMPONENT_ID,
+          5,
+          1,
+          2,
+          JSON.stringify(q13Payload),
+        ],
+      );
+
+      await db.runAsync(
+        `INSERT OR REPLACE INTO questions (id, name, component_id, question_type_id, is_required, sort_order, raw_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          56,
+          q56Payload.name ?? "",
+          COMPONENT_ID,
+          6,
+          1,
+          1,
+          JSON.stringify(q56Payload),
+        ],
+      );
+
+      await db.runAsync(
+        `INSERT OR REPLACE INTO question_details (question_id, type_name, raw_json)
+         VALUES (?, 'lista dependiente', ?)`,
+        [
+          56,
+          JSON.stringify({
+            items: [
+              {
+                id: 206,
+                question_id: 56,
+                name: "SI",
+                value: "1",
+                other_question_id: 13,
+              },
+              {
+                id: 207,
+                question_id: 56,
+                name: "NO",
+                value: "2",
+                other_question_id: null,
+              },
+            ],
+          }),
+        ],
+      );
+
+      await db.runAsync(
+        `INSERT OR REPLACE INTO question_details (question_id, type_name, raw_json)
+         VALUES (?, 'lista', ?)`,
+        [
+          13,
+          JSON.stringify({
+            options: [
+              {
+                id: 49,
+                question_id: 13,
+                name: "Grupo A = Pobreza extrema A1 a A5",
+                value: "1",
+                other_question_id: null,
+              },
+              {
+                id: 50,
+                question_id: 13,
+                name: "Grupo B = Pobreza moderada B1 a B7",
+                value: "2",
+                other_question_id: null,
+              },
+              {
+                id: 51,
+                question_id: 13,
+                name: "Grupo C = Vulnerable C1 a C18",
+                value: "3",
+                other_question_id: null,
+              },
+            ],
+          }),
+        ],
+      );
+
+      await db.runAsync(
+        `INSERT OR REPLACE INTO innova_fields (id, name, field_type, raw_json) VALUES (?, ?, ?, ?)`,
+        [
+          11,
+          "sisben",
+          null,
+          JSON.stringify({
+            name: "sisben",
+            id: 11,
+            component_id: COMPONENT_ID,
+          }),
+        ],
+      );
+      await db.runAsync(
+        `INSERT OR REPLACE INTO innova_fields (id, name, field_type, raw_json) VALUES (?, ?, ?, ?)`,
+        [
+          12,
+          "sisben_level",
+          null,
+          JSON.stringify({
+            name: "sisben_level",
+            id: 12,
+            component_id: COMPONENT_ID,
+          }),
+        ],
+      );
+    },
+  },
+  {
+    version: 15,
+    up: async (db) => {
+      const COMPONENT_ID = 5;
+      /** Alineado con GET /surveys/.../intervention_method (campo `order`). */
+      const ORDER_BY_ID: Record<number, number> = {
+        56: 1,
+        13: 2,
+        14: 3,
+        15: 4,
+        16: 5,
+      };
+
+      for (const [idStr, ord] of Object.entries(ORDER_BY_ID)) {
+        const id = Number(idStr);
+        const row = await db.getFirstAsync<{ raw_json: string }>(
+          `SELECT raw_json FROM questions WHERE id = ? AND component_id = ?`,
+          id,
+          COMPONENT_ID,
+        );
+        if (!row?.raw_json) continue;
+
+        try {
+          const parsed = JSON.parse(row.raw_json) as Record<string, unknown>;
+          parsed.order = ord;
+          await db.runAsync(
+            `UPDATE questions SET sort_order = ?, raw_json = ? WHERE id = ? AND component_id = ?`,
+            ord,
+            JSON.stringify(parsed),
+            id,
+            COMPONENT_ID,
+          );
+        } catch {
+          // ignorar JSON inválido
+        }
+      }
+    },
+  },
 ];
 
 /**

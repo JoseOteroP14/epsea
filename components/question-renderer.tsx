@@ -15,6 +15,7 @@ import type {
   QuestionTextDetail,
 } from "@/schemas/characterization";
 import { useCharacterizationStore } from "@/store/useCharacterizationStore";
+import { getEffectiveDependentListItems } from "@/utils/survey/dependent-child-ids";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { ChevronDown, Search } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -633,9 +634,10 @@ function DependentListQuestion({
   value: any;
   onChange: (id: number, val: any) => void;
 }) {
-  const raw = detail as any;
-  const items: QuestionDependentListOption[] =
-    detail?.items ?? detail?.options ?? raw?.data?.items ?? raw?.data?.options ?? raw?.data ?? [];
+  const items: QuestionDependentListOption[] = useMemo(
+    () => getEffectiveDependentListItems(detail, question) as QuestionDependentListOption[],
+    [detail, question],
+  );
 
   const mainSelection =
     typeof value === "object" && value !== null && !Array.isArray(value)

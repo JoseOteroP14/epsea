@@ -14,6 +14,8 @@ type Props = PropsWithChildren<{
     headerBackgroundColor: { dark: string; light: string };
     headerTitle?: string;
     noScroll?: boolean;
+    /** When true, main content fills remaining height and is vertically centered. */
+    centerContentVertical?: boolean;
 }>;
 
 export default function StandardView({
@@ -23,6 +25,7 @@ export default function StandardView({
     headerBackgroundColor,
     headerTitle,
     noScroll = false,
+    centerContentVertical = false,
 }: Props) {
     const backgroundColor = useThemeColor({}, 'background');
     const colorScheme = useColorScheme() ?? 'light';
@@ -53,17 +56,28 @@ export default function StandardView({
                 </SafeAreaView>
             </View>
             {noScroll ? (
-                <View style={[styles.scrollView, styles.content]}>
+                <View
+                    style={[
+                        styles.scrollView,
+                        styles.content,
+                        centerContentVertical && styles.contentCenteredFlex,
+                    ]}
+                >
                     {children}
                 </View>
             ) : (
                 <ScrollView
                     style={styles.scrollView}
-                    contentContainerStyle={styles.content}
+                    contentContainerStyle={[
+                        styles.content,
+                        centerContentVertical && styles.contentCentered,
+                    ]}
                     showsVerticalScrollIndicator={false}
                 >
                     {children}
-                    <View style={{ height: verticalScale(100) }} />
+                    {!centerContentVertical ? (
+                        <View style={{ height: verticalScale(100) }} />
+                    ) : null}
                 </ScrollView>
             )}
         </ThemedView>
@@ -114,5 +128,13 @@ const styles = StyleSheet.create({
     content: {
         padding: widthScale(8),
         gap: verticalScale(14),
+    },
+    contentCentered: {
+        flexGrow: 1,
+        justifyContent: 'center',
+    },
+    contentCenteredFlex: {
+        flex: 1,
+        justifyContent: 'center',
     },
 });

@@ -22,6 +22,7 @@ import {
 import { markInterventionMethodApplied } from "@/utils/database/repositories/producer-intervention-repository";
 import { enqueue } from "@/utils/database/repositories/sync-repository";
 import {
+  getEffectiveDependentListItems,
   isSurveyAnswerEmpty,
   resolveDependentChildIdsFromDetail,
 } from "@/utils/survey/dependent-child-ids";
@@ -671,19 +672,11 @@ export function PersonalInfoTab({
       let questionsForEdit: Question[] = [question];
 
       if (typeName === "dependent_list") {
-        const detail = questionDetails[question.id] as any;
-        const items: any[] =
-          detail?.items ??
-          detail?.options ??
-          detail?.data?.items ??
-          detail?.data?.options ??
-          detail?.data ??
-          [];
+        const detail = questionDetails[question.id];
+        const items = getEffectiveDependentListItems(detail, question);
         const childIds = new Set<number>();
-        if (Array.isArray(items)) {
-          for (const opt of items) {
-            if (opt?.other_question_id) childIds.add(Number(opt.other_question_id));
-          }
+        for (const opt of items) {
+          if (opt?.other_question_id) childIds.add(Number(opt.other_question_id));
         }
         const childQuestions = localQuestions.filter((q) => childIds.has(q.id));
         questionsForEdit = [question, ...childQuestions];
@@ -715,7 +708,7 @@ export function PersonalInfoTab({
 
     const detailParent = questionDetails[editingQuestion.id];
     const requiredChildIds = isDependent
-      ? resolveDependentChildIdsFromDetail(detailParent, rawVal)
+      ? resolveDependentChildIdsFromDetail(detailParent, rawVal, editingQuestion)
       : [];
 
     if (isDependent) {
@@ -762,13 +755,23 @@ export function PersonalInfoTab({
               ? String(rawVal._main ?? rawVal.value ?? JSON.stringify(rawVal))
               : String(rawVal ?? "");
 
-          const body: any = { value: parentValue };
-          if (childQuestion && childValue != null) {
-            body.child = {
-              question_id: childQuestion.id,
-              answer_value: String(childValue),
-            };
-          }
+          const body: {
+            value: string;
+            child:
+              | null
+              | { question_id: number; answer_value: string };
+          } = {
+            value: parentValue,
+            child:
+              childQuestion != null &&
+              childValue != null &&
+              !isSurveyAnswerEmpty(childValue)
+                ? {
+                    question_id: childQuestion.id,
+                    answer_value: String(childValue),
+                  }
+                : null,
+          };
 
           await apiFetch(`/questions-dependent-list/${answerId}`, {
             method: "PUT",
@@ -869,6 +872,7 @@ export function PersonalInfoTab({
         detailParent,
         rawVal,
         editAnswers as Record<number, unknown>,
+        editingQuestion,
       );
 
       const proposedStored = serializePersonalOfflineUpsert({
@@ -892,6 +896,7 @@ export function PersonalInfoTab({
           detailParent,
           baselineRaw,
           baselineRow as Record<number, unknown>,
+          editingQuestion,
         );
         const baselineStored = serializePersonalOfflineUpsert({
           question: editingQuestion,

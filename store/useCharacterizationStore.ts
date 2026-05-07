@@ -387,13 +387,21 @@ export const useCharacterizationStore = create<CharacterizationState>(
     },
 
     updateDependentListAnswer: async (answerId, value, child) => {
-      const body: any = { value };
-      if (child) {
-        body.child = {
-          question_id: child.question_id,
-          answer_value: child.value,
-        };
-      }
+      const body: {
+        value: string;
+        child:
+          | null
+          | { question_id: number; answer_value: string };
+      } = {
+        value: String(value ?? ""),
+        child:
+          child != null
+            ? {
+                question_id: child.question_id,
+                answer_value: String(child.value ?? ""),
+              }
+            : null,
+      };
       await apiFetch(`/questions-dependent-list/${answerId}`, {
         method: "PUT",
         body: JSON.stringify(body),

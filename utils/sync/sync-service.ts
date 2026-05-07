@@ -349,8 +349,24 @@ export async function uploadPendingAnswers(
         const parsed = JSON.parse(update.new_value ?? "");
         if (parsed && typeof parsed === "object" && parsed.__type === "dependent") {
           endpoint = `/questions-dependent-list/${update.answer_id}`;
-          body = { value: parsed.value };
-          if (parsed.child) body.child = parsed.child;
+          const rawChild = (parsed as { child?: unknown }).child;
+          body = {
+            value: String((parsed as { value?: unknown }).value ?? ""),
+            child:
+              rawChild != null &&
+              typeof rawChild === "object" &&
+              !Array.isArray(rawChild)
+                ? {
+                    question_id: Number(
+                      (rawChild as { question_id?: unknown }).question_id,
+                    ),
+                    answer_value: String(
+                      (rawChild as { answer_value?: unknown }).answer_value ??
+                        "",
+                    ),
+                  }
+                : null,
+          };
         }
       } catch {}
 
