@@ -3,22 +3,21 @@ import { useAlert } from "@/components/ui/custom-alert";
 import { checkConnectivity } from "@/hooks/use-network";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
-    PROPERTY_INFO_INTERVENTION_METHOD_ID,
     VISIT2_INTERVENTION_METHOD_ID,
-    useCharacterizationStore,
+    useCharacterizationStore
 } from "@/store/useCharacterizationStore";
 import { useProducerStore } from "@/store/useProducerStore";
+import { apiFetch } from "@/utils/api";
+import {
+    markInterventionMethodApplied,
+} from "@/utils/database/repositories/producer-intervention-repository";
 import {
     enqueueVisit2,
     getExistingVisit2FromQueue,
     type LocalPhoto,
-    type Visit2Payload,
     type Visit2MonitoringCommitment,
+    type Visit2Payload,
 } from "@/utils/database/repositories/visit2-repository";
-import {
-    markInterventionMethodApplied,
-} from "@/utils/database/repositories/producer-intervention-repository";
-import { apiFetch } from "@/utils/api";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { getStoredToken } from "@/utils/secure-storage";
 import {
@@ -253,6 +252,94 @@ async function getVisit1ForVisit2(
     }
 }
 
+/** IDs de evento en `/objetives/event/:eventId/line/:lineId` (backend). */
+const VISIT_OBJECTIVE_EVENT_IDS = {
+    visit1: 4,
+    visit2: 5,
+} as const;
+
+interface ObjectiveApiItem {
+    id: number;
+    production_line_id?: number;
+    production_line_name?: string;
+    type: string;
+    description: string;
+    event_id?: number;
+}
+
+function normalizeObjectiveType(type: string) {
+    return type
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .trim();
+}
+
+/** Tipo marcado como general (no específico). */
+function isGeneralObjectiveType(type: string) {
+    const n = normalizeObjectiveType(type);
+    return n.includes("general") && !n.includes("especific");
+}
+
+/** Tipo marcado como específico. */
+function isSpecificObjectiveType(type: string) {
+    return normalizeObjectiveType(type).includes("especific");
+}
+
+/**
+ * GET /objetives/event/:eventId/line/:lineId
+ */
+async function getObjectivesForEventAndLine(
+    eventId: number,
+    lineId: number,
+): Promise<ObjectiveApiItem[] | null> {
+    try {
+        const res = await apiFetch<{ code?: string; data?: ObjectiveApiItem[] }>(
+            `/objetives/event/${eventId}/line/${lineId}`,
+        );
+        const list = res?.data;
+        return Array.isArray(list) ? list : [];
+    } catch {
+        return null;
+    }
+}
+
+function objectiveItemsToFormStrings(items: ObjectiveApiItem[]): { general: string; specific: string } {
+    const general = items
+        .filter((row) => isGeneralObjectiveType(row.type))
+        .map((row) => row.description.trim())
+        .filter(Boolean)
+        .join("\n\n");
+    const specifics = items
+        .filter((row) => isSpecificObjectiveType(row.type))
+        .map((row) => row.description.trim())
+        .filter(Boolean)
+        .join("\n");
+    return { general, specific: specifics };
+}
+
+/** Lista de bloques para mostrar objetivos solo lectura (como Vue: generales por párrafo / específicos por línea). */
+function parseObjectiveDisplayBlocks(text: string | undefined, mode: "double" | "line"): string[] {
+    const raw = (text ?? "").trim();
+    if (!raw) return [];
+    if (mode === "double") {
+        return raw
+            .split(/\n{2,}/)
+            .map((t) => t.trim())
+            .filter(Boolean);
+    }
+    return raw
+        .split(/\r?\n/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+}
+
+function readProductionLineId(detail: { production_line_id?: number | null } | null): number | null {
+    if (!detail || detail.production_line_id == null) return null;
+    const n = Number(detail.production_line_id);
+    return Number.isFinite(n) ? n : null;
+}
+
 async function createVisit2(payload: Visit2Payload): Promise<Visit2Response> {
     const res = await apiFetch<{ data: Visit2Response }>("/visit-2", {
         method: "POST",
@@ -458,6 +545,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
     const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(new Set(["objective"]));
     const [showAttendanceDropdown, setShowAttendanceDropdown] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [objectivesApiLoading, setObjectivesApiLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [isEditMode, setIsEditMode] = useState(false);
     const [existingVisitId, setExistingVisitId] = useState<number | null>(null);
@@ -637,7 +725,6 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     setExistingImages(newExisting);
                 } else {
                     // No API visit found — check pending local queue
-                    const userId = authUser?.user_id ?? 0;
                     const localVisit = await getExistingVisit2FromQueue(
                         `${producerId}-${projectId}-%`,
                     );
@@ -671,6 +758,22 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                         photos.slice(0, 3).forEach((p, i) => { newLocal[i] = p; });
                         setLocalPhotos(newLocal);
                         setExistingImages([null, null, null]);
+                    } else if (!cancelled) {
+                        /** Sin guardado en servidor ni cola offline: nuevo formulario para este productor. */
+                        setIsEditMode(false);
+                        setExistingVisitId(null);
+                        setGeneralObjective("");
+                        setSpecificObjectives("");
+                        setDiagnosis("");
+                        setRecommendations("");
+                        setObservations("");
+                        setAttendanceId("");
+                        setAttendanceName("");
+                        setAttendanceIdentification("");
+                        setRegistrationDate(todayString());
+                        setCommitments([]);
+                        setLocalPhotos([null, null, null]);
+                        setExistingImages([null, null, null]);
                     }
                 }
             } catch (err) {
@@ -682,6 +785,40 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
 
         return () => { cancelled = true; };
     }, [producerId, projectId, authUser]);
+
+    /** Objetivos general / específico desde API (solo sin Visita 2 guardada ni campos ya rellenos). */
+    useEffect(() => {
+        if (!producerId || !projectId || loading) return;
+        if (isEditMode) return;
+
+        const lineId = readProductionLineId(
+            producerDetail as { production_line_id?: number | null } | null,
+        );
+        if (lineId == null) return;
+
+        let cancelled = false;
+        setObjectivesApiLoading(true);
+
+        void (async () => {
+            const items = await getObjectivesForEventAndLine(
+                VISIT_OBJECTIVE_EVENT_IDS.visit2,
+                lineId,
+            );
+            if (cancelled) return;
+            setObjectivesApiLoading(false);
+
+            if (items == null || items.length === 0) return;
+
+            const { general, specific } = objectiveItemsToFormStrings(items);
+            setGeneralObjective((prev) => (prev.trim() ? prev : general));
+            setSpecificObjectives((prev) => (prev.trim() ? prev : specific));
+        })();
+
+        return () => {
+            cancelled = true;
+            setObjectivesApiLoading(false);
+        };
+    }, [producerId, projectId, producerDetail, loading, isEditMode]);
 
     // Check if method already applied
     useEffect(() => {
@@ -1126,11 +1263,13 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             onChangeText: (t: string) => void,
             placeholder: string,
             hint?: string,
+            belowHint?: React.ReactNode,
         ) => {
             if (!expandedSections.has(sectionKey)) return null;
             return (
                 <View style={styles.sectionContent}>
-                    {hint && <ThemedText style={styles.sectionHint}>{hint}</ThemedText>}
+                    {hint ? <ThemedText style={styles.sectionHint}>{hint}</ThemedText> : null}
+                    {belowHint}
                     <TextInput
                         style={styles.textArea}
                         value={value}
@@ -1141,6 +1280,45 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                         textAlignVertical="top"
                         numberOfLines={4}
                     />
+                </View>
+            );
+        },
+        [expandedSections],
+    );
+
+    /** Objetivos general / específico: información del servidor, no editables. */
+    const renderReadOnlyObjectivesSection = useCallback(
+        (
+            sectionKey: Extract<SectionKey, "objective" | "specific_objectives">,
+            body: string,
+            blockMode: "double" | "line",
+            hint: string,
+            emptyMessage: string,
+            belowHint?: React.ReactNode,
+        ) => {
+            if (!expandedSections.has(sectionKey)) return null;
+            const lines = parseObjectiveDisplayBlocks(body, blockMode);
+            return (
+                <View style={styles.sectionContent}>
+                    <ThemedText style={styles.sectionHint}>{hint}</ThemedText>
+                    {belowHint}
+                    {lines.length === 0 ? (
+                        <View style={styles.objectivesReadonlyPanel}>
+                            <ThemedText style={styles.objectivesReadonlyEmpty}>{emptyMessage}</ThemedText>
+                        </View>
+                    ) : (
+                        <View style={styles.objectivesReadonlyPanel}>
+                            {lines.map((line, idx) => (
+                                <View key={`${sectionKey}-block-${idx}`}>
+                                    {idx > 0 ? <View style={styles.objectivesReadonlySeparator} /> : null}
+                                    <ThemedText style={styles.objectivesReadonlyParagraph}>
+                                        <ThemedText style={styles.objectivesReadonlyIndex}>{idx + 1}. </ThemedText>
+                                        {line}
+                                    </ThemedText>
+                                </View>
+                            ))}
+                        </View>
+                    )}
                 </View>
             );
         },
@@ -1533,32 +1711,41 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                         {renderAttendanceContent()}
                     </View>
 
-                    {/* Section: Objetivo General */}
+                    {/* Section: Objetivo General (solo lectura — API / visita guardada) */}
                     <View style={styles.section}>
                         {renderSectionHeader(
                             SECTIONS.find((s) => s.key === "objective")!,
                             sectionStatus.objective,
                         )}
-                        {renderTextSection(
+                        {renderReadOnlyObjectivesSection(
                             "objective",
                             generalObjective,
-                            setGeneralObjective,
-                            "Describa el objetivo general del acompañamiento...",
-                            "Realice seguimiento técnico-productivo al sistema agropecuario del usuario productor, verificando la adopción de las prácticas recomendadas.",
+                            "double",
+                            "Solo lectura. Objetivos tipo «General» definidos en el servidor para el evento Visita 2 y la línea productiva principal del usuario (`production_line_id`).",
+                            "Sin objetivo general cargado para esta línea y visita.",
+                            !isEditMode && objectivesApiLoading ? (
+                                <View style={styles.objectivesLoadingRow}>
+                                    <ActivityIndicator size="small" color="#1a7a3a" />
+                                    <ThemedText style={styles.objectivesLoadingText}>
+                                        Cargando objetivos desde el servidor…
+                                    </ThemedText>
+                                </View>
+                            ) : undefined,
                         )}
                     </View>
 
-                    {/* Section: Objetivos Específicos */}
+                    {/* Section: Objetivos Específicos (solo lectura) */}
                     <View style={styles.section}>
                         {renderSectionHeader(
                             SECTIONS.find((s) => s.key === "specific_objectives")!,
                             sectionStatus.specific_objectives,
                         )}
-                        {renderTextSection(
+                        {renderReadOnlyObjectivesSection(
                             "specific_objectives",
                             specificObjectives,
-                            setSpecificObjectives,
-                            "Ingrese los objetivos específicos del acompañamiento...",
+                            "line",
+                            "Solo lectura. Objetivos tipo «Específico» del mismo catálogo (evento Visita 2, línea principal).",
+                            "No hay objetivos específicos configurados para esta línea en el servidor.",
                         )}
                     </View>
 
@@ -2112,6 +2299,46 @@ const styles = StyleSheet.create({
         lineHeight: responsiveFont(19),
         marginTop: verticalScale(10),
         marginBottom: verticalScale(8),
+    },
+    objectivesLoadingRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: widthScale(10),
+        marginBottom: verticalScale(8),
+    },
+    objectivesLoadingText: {
+        fontSize: responsiveFont(13),
+        color: "#555",
+    },
+    objectivesReadonlyPanel: {
+        backgroundColor: "#f8f9fa",
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.1)",
+        borderRadius: widthScale(8),
+        paddingHorizontal: widthScale(12),
+        paddingVertical: verticalScale(12),
+    },
+    objectivesReadonlyEmpty: {
+        fontSize: responsiveFont(14),
+        color: "#888",
+        textAlign: "center",
+        lineHeight: responsiveFont(20),
+        fontStyle: "italic",
+    },
+    objectivesReadonlySeparator: {
+        height: 1,
+        backgroundColor: "rgba(0,0,0,0.1)",
+        marginVertical: verticalScale(14),
+    },
+    objectivesReadonlyParagraph: {
+        fontSize: responsiveFont(15),
+        color: "#222",
+        lineHeight: responsiveFont(22),
+    },
+    objectivesReadonlyIndex: {
+        fontSize: responsiveFont(15),
+        fontWeight: "700",
+        color: "#666",
     },
 
     // Text areas
