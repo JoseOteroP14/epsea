@@ -1,5 +1,6 @@
 import type { Project } from "@/schemas/project";
 import { useAuthStore } from "@/store/useAuthStore";
+import { VISIT2_INTERVENTION_METHOD_ID } from "@/store/useCharacterizationStore";
 import { apiFetch } from "@/utils/api";
 import {
     deleteProducersNotIn,
@@ -25,6 +26,15 @@ import {
     markVisit1Failed,
     type Visit1QueueItem,
 } from "@/utils/database/repositories/visit1-repository";
+import {
+    getPendingVisit2Items,
+    markVisit2Completed,
+    markVisit2Failed,
+    type Visit2MonitoringCommitment,
+    type Visit2Payload,
+    type Visit2QueueExtras,
+    type Visit2QueueItem,
+} from "@/utils/database/repositories/visit2-repository";
 import {
     getPendingAnswerUpdates,
     deleteAnswerUpdate,
@@ -323,6 +333,206 @@ interface LocalPhoto {
   type: string;
 }
 
+async function uploadVisit2Item(item: Visit2QueueItem): Promise<void> {
+  const token = await getStoredToken();
+  const payload = JSON.parse(item.payload) as Visit2Payload;
+  let extras: Visit2QueueExtras;
+  try {
+    extras = JSON.parse(item.photos ?? "{}");
+  } catch {
+    extras = { monitoringCommitments: [], photos: [] };
+  }
+  const monitoringCommitments = extras.monitoringCommitments ?? [];
+  const photos: LocalPhoto[] = extras.photos ?? [];
+  const remoteId = extras.remote_visit_2_id ?? null;
+
+  const mapCommitmentApi = (
+    c: Visit2MonitoringCommitment,
+  ): {
+    activity: string;
+    percentage_compliance: number;
+    appropriation_in_field: string;
+  } => ({
+    activity: (c.activity ?? "").trim(),
+    percentage_compliance: c.percentage_compliance ?? 0,
+    appropriation_in_field: (c.appropriation_in_field ?? "").trim(),
+  });
+
+  const recommendationStr = String(payload.recommendations_commitments ?? "");
+
+  if (remoteId != null && Number.isFinite(remoteId)) {
+    const putBody = {
+      project_id: payload.project_id,
+      producer_id: payload.producer_id,
+      registration_date: payload.registration_date,
+      origin: payload.origin ?? "app",
+      attendance_id: payload.attendance_id,
+      attendance_name: payload.attendance_name ?? "",
+      attendance_identification: payload.attendance_identification ?? "",
+      general_objective: payload.general_objective,
+      specific_objectives: payload.specific_objectives,
+      diagnostic: payload.diagnostic,
+      recommendations_commitments: recommendationStr,
+      observations: payload.observations ?? "",
+    };
+
+    const putRes = await fetch(`${BASE_URL}/visit-2/${remoteId}`, {
+      method: "PUT",
+      headers: {
+        Accept: "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(putBody),
+    });
+    if (!putRes.ok) {
+      const errData = await putRes.json().catch(() => ({}));
+      throw new Error(
+        typeof errData?.message === "string"
+          ? errData.message
+          : `Error ${putRes.status}`,
+      );
+    }
+
+    const existingCommitments = monitoringCommitments.filter((c) => c.id != null);
+    const newCommitments = monitoringCommitments.filter(
+      (c) => c.id == null && (c.activity ?? "").trim(),
+    );
+
+    for (const c of existingCommitments) {
+      if (c.id == null) continue;
+      const mc = await fetch(
+        `${BASE_URL}/visit-2/monitoring-commitments/${c.id}`,
+        {
+          method: "PUT",
+          headers: {
+            Accept: "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(mapCommitmentApi(c)),
+        },
+      );
+      if (!mc.ok) {
+        const errData = await mc.json().catch(() => ({}));
+        throw new Error(
+          typeof errData?.message === "string"
+            ? errData.message
+            : `Seguimiento ${mc.status}`,
+        );
+      }
+    }
+
+    for (const c of newCommitments) {
+      const mc = await fetch(`${BASE_URL}/visit-2/monitoring-commitments`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          visit_2_id: remoteId,
+          ...mapCommitmentApi(c),
+        }),
+      });
+      if (!mc.ok) {
+        const errData = await mc.json().catch(() => ({}));
+        throw new Error(
+          typeof errData?.message === "string"
+            ? errData.message
+            : `Seguimiento ${mc.status}`,
+        );
+      }
+    }
+
+    if (photos.length > 0) {
+      const formData = new FormData();
+      for (const photo of photos) {
+        formData.append("images", {
+          uri: photo.uri,
+          name: photo.fileName,
+          type: photo.type,
+        } as any);
+      }
+      const imgRes = await fetch(
+        `${BASE_URL}/visit-2/${remoteId}/images`,
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: formData,
+        },
+      );
+      if (!imgRes.ok) {
+        throw new Error("Error al subir imágenes visita 2");
+      }
+    }
+
+    return;
+  }
+
+  if (photos.length > 0 || monitoringCommitments.length > 0) {
+    const formData = new FormData();
+    formData.append("project_id", String(payload.project_id));
+    formData.append("producer_id", String(payload.producer_id));
+    formData.append("registration_date", payload.registration_date);
+    formData.append("origin", payload.origin ?? "app");
+    formData.append("attendance_id", String(payload.attendance_id));
+    formData.append("attendance_name", payload.attendance_name ?? "");
+    formData.append(
+      "attendance_identification",
+      payload.attendance_identification ?? "",
+    );
+    formData.append("general_objective", payload.general_objective);
+    formData.append("specific_objectives", payload.specific_objectives);
+    formData.append("diagnostic", payload.diagnostic);
+    formData.append(
+      "recommendations_commitments",
+      recommendationStr,
+    );
+    formData.append("observations", payload.observations ?? "");
+    formData.append(
+      "monitoring_commitments",
+      JSON.stringify(monitoringCommitments.map(mapCommitmentApi)),
+    );
+    for (const photo of photos) {
+      formData.append(
+        "images",
+        {
+          uri: photo.uri,
+          name: photo.fileName,
+          type: photo.type,
+        } as any,
+      );
+    }
+    const response = await fetch(`${BASE_URL}/visit-2`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: formData,
+    });
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(
+        typeof errData?.message === "string"
+          ? errData.message
+          : `Error ${response.status}`,
+      );
+    }
+    return;
+  }
+
+  await apiFetch("/visit-2", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function uploadPendingAnswers(
   onProgress?: (progress: SyncProgress) => void,
 ): Promise<{ uploaded: number; failed: number }> {
@@ -469,6 +679,43 @@ export async function uploadPendingAnswers(
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await markVisit1Failed(item.id!, errorMsg);
+      failed++;
+    }
+  }
+
+  // 4. Upload visit2 entries (incluye fotos, seguimiento 5.2 y PUT si viene de servidor)
+  const visit2Pending = await getPendingVisit2Items(user.user_id);
+  for (let i = 0; i < visit2Pending.length; i++) {
+    const item = visit2Pending[i]!;
+    onProgress?.({
+      stage: "Subiendo visitas 2",
+      current: i,
+      total: visit2Pending.length,
+    });
+
+    const retryDelay = getRetryDelay(item.attempts ?? 0);
+    await new Promise((r) => setTimeout(r, retryDelay));
+
+    if (item.id == null) continue;
+
+    try {
+      await uploadVisit2Item(item);
+      await markVisit2Completed(item.id);
+      try {
+        const visitPayload = JSON.parse(item.payload) as Visit2Payload;
+        await markInterventionMethodApplied(
+          visitPayload.producer_id,
+          visitPayload.project_id,
+          VISIT2_INTERVENTION_METHOD_ID,
+          user.user_id,
+        );
+      } catch (e) {
+        console.error("Failed to mark visit2 intervention method applied:", e);
+      }
+      uploaded++;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await markVisit2Failed(item.id, errorMsg);
       failed++;
     }
   }

@@ -13,10 +13,11 @@ import {
 } from "@/utils/database/repositories/producer-intervention-repository";
 import {
     enqueueVisit2,
-    getExistingVisit2FromQueue,
+    getPendingLocalVisit2,
     type LocalPhoto,
     type Visit2MonitoringCommitment,
     type Visit2Payload,
+    type Visit2QueueExtras,
 } from "@/utils/database/repositories/visit2-repository";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { getStoredToken } from "@/utils/secure-storage";
@@ -671,7 +672,13 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         (async () => {
             setLoading(true);
             try {
-                const visit1 = await getVisit1ForVisit2(Number(projectId), Number(producerId));
+                let visit1: Visit1ForVisit2Response | null = null;
+                try {
+                    visit1 = await getVisit1ForVisit2(Number(projectId), Number(producerId));
+                } catch {
+                    /* sin red: líneas recomendaciones/compromisos vacías */
+                }
+
                 const recoLines = linesFromVisit1Text(visit1?.recommendations ?? undefined);
                 const compLines = linesFromVisit1Text(visit1?.commitments ?? undefined);
                 if (!cancelled) {
@@ -679,101 +686,134 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     setVisit1CommitmentsRaw(visit1?.commitments ?? "");
                 }
 
-                const data = await getVisit2(Number(projectId), Number(producerId));
-                if (cancelled) return;
+                const uid = authUser?.user_id ?? 0;
+                const pendingLocal =
+                    uid > 0
+                        ? await getPendingLocalVisit2(Number(producerId), Number(projectId), uid)
+                        : null;
 
-                if (data) {
-                    setIsEditMode(true);
-                    setExistingVisitId(data.id);
-                    setGeneralObjective(data.general_objective || "");
-                    setSpecificObjectives(data.specific_objectives || "");
-                    setDiagnosis(data.diagnostic || "");
-                    setRecommendations(data.recommendations_commitments || "");
-                    setObservations(data.observations || "");
-                    setAttendanceId(data.attendance_id ? String(data.attendance_id) : "");
-                    setAttendanceName(data.attendance_name || "");
-                    setAttendanceIdentification(data.attendance_identification || "");
-                    if (data.registration_date) setRegistrationDate(data.registration_date);
+                const hydrateFromQueue = (localVisit: { payload: string; photos: string }) => {
+                    const payload: Visit2Payload = JSON.parse(localVisit.payload);
+                    let stored: Visit2QueueExtras;
+                    try {
+                        stored = JSON.parse(localVisit.photos ?? "{}") as Visit2QueueExtras;
+                    } catch {
+                        stored = {
+                            monitoringCommitments: [],
+                            photos: [],
+                        };
+                    }
 
-                    if (data.monitoring_commitments && data.monitoring_commitments.length > 0) {
+                    const remoteId = stored.remote_visit_2_id ?? null;
+                    const hasRemote = remoteId != null && Number.isFinite(remoteId);
+
+                    setIsEditMode(hasRemote);
+                    setExistingVisitId(hasRemote ? remoteId : null);
+                    setGeneralObjective(payload.general_objective || "");
+                    setSpecificObjectives(payload.specific_objectives || "");
+                    setDiagnosis(payload.diagnostic || "");
+                    setRecommendations(payload.recommendations_commitments || "");
+                    setObservations(payload.observations || "");
+                    setAttendanceId(payload.attendance_id ? String(payload.attendance_id) : "");
+                    setAttendanceName(payload.attendance_name || "");
+                    setAttendanceIdentification(payload.attendance_identification || "");
+                    if (payload.registration_date) setRegistrationDate(payload.registration_date);
+
+                    const commitmentsData = stored.monitoringCommitments ?? [];
+                    if (commitmentsData.length > 0) {
                         setCommitments(
-                            data.monitoring_commitments.map((c) => {
-                                const row: Visit2MonitoringCommitment = {
-                                    id: c.id,
-                                    visit_2_id: c.visit_2_id,
-                                    activity: c.activity,
-                                    percentage_compliance: c.percentage_compliance,
-                                    appropriation_in_field: c.appropriation_in_field,
-                                    porcentaje:
-                                        c.percentage_compliance >= 0
-                                            ? `${c.percentage_compliance}`
-                                            : "",
-                                };
-                                const rt = resolveRowRecompType(row, recoLines, compLines);
-                                return { ...row, recompType: rt ?? "recomendaciones" };
+                            commitmentsData.map((c: Visit2MonitoringCommitment) => {
+                                const rt = resolveRowRecompType(c, recoLines, compLines);
+                                return { ...c, recompType: rt ?? c.recompType ?? "recomendaciones" };
                             }),
                         );
                     } else {
                         setCommitments([]);
                     }
 
-                    const imgs = data.images ?? [];
-                    const newExisting: (Visit2Image | null)[] = [null, null, null];
-                    imgs.slice(0, 3).forEach((img, i) => {
-                        newExisting[i] = img;
+                    const photos: LocalPhoto[] = stored.photos ?? [];
+                    const newLocal: (LocalPhoto | null)[] = [null, null, null];
+                    photos.slice(0, 3).forEach((p, i) => {
+                        newLocal[i] = p;
                     });
-                    setExistingImages(newExisting);
+                    setLocalPhotos(newLocal);
+                    setExistingImages([null, null, null]);
+                };
+
+                const clearForm = () => {
+                    setIsEditMode(false);
+                    setExistingVisitId(null);
+                    setGeneralObjective("");
+                    setSpecificObjectives("");
+                    setDiagnosis("");
+                    setRecommendations("");
+                    setObservations("");
+                    setAttendanceId("");
+                    setAttendanceName("");
+                    setAttendanceIdentification("");
+                    setRegistrationDate(todayString());
+                    setCommitments([]);
+                    setLocalPhotos([null, null, null]);
+                    setExistingImages([null, null, null]);
+                };
+
+                if (cancelled) return;
+
+                // Borrador / cambios locales pendientes tienen prioridad hasta sincronizar
+                if (pendingLocal) {
+                    hydrateFromQueue(pendingLocal);
                 } else {
-                    // No API visit found — check pending local queue
-                    const localVisit = await getExistingVisit2FromQueue(
-                        `${producerId}-${projectId}-%`,
-                    );
-                    if (localVisit && !cancelled) {
-                        const payload: Visit2Payload = JSON.parse(localVisit.payload);
-                        setIsEditMode(false);
-                        setExistingVisitId(null);
-                        setGeneralObjective(payload.general_objective || "");
-                        setSpecificObjectives(payload.specific_objectives || "");
-                        setDiagnosis(payload.diagnostic || "");
-                        setRecommendations(payload.recommendations_commitments || "");
-                        setObservations(payload.observations || "");
-                        setAttendanceId(payload.attendance_id ? String(payload.attendance_id) : "");
-                        setAttendanceName(payload.attendance_name || "");
-                        setAttendanceIdentification(payload.attendance_identification || "");
-                        if (payload.registration_date) setRegistrationDate(payload.registration_date);
-                        const stored = JSON.parse(localVisit.photos ?? "{}");
-                        const commitmentsData = stored.monitoringCommitments ?? [];
-                        if (commitmentsData.length > 0) {
+                    let data: Visit2Response | null = null;
+                    try {
+                        data = await getVisit2(Number(projectId), Number(producerId));
+                    } catch {
+                        data = null;
+                    }
+                    if (cancelled) return;
+
+                    if (data) {
+                        setIsEditMode(true);
+                        setExistingVisitId(data.id);
+                        setGeneralObjective(data.general_objective || "");
+                        setSpecificObjectives(data.specific_objectives || "");
+                        setDiagnosis(data.diagnostic || "");
+                        setRecommendations(data.recommendations_commitments || "");
+                        setObservations(data.observations || "");
+                        setAttendanceId(data.attendance_id ? String(data.attendance_id) : "");
+                        setAttendanceName(data.attendance_name || "");
+                        setAttendanceIdentification(data.attendance_identification || "");
+                        if (data.registration_date) setRegistrationDate(data.registration_date);
+
+                        if (data.monitoring_commitments && data.monitoring_commitments.length > 0) {
                             setCommitments(
-                                commitmentsData.map((c: Visit2MonitoringCommitment) => {
-                                    const rt = resolveRowRecompType(c, recoLines, compLines);
-                                    return { ...c, recompType: rt ?? c.recompType ?? "recomendaciones" };
+                                data.monitoring_commitments.map((c) => {
+                                    const row: Visit2MonitoringCommitment = {
+                                        id: c.id,
+                                        visit_2_id: c.visit_2_id,
+                                        activity: c.activity,
+                                        percentage_compliance: c.percentage_compliance,
+                                        appropriation_in_field: c.appropriation_in_field,
+                                        porcentaje:
+                                            c.percentage_compliance >= 0
+                                                ? `${c.percentage_compliance}`
+                                                : "",
+                                    };
+                                    const rt = resolveRowRecompType(row, recoLines, compLines);
+                                    return { ...row, recompType: rt ?? "recomendaciones" };
                                 }),
                             );
                         } else {
                             setCommitments([]);
                         }
-                        const photos: LocalPhoto[] = stored.photos ?? [];
-                        const newLocal: (LocalPhoto | null)[] = [null, null, null];
-                        photos.slice(0, 3).forEach((p, i) => { newLocal[i] = p; });
-                        setLocalPhotos(newLocal);
-                        setExistingImages([null, null, null]);
+
+                        const imgs = data.images ?? [];
+                        const newExisting: (Visit2Image | null)[] = [null, null, null];
+                        imgs.slice(0, 3).forEach((img, i) => {
+                            newExisting[i] = img;
+                        });
+                        setExistingImages(newExisting);
                     } else if (!cancelled) {
-                        /** Sin guardado en servidor ni cola offline: nuevo formulario para este productor. */
-                        setIsEditMode(false);
-                        setExistingVisitId(null);
-                        setGeneralObjective("");
-                        setSpecificObjectives("");
-                        setDiagnosis("");
-                        setRecommendations("");
-                        setObservations("");
-                        setAttendanceId("");
-                        setAttendanceName("");
-                        setAttendanceIdentification("");
-                        setRegistrationDate(todayString());
-                        setCommitments([]);
-                        setLocalPhotos([null, null, null]);
-                        setExistingImages([null, null, null]);
+                        clearForm();
                     }
                 }
             } catch (err) {
@@ -1126,6 +1166,17 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     appropriation_in_field: c.appropriation_in_field.trim(),
                 }));
 
+            const commitmentsForQueue: Visit2MonitoringCommitment[] = commitments
+                .filter((c) => c.activity.trim())
+                .map((c) => ({
+                    ...(c.id != null ? { id: c.id, visit_2_id: c.visit_2_id } : {}),
+                    activity: c.activity.trim(),
+                    percentage_compliance: parseInt(c.porcentaje?.replace(/[^\d]/g, "") ?? "0", 10) || 0,
+                    appropriation_in_field: c.appropriation_in_field.trim(),
+                    porcentaje: c.porcentaje ?? "",
+                    recompType: c.recompType,
+                }));
+
             const newPhotos = localPhotos.filter((p): p is LocalPhoto => p !== null);
             const isOnline = await checkConnectivity();
             const userId = authUser?.user_id ?? 0;
@@ -1177,8 +1228,19 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                 }
                 setLocalPhotos([null, null, null]);
             } else {
-                const visitUuid = `${producerId}-${projectId}-${Date.now()}`;
-                await enqueueVisit2(visitUuid, payload, monitoringCommitments, newPhotos, userId);
+                const visitUuid = `${userId}-${producerId}-${projectId}-visit2-offline`;
+                const remoteForQueue =
+                    existingVisitId != null && Number.isFinite(existingVisitId)
+                        ? existingVisitId
+                        : null;
+                await enqueueVisit2(
+                    visitUuid,
+                    payload,
+                    commitmentsForQueue,
+                    newPhotos,
+                    userId,
+                    remoteForQueue,
+                );
                 await markInterventionMethodApplied(
                     Number(producerId),
                     Number(projectId),
@@ -1186,6 +1248,13 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     userId,
                 );
                 setMethodAlreadyApplied(true);
+                if (remoteForQueue != null) {
+                    setIsEditMode(true);
+                    setExistingVisitId(remoteForQueue);
+                } else {
+                    setIsEditMode(false);
+                    setExistingVisitId(null);
+                }
                 setLocalPhotos([null, null, null]);
                 showAlert({
                     title: "Sin internet",

@@ -126,6 +126,22 @@ export async function getLocalVisit1(
   );
 }
 
+export async function getPendingLocalVisit1(
+  producerId: number,
+  projectId: number,
+  userId: number,
+): Promise<Visit1QueueItem | null> {
+  const db = getDb();
+  return db.getFirstAsync<Visit1QueueItem>(
+    `SELECT * FROM visit1_queue
+     WHERE JSON_EXTRACT(payload, '$.producer_id') = ? AND JSON_EXTRACT(payload, '$.project_id') = ? AND user_id = ? AND status = 'pending'
+     ORDER BY updated_at DESC LIMIT 1`,
+    producerId,
+    projectId,
+    userId,
+  );
+}
+
 export async function getExistingVisit1FromQueue(
   visitUuid: string,
 ): Promise<Visit1QueueItem | null> {

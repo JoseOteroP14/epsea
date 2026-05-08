@@ -15,7 +15,7 @@ import {
 } from "@/utils/database/repositories/producer-intervention-repository";
 import {
     enqueueVisit1,
-    getExistingVisit1FromQueue,
+    getPendingLocalVisit1,
 } from "@/utils/database/repositories/visit1-repository";
 import {
     convertPhotosToBase64,
@@ -378,50 +378,61 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
     (async () => {
       setLoading(true);
       try {
-        const data = await getVisit1(Number(projectId), Number(producerId));
+        const userId = authUser?.user_id ?? 0;
+        const pendingLocal =
+          userId > 0
+            ? await getPendingLocalVisit1(
+                Number(producerId),
+                Number(projectId),
+                userId,
+              )
+            : null;
         if (cancelled) return;
 
-        // If we got data from API, use it (server wins)
-        if (data) {
-          setIsEditMode(true);
-          setExistingVisitId(data.id);
-          setObjective(data.objetive || "");
-          setDiagnosis(data.diagnosis || "");
-          setRecommendations(data.recommendations || "");
-          setObservations(data.observations || "");
-          setAttendanceId(data.attendance_id ? String(data.attendance_id) : "");
-          setAttendanceName(data.attendance_name || "");
-          if (data.registration_date) setRegistrationDate(data.registration_date);
-
-          const imgs = data.images ?? [];
-          const newExisting: (VisitImage | null)[] = [null, null, null];
-          imgs.slice(0, 3).forEach((img, i) => {
-            newExisting[i] = img;
+        if (pendingLocal) {
+          const payload: Visit1Payload = JSON.parse(pendingLocal.payload);
+          setIsEditMode(false);
+          setExistingVisitId(null);
+          setObjective(payload.objetive || "");
+          setDiagnosis(payload.diagnosis || "");
+          setRecommendations(payload.recommendations || "");
+          setObservations(payload.observations || "");
+          setAttendanceId(payload.attendance_id ? String(payload.attendance_id) : "");
+          setAttendanceName(payload.attendance_name || "");
+          if (payload.registration_date) setRegistrationDate(payload.registration_date);
+          const photos: LocalPhoto[] = JSON.parse(pendingLocal.photos ?? "[]");
+          const newLocal: (LocalPhoto | null)[] = [null, null, null];
+          photos.slice(0, 3).forEach((p, i) => {
+            newLocal[i] = p;
           });
-          setExistingImages(newExisting);
+          setLocalPhotos(newLocal);
+          setExistingImages([null, null, null]);
         } else {
-          // No API visit found — check pending local queue (offline-created visits)
-          const userId = authUser?.user_id ?? 0;
-          const localVisit = await getExistingVisit1FromQueue(
-            `${producerId}-${projectId}-%`,
-          );
-          if (localVisit && !cancelled) {
-            // Use the locally queued visit data
-            const payload: Visit1Payload = JSON.parse(localVisit.payload);
-            setIsEditMode(false);
-            setExistingVisitId(null);
-            setObjective(payload.objetive || "");
-            setDiagnosis(payload.diagnosis || "");
-            setRecommendations(payload.recommendations || "");
-            setObservations(payload.observations || "");
-            setAttendanceId(payload.attendance_id ? String(payload.attendance_id) : "");
-            setAttendanceName(payload.attendance_name || "");
-            if (payload.registration_date) setRegistrationDate(payload.registration_date);
-            const photos: LocalPhoto[] = JSON.parse(localVisit.photos ?? "[]");
-            const newLocal: (LocalPhoto | null)[] = [null, null, null];
-            photos.slice(0, 3).forEach((p, i) => { newLocal[i] = p; });
-            setLocalPhotos(newLocal);
-            setExistingImages([null, null, null]);
+          let data: Visit1Response | null = null;
+          try {
+            data = await getVisit1(Number(projectId), Number(producerId));
+          } catch {
+            data = null;
+          }
+          if (cancelled) return;
+
+          if (data) {
+            setIsEditMode(true);
+            setExistingVisitId(data.id);
+            setObjective(data.objetive || "");
+            setDiagnosis(data.diagnosis || "");
+            setRecommendations(data.recommendations || "");
+            setObservations(data.observations || "");
+            setAttendanceId(data.attendance_id ? String(data.attendance_id) : "");
+            setAttendanceName(data.attendance_name || "");
+            if (data.registration_date) setRegistrationDate(data.registration_date);
+
+            const imgs = data.images ?? [];
+            const newExisting: (VisitImage | null)[] = [null, null, null];
+            imgs.slice(0, 3).forEach((img, i) => {
+              newExisting[i] = img;
+            });
+            setExistingImages(newExisting);
           }
         }
       } catch (err) {
@@ -613,7 +624,7 @@ const handleSave = useCallback(async () => {
         }
         setLocalPhotos([null, null, null]);
       } else {
-        const visitUuid = `${producerId}-${projectId}-${Date.now()}`;
+        const visitUuid = `${userId}-${producerId}-${projectId}-visit1-offline`;
         await enqueueVisit1(visitUuid, payload, newPhotos, userId);
         await markInterventionMethodApplied(
           Number(producerId),

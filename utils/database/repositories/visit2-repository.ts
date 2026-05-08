@@ -44,21 +44,37 @@ export interface Visit2MonitoringCommitment {
   porcentaje?: string;
 }
 
+/** Persisted beside local photos JSON; consumed by sync and load-offline hydration. */
+export interface Visit2QueueExtras {
+  monitoringCommitments: Visit2MonitoringCommitment[];
+  photos: LocalPhoto[];
+  /** When edits target a Visita 2 ya existente en servidor (PUT tras reconectar). */
+  remote_visit_2_id?: number | null;
+}
+
 export async function enqueueVisit2(
   visitUuid: string,
   payload: Visit2Payload,
   monitoringCommitments: Visit2MonitoringCommitment[],
   photos: LocalPhoto[],
   userId: number,
+  remoteVisit2Id?: number | null,
 ): Promise<void> {
   const db = getDb();
+  const extras: Visit2QueueExtras = {
+    monitoringCommitments,
+    photos,
+    ...(remoteVisit2Id != null && Number.isFinite(remoteVisit2Id)
+      ? { remote_visit_2_id: remoteVisit2Id }
+      : {}),
+  };
   await db.runAsync(
     `INSERT OR REPLACE INTO visit2_queue
       (visit_uuid, payload, photos, user_id, status, attempts, created_at, updated_at)
      VALUES (?, ?, ?, ?, 'pending', 0, datetime('now'), datetime('now'))`,
     visitUuid,
     JSON.stringify(payload),
-    JSON.stringify({ monitoringCommitments, photos }),
+    JSON.stringify(extras),
     userId,
   );
 }
@@ -132,6 +148,23 @@ export async function getLocalVisit2(
     `SELECT * FROM visit2_queue
      WHERE JSON_EXTRACT(payload, '$.producer_id') = ? AND JSON_EXTRACT(payload, '$.project_id') = ? AND user_id = ?
      ORDER BY created_at DESC LIMIT 1`,
+    producerId,
+    projectId,
+    userId,
+  );
+}
+
+/** Borrador o visita 2 pendiente de subir; prioridad sobre datos del API hasta sincronizar. */
+export async function getPendingLocalVisit2(
+  producerId: number,
+  projectId: number,
+  userId: number,
+): Promise<Visit2QueueItem | null> {
+  const db = getDb();
+  return db.getFirstAsync<Visit2QueueItem>(
+    `SELECT * FROM visit2_queue
+     WHERE JSON_EXTRACT(payload, '$.producer_id') = ? AND JSON_EXTRACT(payload, '$.project_id') = ? AND user_id = ? AND status = 'pending'
+     ORDER BY updated_at DESC LIMIT 1`,
     producerId,
     projectId,
     userId,

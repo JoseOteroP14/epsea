@@ -9,6 +9,7 @@ import {
   getMetadata,
 } from "@/utils/database/repositories/sync-repository";
 import { getPendingVisit1Count } from "@/utils/database/repositories/visit1-repository";
+import { getPendingVisit2Count } from "@/utils/database/repositories/visit2-repository";
 import { getPendingAnswerUpdateCount } from "@/utils/database/repositories/answer-update-repository";
 import { useAuthStore } from "./useAuthStore";
 
@@ -62,11 +63,13 @@ export const useSyncStore = create<SyncState>((set) => ({
       );
       const pendingSurvey = await getPendingCount(userId);
       const pendingVisit1 = await getPendingVisit1Count(userId);
+      const pendingVisit2 = await getPendingVisit2Count(userId);
       const pendingAnswerUpdates = await getPendingAnswerUpdateCount(userId);
       const lastUpload = await getMetadata("last_upload");
       set({
         isUploading: false,
-        pendingUploads: pendingSurvey + pendingVisit1 + pendingAnswerUpdates,
+        pendingUploads:
+          pendingSurvey + pendingVisit1 + pendingVisit2 + pendingAnswerUpdates,
         lastUpload,
       });
       return result;
@@ -84,11 +87,13 @@ export const useSyncStore = create<SyncState>((set) => ({
       const userId = useAuthStore.getState().user?.user_id;
       const pendingSurvey = await getPendingCount(userId);
       const pendingVisit1 = await getPendingVisit1Count(userId);
+      const pendingVisit2 = await getPendingVisit2Count(userId);
       const pendingAnswerUpdates = await getPendingAnswerUpdateCount(userId);
       const lastDownload = await getMetadata("last_full_download");
       const lastUpload = await getMetadata("last_upload");
       set({
-        pendingUploads: pendingSurvey + pendingVisit1 + pendingAnswerUpdates,
+        pendingUploads:
+          pendingSurvey + pendingVisit1 + pendingVisit2 + pendingAnswerUpdates,
         lastDownload,
         lastUpload,
       });
