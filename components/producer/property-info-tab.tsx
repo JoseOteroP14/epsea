@@ -27,6 +27,10 @@ import {
     serializePropertyOfflineUpsert,
     snapshotServerBaselineAnswers,
 } from "@/utils/survey/offline-new-value-serializers";
+import {
+  recordSurveyQuestionMinOrder,
+  resolveSurveyQuestionDisplayOrdinal,
+} from "@/utils/survey/intervention-method-order";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
     ClipboardList,
@@ -50,6 +54,7 @@ interface PropertyInfoTabProps {
 
 interface DisplayAnswer {
   questionId: number;
+  displayOrder: number;
   questionName: string;
   displayValue: string;
   isPending?: boolean;
@@ -167,6 +172,9 @@ export function PropertyInfoTab({
   const [surveyIds, setSurveyIds] = useState<Record<number, number>>({});
   const [hasSurvey, setHasSurvey] = useState(false);
   const [savedAnswers, setSavedAnswers] = useState<DisplayAnswer[]>([]);
+  const [surveyQuestionOrders, setSurveyQuestionOrders] = useState<
+    Record<number, number>
+  >({});
   const [loadingAnswers, setLoadingAnswers] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
@@ -248,6 +256,7 @@ export function PropertyInfoTab({
       }
 
       let remoteSurveyRowCount = 0;
+      const orderByQuestion: Record<number, number> = {};
 
       // 1. Fetch survey results (store handles offline-first: SQLite cache → API)
       try {
@@ -287,6 +296,11 @@ export function PropertyInfoTab({
               iNames[item.question_id] = item.item_name;
             }
           }
+          recordSurveyQuestionMinOrder(
+            orderByQuestion,
+            item.question_id,
+            item.question_order,
+          );
         }
         foundRemote = remote.length > 0;
       } catch (e) {
@@ -363,6 +377,7 @@ export function PropertyInfoTab({
       setAnswerIds(ids);
       setSurveyIds(sIds);
       setItemNames(iNames);
+      setSurveyQuestionOrders(orderByQuestion);
       setPendingQuestionIds(pendingIds);
       setHasSurvey(foundRemote);
       setLoadingAnswers(false);
@@ -459,9 +474,16 @@ export function PropertyInfoTab({
         (Array.isArray(rawValue) && rawValue.length === 0)
       )
         return;
+      const displayOrder = resolveSurveyQuestionDisplayOrdinal({
+        questionId: q.id,
+        question: q,
+        surveyOrderByQuestionId: surveyQuestionOrders,
+        listPositionFallback: index + 1,
+      });
       display.push({
         questionId: q.id,
-        questionName: `${index + 1}. ${q.description ?? q.name ?? "Pregunta"}`,
+        displayOrder,
+        questionName: `${displayOrder}. ${q.description ?? q.name ?? "Pregunta"}`,
         displayValue: resolveDisplayValue(
           rawValue,
           q.id,
@@ -473,6 +495,7 @@ export function PropertyInfoTab({
         isPending: pendingQuestionIds.has(q.id),
       });
     });
+    display.sort((a, b) => a.displayOrder - b.displayOrder);
     setSavedAnswers(display);
   }, [
     localQuestions,
@@ -482,6 +505,7 @@ export function PropertyInfoTab({
     showSheet,
     itemNames,
     pendingQuestionIds,
+    surveyQuestionOrders,
   ]);
 
   const handleApply = useCallback(() => {
@@ -887,9 +911,9 @@ export function PropertyInfoTab({
           </ThemedText>
 
           {savedAnswers.length > 0 ? (
-            savedAnswers.map((item, index) => (
+            savedAnswers.map((item) => (
               <View
-                key={index}
+                key={item.questionId}
                 style={[
                   styles.answerCard,
                   item.isPending && styles.answerCardPending,

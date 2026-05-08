@@ -55,9 +55,11 @@ export async function getAllQuestionTypes(): Promise<QuestionType[]> {
 
 // --- Questions ---
 
-/** Sort key for listing: API `order` in raw_json wins, else DB sort_order column, else 0. */
+/** Sort key for listing: API `order` (or PascalCase/alternate keys) in raw_json wins, else DB column. */
 function effectiveQuestionListOrder(question: Question, rowSortOrder: number): number {
-  const fromJson = Number(question.order);
+  const q = question as Record<string, unknown>;
+  const fromJsonRaw = q.order ?? q.Order ?? q.orden;
+  const fromJson = Number(fromJsonRaw);
   if (Number.isFinite(fromJson)) return fromJson;
   const fromRow = Number(rowSortOrder);
   if (Number.isFinite(fromRow)) return fromRow;

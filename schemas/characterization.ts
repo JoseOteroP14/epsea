@@ -144,6 +144,8 @@ export const SurveyResultItemSchema = z
     question_description: z.string().nullable().optional(),
     question_type_id: z.number(),
     question_parent_id: z.number().nullable().optional(),
+    /** Copied from intervention_method item `order` when flattening (Hermes/APK stable ordering). */
+    question_order: z.number().optional(),
     answer: z
       .object({
         id: z.number(),

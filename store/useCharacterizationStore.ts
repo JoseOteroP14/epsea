@@ -32,6 +32,10 @@ import {
     hasInterventionMethodApplied as hasAppliedInDb,
 } from "@/utils/database/repositories/producer-intervention-repository";
 import { getSurveyResults as getSurveyResultsFromDb } from "@/utils/database/repositories/survey-results-repository";
+import {
+  compareInterventionMethodItemsStable,
+  getInterventionMethodItemOrder,
+} from "@/utils/survey/intervention-method-order";
 
 // Component IDs (from backend)
 export const PERSONAL_INFO_COMPONENT_ID = 1;
@@ -292,6 +296,7 @@ export const useCharacterizationStore = create<CharacterizationState>(
           question_description: r.question_description ?? null,
           question_type_id: r.question_type_id,
           question_parent_id: r.question_parent_id ?? null,
+          question_order: r.question_order,
         }));
 
       // 1. Always load from SQLite cache first (populated during sync download)
@@ -336,11 +341,12 @@ export const useCharacterizationStore = create<CharacterizationState>(
         // The API returns questions with nested `answers` arrays:
         //   { id, description, answers: [{ id, survey_id, question_id, value }] }
         // Flatten into SurveyResultItem[] expected by the tabs.
-        // Sort by `order` first — Hermes (APK) does not guarantee JSON key/array order.
-        const sortedData = [...rawData].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        // Sort by payload `order` — tolerate Order/orden; Hermes does not rely on incoming array order alone.
+        const sortedData = [...rawData].sort(compareInterventionMethodItemsStable);
         const flattened: SurveyResultItem[] = [];
         for (const item of sortedData) {
           const nestedAnswers = item.answers;
+          const qOrder = getInterventionMethodItemOrder(item);
           if (Array.isArray(nestedAnswers) && nestedAnswers.length > 0) {
             for (const ans of nestedAnswers) {
               const answerValue = pickAnswerValue(ans);
@@ -357,6 +363,7 @@ export const useCharacterizationStore = create<CharacterizationState>(
                 question_description: item.description ?? null,
                 question_type_id: item.question_type_id ?? 0,
                 question_parent_id: item.question_parent_id ?? null,
+                question_order: qOrder,
               });
             }
           } else if (item.answer_id != null) {
@@ -366,6 +373,7 @@ export const useCharacterizationStore = create<CharacterizationState>(
             flattened.push({
               ...(item as SurveyResultItem),
               answer_value: flatAnswerValue ?? item?.answer_value ?? "",
+              question_order: qOrder,
             });
           }
         }

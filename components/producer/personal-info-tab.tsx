@@ -33,6 +33,10 @@ import {
   serializePersonalOfflineUpsert,
   snapshotServerBaselineAnswers,
 } from "@/utils/survey/offline-new-value-serializers";
+import {
+  recordSurveyQuestionMinOrder,
+  resolveSurveyQuestionDisplayOrdinal,
+} from "@/utils/survey/intervention-method-order";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
     ChevronDown,
@@ -58,6 +62,8 @@ interface PersonalInfoTabProps {
 
 interface DisplayAnswer {
   questionId: number;
+  /** Matches intervention_method `question_order` when present (stable across Hermes/APK builds). */
+  displayOrder: number;
   questionName: string;
   displayValue: string;
   children?: DisplayAnswer[];
@@ -184,6 +190,10 @@ export function PersonalInfoTab({
   >({});
   const [hasSurvey, setHasSurvey] = useState(false);
   const [savedAnswers, setSavedAnswers] = useState<DisplayAnswer[]>([]);
+  /** question_id → orden canónico del GET intervention_method */
+  const [surveyQuestionOrders, setSurveyQuestionOrders] = useState<
+    Record<number, number>
+  >({});
   const [loadingAnswers, setLoadingAnswers] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
@@ -272,6 +282,7 @@ export function PersonalInfoTab({
       }
 
       let remoteSurveyRowCount = 0;
+      const orderByQuestion: Record<number, number> = {};
 
       // 1. Fetch survey results (store handles offline-first: SQLite cache → API)
       try {
@@ -313,6 +324,11 @@ export function PersonalInfoTab({
               iNames[item.question_id] = item.item_name;
             }
           }
+          recordSurveyQuestionMinOrder(
+            orderByQuestion,
+            item.question_id,
+            item.question_order,
+          );
         }
         foundRemote = remote.length > 0;
       } catch (e) {
@@ -396,6 +412,7 @@ export function PersonalInfoTab({
       setSurveyIds(sIds);
       setItemNames(iNames);
       setPendingQuestionIds(pendingIds);
+      setSurveyQuestionOrders(orderByQuestion);
       setHasSurvey(foundRemote);
       setLoadingAnswers(false);
     })();
@@ -463,9 +480,16 @@ export function PersonalInfoTab({
         (Array.isArray(rawValue) && rawValue.length === 0)
       )
         return;
+      const displayOrder = resolveSurveyQuestionDisplayOrdinal({
+        questionId: q.id,
+        question: q,
+        surveyOrderByQuestionId: surveyQuestionOrders,
+        listPositionFallback: index + 1,
+      });
       allAnswers.set(q.id, {
         questionId: q.id,
-        questionName: `${index + 1}. ${q.description ?? q.name ?? "Pregunta"}`,
+        displayOrder,
+        questionName: `${displayOrder}. ${q.description ?? q.name ?? "Pregunta"}`,
         displayValue: resolveDisplayValue(
           rawValue,
           q.id,
@@ -493,6 +517,11 @@ export function PersonalInfoTab({
       }
     }
 
+    display.sort((a, b) => a.displayOrder - b.displayOrder);
+    for (const row of display) {
+      row.children?.sort((a, b) => a.displayOrder - b.displayOrder);
+    }
+
     setSavedAnswers(display);
   }, [
     localQuestions,
@@ -502,6 +531,7 @@ export function PersonalInfoTab({
     showSheet,
     itemNames,
     pendingQuestionIds,
+    surveyQuestionOrders,
   ]);
 
   const handleApply = useCallback(() => {
@@ -1142,9 +1172,9 @@ export function PersonalInfoTab({
           </ThemedText>
 
           {savedAnswers.length > 0 ? (
-            savedAnswers.map((item, index) => (
+            savedAnswers.map((item) => (
               <View
-                key={index}
+                key={item.questionId}
                 style={[
                   styles.answerCard,
                   item.isPending && styles.answerCardPending,

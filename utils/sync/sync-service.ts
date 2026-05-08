@@ -19,6 +19,10 @@ import {
 } from "@/utils/database/repositories/sync-repository";
 import { deleteAnswers } from "@/utils/database/repositories/answer-repository";
 import { upsertSurveyResults, type SurveyResultRow } from "@/utils/database/repositories/survey-results-repository";
+import {
+  compareInterventionMethodItemsStable,
+  getInterventionMethodItemOrder,
+} from "@/utils/survey/intervention-method-order";
 import { getStoredToken } from "@/utils/secure-storage";
 import {
     deleteVisit1QueueRow,
@@ -209,8 +213,10 @@ export async function downloadAllData(
           await markInterventionMethodApplied(producerId, projectId, methodId, user.user_id);
 
           const flatResults: SurveyResultRow[] = [];
-          for (const item of rawData) {
+          const sortedRaw = [...rawData].sort(compareInterventionMethodItemsStable);
+          for (const item of sortedRaw) {
             const nestedAnswers = item.answers;
+            const qOrder = getInterventionMethodItemOrder(item);
             if (Array.isArray(nestedAnswers) && nestedAnswers.length > 0) {
               for (const ans of nestedAnswers) {
                 flatResults.push({
@@ -222,7 +228,7 @@ export async function downloadAllData(
                   question_description: item.description ?? null,
                   question_type_id: item.question_type_id ?? 0,
                   question_parent_id: item.question_parent_id ?? null,
-                  question_order: item.order ?? 0,
+                  question_order: qOrder,
                   intervention_method_id: methodId,
                   producer_id: producerId,
                   project_id: projectId,
@@ -240,7 +246,7 @@ export async function downloadAllData(
                 question_description: item.question_description ?? null,
                 question_type_id: item.question_type_id ?? 0,
                 question_parent_id: item.question_parent_id ?? null,
-                question_order: item.order ?? 0,
+                question_order: qOrder,
                 intervention_method_id: methodId,
                 producer_id: producerId,
                 project_id: projectId,
