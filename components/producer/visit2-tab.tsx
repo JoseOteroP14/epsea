@@ -35,6 +35,7 @@ import {
     ChevronDown,
     ChevronUp,
     ClipboardList,
+    FileText,
     ImagePlus,
     MessageSquare,
     Save,
@@ -105,6 +106,7 @@ const ATTENDANCE_OPTIONS = [
 type SectionKey =
     | "objective"
     | "diagnosis"
+    | "commitment_followup"
     | "recommendations"
     | "observations"
     | "photos"
@@ -124,7 +126,8 @@ const SECTIONS: SectionConfig[] = [
     { key: "objective", label: "Objetivo General del Acompañamiento", shortLabel: "Obj. General", sectionNum: "5", icon: Target, color: "#1a7a3a" },
     { key: "specific_objectives", label: "Objetivos Específicos", shortLabel: "Obj. Específicos", sectionNum: "5.0", icon: Target, color: "#1a7a3a" },
     { key: "diagnosis", label: "Diagnóstico visita", shortLabel: "Diagnóstico", sectionNum: "5.1", icon: Stethoscope, color: "#0284c7" },
-    { key: "recommendations", label: "Recomendaciones y Compromisos", shortLabel: "Recomend.", sectionNum: "5.3", icon: ClipboardList, color: "#0284c7" },
+    { key: "commitment_followup", label: "Seguimiento al cumplimiento de compromisos", shortLabel: "Seguimiento", sectionNum: "5.2", icon: ClipboardList, color: "#0284c7" },
+    { key: "recommendations", label: "Recomendaciones y Compromisos", shortLabel: "Recomend.", sectionNum: "5.3", icon: FileText, color: "#0284c7" },
     { key: "observations", label: "Observaciones visita", shortLabel: "Observac.", sectionNum: "5.4", icon: MessageSquare, color: "#0284c7" },
     { key: "photos", label: "Registro Fotográfico", shortLabel: "Fotos", sectionNum: "5.5", icon: Camera, color: "#059669" },
     { key: "attendance", label: "Datos del Acompañamiento", shortLabel: "Acompañ.", sectionNum: "1", icon: Users, color: "#d97706" },
@@ -389,12 +392,13 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             objective: !!generalObjective.trim(),
             specific_objectives: !!specificObjectives.trim(),
             diagnosis: !!diagnosis.trim(),
+            commitment_followup: commitments.some((c) => c.activity.trim()),
             recommendations: !!recommendations.trim(),
             observations: !!observations.trim(),
             photos: hasPhotos,
             attendance: attendanceComplete,
         };
-    }, [generalObjective, specificObjectives, diagnosis, recommendations, observations, localPhotos, existingImages, attendanceId, attendanceName]);
+    }, [generalObjective, specificObjectives, diagnosis, commitments, recommendations, observations, localPhotos, existingImages, attendanceId, attendanceName]);
 
     // ── Load existing visit ─────────────────────────────────────────────────
 
@@ -516,10 +520,6 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             ...prev,
             { activity: "", percentage_compliance: 0, appropriation_in_field: "", recompType: "recomendaciones" },
         ]);
-    };
-
-    const removeCommitmentRow = (index: number) => {
-        setCommitments((prev) => prev.filter((_, i) => i !== index));
     };
 
     const updateCommitment = (index: number, field: keyof Visit2MonitoringCommitment, value: any) => {
@@ -1007,7 +1007,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
     // ── Render: commitments content ──────────────────────────────────────
 
     const renderCommitmentsContent = useCallback(() => {
-        if (!expandedSections.has("recommendations")) return null;
+        if (!expandedSections.has("commitment_followup")) return null;
 
         return (
             <View style={styles.sectionContent}>
@@ -1017,10 +1017,9 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
 
                 {/* Header */}
                 <View style={styles.commitmentsHeader}>
-                    <ThemedText style={styles.commitmentsHeaderText}>Actividad</ThemedText>
-                    <ThemedText style={styles.commitmentsHeaderText}>% Cumpl.</ThemedText>
-                    <ThemedText style={styles.commitmentsHeaderText}>Apropiación en campo</ThemedText>
-                    <View style={{ width: 32 }} />
+                    <ThemedText style={[styles.commitmentsHeaderText, { flex: 1 }]}>Actividad</ThemedText>
+                    <ThemedText style={[styles.commitmentsHeaderText, { width: 60, textAlign: "center" }]}>% Cumpl.</ThemedText>
+                    <ThemedText style={[styles.commitmentsHeaderText, { flex: 1 }]}>Apropiación en campo</ThemedText>
                 </View>
 
                 {/* Rows */}
@@ -1050,13 +1049,6 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                             placeholderTextColor="#aaa"
                             multiline
                         />
-                        <TouchableOpacity
-                            style={styles.commitmentRemoveBtn}
-                            onPress={() => removeCommitmentRow(index)}
-                            disabled={commitments.length <= 1}
-                        >
-                            <X size={responsiveFont(14)} color={commitments.length <= 1 ? "#ccc" : "#dc2626"} />
-                        </TouchableOpacity>
                     </View>
                 ))}
 
@@ -1228,11 +1220,11 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                         )}
                     </View>
 
-                    {/* Section: Seguimiento Compromisos (Recomendaciones) */}
+                    {/* Section: Seguimiento al cumplimiento de compromisos (5.2) */}
                     <View style={styles.section}>
                         {renderSectionHeader(
-                            SECTIONS.find((s) => s.key === "recommendations")!,
-                            commitments.some((c) => c.activity.trim()),
+                            SECTIONS.find((s) => s.key === "commitment_followup")!,
+                            sectionStatus.commitment_followup,
                         )}
                         {renderCommitmentsContent()}
                     </View>
@@ -1739,12 +1731,6 @@ const styles = StyleSheet.create({
         fontSize: responsiveFont(14),
         color: "#333",
         minHeight: verticalScale(36),
-    },
-    commitmentRemoveBtn: {
-        width: 32,
-        height: 36,
-        justifyContent: "center",
-        alignItems: "center",
     },
     addCommitmentBtn: {
         paddingVertical: verticalScale(10),
