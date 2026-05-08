@@ -38,6 +38,8 @@ import {
     FileText,
     ImagePlus,
     MessageSquare,
+    PencilLine,
+    Plus,
     Save,
     Stethoscope,
     Target,
@@ -92,6 +94,94 @@ interface Visit2MonitoringCommitmentResponse {
     appropriation_in_field: string;
 }
 
+/** Campos de visita 1 necesarios para armar líneas seleccionables en 5.2 */
+interface Visit1ForVisit2Response {
+    recommendations?: string | null;
+    commitments?: string | null;
+}
+
+type RecompType = "recomendaciones" | "compromisos";
+
+interface RecompBucketState {
+    selected: number[];
+    percentage: Record<number, string>;
+    appropriation: Record<number, string>;
+}
+
+const VISIT1_EMPTY_REC_TXT = "Sin recomendaciones registradas en la Visita 1.";
+const VISIT1_EMPTY_COMP_TXT = "Sin compromisos registrados en la Visita 1.";
+
+function emptyRecompBucket(): RecompBucketState {
+    return { selected: [], percentage: {}, appropriation: {} };
+}
+
+/** Ítems de actividad desde texto de Visita 1 (líneas por ENTER u otros separadores). */
+function linesFromVisit1Text(raw: string | undefined | null): string[] {
+    const base = (raw ?? "").trim();
+    if (!base) return [];
+    if (base === VISIT1_EMPTY_REC_TXT || base === VISIT1_EMPTY_COMP_TXT) return [];
+
+    const lines = base
+        .split(/\r?\n/)
+        .map((line) =>
+            line
+                .replace(/^\s*(?:[\u2022•]|[-*]|\d+\.)\s+/, "")
+                .trim(),
+        )
+        .filter(Boolean);
+
+    if (lines.length === 1 && /;|,\s/.test(lines[0]!)) {
+        return lines[0]!
+            .split(/\s*;\s*|,\s+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+    }
+
+    return lines;
+}
+
+function normalizeActivity(s: string | undefined) {
+    return (s ?? "").trim().replace(/\s+/g, " ");
+}
+
+function resolveRowRecompType(
+    row: Visit2MonitoringCommitment,
+    visitRecoLines: string[],
+    visitCompLines: string[],
+): RecompType | null {
+    if (row.recompType === "recomendaciones" || row.recompType === "compromisos") {
+        return row.recompType;
+    }
+    const a = normalizeActivity(row.activity);
+    const inR = visitRecoLines.some((l) => normalizeActivity(l) === a);
+    const inC = visitCompLines.some((l) => normalizeActivity(l) === a);
+    if (inR && !inC) return "recomendaciones";
+    if (inC && !inR) return "compromisos";
+    if (inR && inC) return "recomendaciones";
+    return null;
+}
+
+function trackingRowFilled(r: Visit2MonitoringCommitment) {
+    const pct =
+        String(r.porcentaje ?? "")
+            .trim()
+            || String(r.percentage_compliance ?? "");
+    const ap = String(r.appropriation_in_field ?? "").trim();
+    return pct !== "" && ap !== "";
+}
+
+function bucketCoversAllLinesWithFields(lines: string[], bucket: RecompBucketState): boolean {
+    if (lines.length === 0) return true;
+    const sel = new Set(bucket.selected);
+    if (sel.size !== lines.length) return false;
+    for (let i = 0; i < lines.length; i++) {
+        if (!sel.has(i)) return false;
+        if (String(bucket.percentage[i] ?? "").trim() === "") return false;
+        if (String(bucket.appropriation[i] ?? "").trim() === "") return false;
+    }
+    return true;
+}
+
 // ─── Attendance options ─────────────────────────────────────────────────────
 
 const ATTENDANCE_OPTIONS = [
@@ -142,6 +232,20 @@ async function getVisit2(
     try {
         const res = await apiFetch<{ code: string; data: Visit2Response }>(
             `/visit-2/project/${projectId}/producer/${producerId}`,
+        );
+        return res?.data ?? null;
+    } catch {
+        return null;
+    }
+}
+
+async function getVisit1ForVisit2(
+    projectId: number,
+    producerId: number,
+): Promise<Visit1ForVisit2Response | null> {
+    try {
+        const res = await apiFetch<{ code: string; data: Visit1ForVisit2Response }>(
+            `/visit-1/project/${projectId}/producer/${producerId}`,
         );
         return res?.data ?? null;
     } catch {
@@ -315,10 +419,12 @@ function formatDisplayDate(dateStr: string): string {
 export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
     const { showAlert } = useAlert();
 
-    // Bottom sheet ref
+    // Bottom sheet refs (form principal + 5.2 recomp / compromisos)
     const sheetRef = useRef<BottomSheetModal>(null);
+    const recompSheetRef = useRef<BottomSheetModal>(null);
     const [sheetOpen, setSheetOpen] = useState(false);
     const sheetSnapPoints = useMemo(() => ["94%"], []);
+    const recompSnapPoints = useMemo(() => ["94%"], []);
 
     // Form state
     const [generalObjective, setGeneralObjective] = useState("");
@@ -331,10 +437,18 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
     const [attendanceIdentification, setAttendanceIdentification] = useState("");
     const [registrationDate, setRegistrationDate] = useState(todayString());
 
-    // Monitoring commitments (seguimiento compromisos)
-    const [commitments, setCommitments] = useState<Visit2MonitoringCommitment[]>([
-        { activity: "", percentage_compliance: 0, appropriation_in_field: "", recompType: "recomendaciones" },
-    ]);
+    // Monitoring commitments (seguimiento 5.2) — se edita solo en la bottom sheet secundaria
+    const [commitments, setCommitments] = useState<Visit2MonitoringCommitment[]>([]);
+
+    // Texto crudo de Visita 1 para líneas de Recomendaciones / Compromisos
+    const [visit1RecommendationsRaw, setVisit1RecommendationsRaw] = useState("");
+    const [visit1CommitmentsRaw, setVisit1CommitmentsRaw] = useState("");
+
+    const [recompDialogType, setRecompDialogType] = useState<RecompType>("recomendaciones");
+    const [recompBuckets, setRecompBuckets] = useState<Record<RecompType, RecompBucketState>>({
+        recomendaciones: emptyRecompBucket(),
+        compromisos: emptyRecompBucket(),
+    });
 
     // Photos: local picks + existing server images
     const [localPhotos, setLocalPhotos] = useState<(LocalPhoto | null)[]>([null, null, null]);
@@ -354,6 +468,55 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
     const token = useAuthStore((s) => s.token);
     const authUser = useAuthStore((s) => s.user);
     const producerDetail = useProducerStore((s) => s.producerDetail);
+
+    const visitRecoLines = useMemo(
+        () => linesFromVisit1Text(visit1RecommendationsRaw),
+        [visit1RecommendationsRaw],
+    );
+    const visitCompLines = useMemo(
+        () => linesFromVisit1Text(visit1CommitmentsRaw),
+        [visit1CommitmentsRaw],
+    );
+
+    const isSection52Complete = useMemo(() => {
+        const rows = commitments;
+        const reco = visitRecoLines;
+        const comp = visitCompLines;
+        const lineCovered = (type: RecompType, line: string) =>
+            rows.some(
+                (r) =>
+                    resolveRowRecompType(r, visitRecoLines, visitCompLines) === type &&
+                    normalizeActivity(r.activity) === normalizeActivity(line) &&
+                    trackingRowFilled(r),
+            );
+        const recoDone = reco.length === 0 || reco.every((line) => lineCovered("recomendaciones", line));
+        const compDone = comp.length === 0 || comp.every((line) => lineCovered("compromisos", line));
+        return recoDone && compDone;
+    }, [commitments, visitRecoLines, visitCompLines]);
+
+    const isRecompDialogSaveReady = useMemo(
+        () =>
+            bucketCoversAllLinesWithFields(visitRecoLines, recompBuckets.recomendaciones) &&
+            bucketCoversAllLinesWithFields(visitCompLines, recompBuckets.compromisos),
+        [visitRecoLines, visitCompLines, recompBuckets],
+    );
+
+    const sortedCompSelectedIndices = useMemo(
+        () => [...recompBuckets.compromisos.selected].sort((a, b) => a - b),
+        [recompBuckets.compromisos.selected],
+    );
+    const sortedRecoSelectedIndices = useMemo(
+        () => [...recompBuckets.recomendaciones.selected].sort((a, b) => a - b),
+        [recompBuckets.recomendaciones.selected],
+    );
+
+    const activeRecompDialogSelections =
+        recompDialogType === "recomendaciones"
+            ? recompBuckets.recomendaciones.selected
+            : recompBuckets.compromisos.selected;
+
+    const recompDialogItems =
+        recompDialogType === "recomendaciones" ? visitRecoLines : visitCompLines;
 
     // ── Bottom sheet handlers ───────────────────────────────────────────
 
@@ -392,13 +555,24 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             objective: !!generalObjective.trim(),
             specific_objectives: !!specificObjectives.trim(),
             diagnosis: !!diagnosis.trim(),
-            commitment_followup: commitments.some((c) => c.activity.trim()),
+            commitment_followup: isSection52Complete,
             recommendations: !!recommendations.trim(),
             observations: !!observations.trim(),
             photos: hasPhotos,
             attendance: attendanceComplete,
         };
-    }, [generalObjective, specificObjectives, diagnosis, commitments, recommendations, observations, localPhotos, existingImages, attendanceId, attendanceName]);
+    }, [
+        generalObjective,
+        specificObjectives,
+        diagnosis,
+        isSection52Complete,
+        recommendations,
+        observations,
+        localPhotos,
+        existingImages,
+        attendanceId,
+        attendanceName,
+    ]);
 
     // ── Load existing visit ─────────────────────────────────────────────────
 
@@ -409,6 +583,14 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         (async () => {
             setLoading(true);
             try {
+                const visit1 = await getVisit1ForVisit2(Number(projectId), Number(producerId));
+                const recoLines = linesFromVisit1Text(visit1?.recommendations ?? undefined);
+                const compLines = linesFromVisit1Text(visit1?.commitments ?? undefined);
+                if (!cancelled) {
+                    setVisit1RecommendationsRaw(visit1?.recommendations ?? "");
+                    setVisit1CommitmentsRaw(visit1?.commitments ?? "");
+                }
+
                 const data = await getVisit2(Number(projectId), Number(producerId));
                 if (cancelled) return;
 
@@ -425,19 +607,26 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     setAttendanceIdentification(data.attendance_identification || "");
                     if (data.registration_date) setRegistrationDate(data.registration_date);
 
-                    // Load monitoring commitments
                     if (data.monitoring_commitments && data.monitoring_commitments.length > 0) {
                         setCommitments(
-                            data.monitoring_commitments.map((c) => ({
-                                id: c.id,
-                                visit_2_id: c.visit_2_id,
-                                activity: c.activity,
-                                percentage_compliance: c.percentage_compliance,
-                                appropriation_in_field: c.appropriation_in_field,
-                                recompType: "recomendaciones",
-                                porcentaje: `${c.percentage_compliance}%`,
-                            })),
+                            data.monitoring_commitments.map((c) => {
+                                const row: Visit2MonitoringCommitment = {
+                                    id: c.id,
+                                    visit_2_id: c.visit_2_id,
+                                    activity: c.activity,
+                                    percentage_compliance: c.percentage_compliance,
+                                    appropriation_in_field: c.appropriation_in_field,
+                                    porcentaje:
+                                        c.percentage_compliance >= 0
+                                            ? `${c.percentage_compliance}`
+                                            : "",
+                                };
+                                const rt = resolveRowRecompType(row, recoLines, compLines);
+                                return { ...row, recompType: rt ?? "recomendaciones" };
+                            }),
                         );
+                    } else {
+                        setCommitments([]);
                     }
 
                     const imgs = data.images ?? [];
@@ -468,7 +657,14 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                         const stored = JSON.parse(localVisit.photos ?? "{}");
                         const commitmentsData = stored.monitoringCommitments ?? [];
                         if (commitmentsData.length > 0) {
-                            setCommitments(commitmentsData);
+                            setCommitments(
+                                commitmentsData.map((c: Visit2MonitoringCommitment) => {
+                                    const rt = resolveRowRecompType(c, recoLines, compLines);
+                                    return { ...c, recompType: rt ?? c.recompType ?? "recomendaciones" };
+                                }),
+                            );
+                        } else {
+                            setCommitments([]);
                         }
                         const photos: LocalPhoto[] = stored.photos ?? [];
                         const newLocal: (LocalPhoto | null)[] = [null, null, null];
@@ -513,22 +709,142 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         });
     }, []);
 
-    // ── Commitment helpers ─────────────────────────────────────────────────
+    // ── Seguimiento 5.2 (buckets + bottom sheet secundaria) ──────────────
 
-    const addCommitmentRow = () => {
-        setCommitments((prev) => [
-            ...prev,
-            { activity: "", percentage_compliance: 0, appropriation_in_field: "", recompType: "recomendaciones" },
-        ]);
-    };
+    const buildBucketFromForm = useCallback(
+        (type: RecompType): RecompBucketState => {
+            const lines = type === "recomendaciones" ? visitRecoLines : visitCompLines;
+            const rows = commitments;
+            const bucket = emptyRecompBucket();
+            lines.forEach((line, idx) => {
+                const row = rows.find(
+                    (r) =>
+                        resolveRowRecompType(r, visitRecoLines, visitCompLines) === type &&
+                        normalizeActivity(r.activity) === normalizeActivity(line),
+                );
+                if (row) {
+                    bucket.selected.push(idx);
+                    const pct =
+                        row.porcentaje?.replace(/[^\d]/g, "") ??
+                        (row.percentage_compliance != null
+                            ? String(row.percentage_compliance)
+                            : "");
+                    bucket.percentage[idx] = pct;
+                    bucket.appropriation[idx] = row.appropriation_in_field ?? "";
+                }
+            });
+            bucket.selected.sort((a, b) => a - b);
+            return bucket;
+        },
+        [visitRecoLines, visitCompLines, commitments],
+    );
 
-    const updateCommitment = (index: number, field: keyof Visit2MonitoringCommitment, value: any) => {
-        setCommitments((prev) => {
-            const updated = [...prev];
-            updated[index] = { ...updated[index], [field]: value };
-            return updated;
+    const hydrateRecompBucketsFromForm = useCallback(() => {
+        setRecompBuckets({
+            recomendaciones: buildBucketFromForm("recomendaciones"),
+            compromisos: buildBucketFromForm("compromisos"),
         });
-    };
+    }, [buildBucketFromForm]);
+
+    const openRecompSheet = useCallback(() => {
+        hydrateRecompBucketsFromForm();
+        setRecompDialogType("recomendaciones");
+        recompSheetRef.current?.present();
+    }, [hydrateRecompBucketsFromForm]);
+
+    const toggleRecompDialogItem = useCallback(
+        (idx: number) => {
+            setRecompBuckets((prev) => {
+                const t = recompDialogType;
+                const b = prev[t];
+                const pos = b.selected.indexOf(idx);
+                const selected =
+                    pos >= 0
+                        ? [...b.selected.slice(0, pos), ...b.selected.slice(pos + 1)]
+                        : [...b.selected, idx].sort((a, bIdx) => a - bIdx);
+                return {
+                    ...prev,
+                    [t]: {
+                        ...b,
+                        selected,
+                        percentage:
+                            pos < 0
+                                ? { ...b.percentage, [idx]: b.percentage[idx] ?? "" }
+                                : { ...b.percentage },
+                        appropriation:
+                            pos < 0
+                                ? { ...b.appropriation, [idx]: b.appropriation[idx] ?? "" }
+                                : { ...b.appropriation },
+                    },
+                };
+            });
+        },
+        [recompDialogType],
+    );
+
+    const setBucketPercentageDigits = useCallback((type: RecompType, itemIdx: number, raw: string) => {
+        const next = raw.replace(/\D/g, "");
+        setRecompBuckets((prev) => ({
+            ...prev,
+            [type]: {
+                ...prev[type],
+                percentage: { ...prev[type].percentage, [itemIdx]: next },
+            },
+        }));
+    }, []);
+
+    const setBucketAppropriationField = useCallback((type: RecompType, itemIdx: number, raw: string) => {
+        setRecompBuckets((prev) => ({
+            ...prev,
+            [type]: {
+                ...prev[type],
+                appropriation: { ...prev[type].appropriation, [itemIdx]: raw },
+            },
+        }));
+    }, []);
+
+    const saveRecompDialog = useCallback(() => {
+        if (!isRecompDialogSaveReady) return;
+        const bucketsSnapshot = recompBuckets;
+        setCommitments((prevRows) => {
+            const sliceFromBucket = (
+                type: RecompType,
+                lines: string[],
+                bucket: RecompBucketState,
+            ): Visit2MonitoringCommitment[] =>
+                [...bucket.selected]
+                    .sort((a, b) => a - b)
+                    .map((idx) => {
+                        const actividad = lines[idx]?.trim() || "";
+                        const old = prevRows.find(
+                            (r) =>
+                                resolveRowRecompType(r, visitRecoLines, visitCompLines) === type &&
+                                normalizeActivity(r.activity) === normalizeActivity(actividad),
+                        );
+                        const pctRaw = bucket.percentage[idx] ?? "";
+                        const num = parseInt(pctRaw.replace(/[^\d]/g, ""), 10) || 0;
+                        return {
+                            ...(old?.id != null ? { id: old.id, visit_2_id: old.visit_2_id } : {}),
+                            activity: actividad,
+                            percentage_compliance: num,
+                            appropriation_in_field: bucket.appropriation[idx] ?? "",
+                            porcentaje: pctRaw,
+                            recompType: type,
+                        };
+                    });
+
+            return [
+                ...sliceFromBucket("compromisos", visitCompLines, bucketsSnapshot.compromisos),
+                ...sliceFromBucket("recomendaciones", visitRecoLines, bucketsSnapshot.recomendaciones),
+            ];
+        });
+        recompSheetRef.current?.dismiss();
+    }, [
+        isRecompDialogSaveReady,
+        recompBuckets,
+        visitRecoLines,
+        visitCompLines,
+    ]);
 
     // ── Photo handling ──────────────────────────────────────────────────────
 
@@ -638,6 +954,15 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             showAlert({ title: "Campo requerido", message: "Ingrese el nombre de la persona que atiende.", type: "warning" });
             return;
         }
+        if (!isSection52Complete) {
+            showAlert({
+                title: "Sección 5.2 incompleta",
+                message:
+                    "Debe registrar el seguimiento (porcentaje y apropiación) para todas las recomendaciones y todos los compromisos cargados desde la Visita 1. Use «Agregar» y complete cada ítem antes de guardar.",
+                type: "warning",
+            });
+            return;
+        }
 
         setSaving(true);
         try {
@@ -745,7 +1070,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         generalObjective, specificObjectives, diagnosis, recommendations, observations,
         attendanceId, attendanceName, attendanceIdentification, registrationDate,
         producerId, projectId, commitments, localPhotos, isEditMode, existingVisitId,
-        showAlert, authUser,
+        showAlert, authUser, isSection52Complete,
     ]);
 
     // ── Render: section header ───────────────────────────────────────────
@@ -1004,7 +1329,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         );
     }, [expandedSections, registrationDate, attendanceId, attendanceName, attendanceIdentification, showAttendanceDropdown]);
 
-    // ── Render: commitments content ──────────────────────────────────────
+    // ── Render: commitments content (5.2) ─────────────────────────────────
 
     const renderCommitmentsContent = useCallback(() => {
         if (!expandedSections.has("commitment_followup")) return null;
@@ -1012,56 +1337,88 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         return (
             <View style={styles.sectionContent}>
                 <ThemedText style={styles.sectionHint}>
-                    Registre las actividades comprometidas, el porcentaje de cumplimiento y la apropiación en campo.
+                    Pulse «Agregar» para seleccionar las líneas cargadas en la Visita 1 y registrar % de cumplimiento y
+                    apropiación. No podrá guardar la Visita 2 hasta cubrir todas las recomendaciones y todos los compromisos
+                    definidos en esa visita (si una lista viene vacía, no aplica). La lista siguiente es solo lectura; para
+                    corregir valores use «Modificar valores».
                 </ThemedText>
 
-                {/* Header */}
-                <View style={styles.commitmentsHeader}>
-                    <ThemedText style={[styles.commitmentsHeaderText, { flex: 1 }]}>Actividad</ThemedText>
-                    <ThemedText style={[styles.commitmentsHeaderText, { width: 60, textAlign: "center" }]}>% Cumpl.</ThemedText>
-                    <ThemedText style={[styles.commitmentsHeaderText, { flex: 1 }]}>Apropiación en campo</ThemedText>
-                </View>
-
-                {/* Rows */}
-                {commitments.map((commitment, index) => (
-                    <View key={index} style={styles.commitmentRow}>
-                        <TextInput
-                            style={styles.commitmentActivity}
-                            value={commitment.activity}
-                            onChangeText={(text) => updateCommitment(index, "activity", text)}
-                            placeholder="Actividad comprometida"
-                            placeholderTextColor="#aaa"
-                            multiline
-                        />
-                        <TextInput
-                            style={styles.commitmentPercentage}
-                            value={commitment.porcentaje ?? ""}
-                            onChangeText={(text) => updateCommitment(index, "porcentaje", text)}
-                            placeholder="%"
-                            placeholderTextColor="#aaa"
-                            keyboardType="numeric"
-                        />
-                        <TextInput
-                            style={styles.commitmentAppropriation}
-                            value={commitment.appropriation_in_field}
-                            onChangeText={(text) => updateCommitment(index, "appropriation_in_field", text)}
-                            placeholder="Descripción..."
-                            placeholderTextColor="#aaa"
-                            multiline
-                        />
-                    </View>
-                ))}
-
-                <TouchableOpacity
-                    style={styles.addCommitmentBtn}
-                    onPress={addCommitmentRow}
-                    activeOpacity={0.7}
-                >
-                    <ThemedText style={styles.addCommitmentBtnText}>+ Agregar fila</ThemedText>
+                <TouchableOpacity style={styles.recompOpenBtn} onPress={openRecompSheet} activeOpacity={0.75}>
+                    {isSection52Complete ? (
+                        <PencilLine size={responsiveFont(18)} color="#1a7a3a" />
+                    ) : (
+                        <Plus size={responsiveFont(18)} color="#1a7a3a" />
+                    )}
+                    <ThemedText style={styles.recompOpenBtnText}>
+                        {isSection52Complete ? "Modificar valores" : "Agregar"}
+                    </ThemedText>
                 </TouchableOpacity>
+
+                <View style={styles.commitmentsReadonlyBox}>
+                    {commitments.length === 0 ? (
+                        <ThemedText style={styles.commitmentsEmptyText}>Sin ítems de seguimiento.</ThemedText>
+                    ) : (
+                        commitments.map((row, idx) => {
+                            const rt = resolveRowRecompType(row, visitRecoLines, visitCompLines);
+                            const pctRaw = row.porcentaje?.trim() ?? "";
+                            const pctLabel =
+                                pctRaw !== ""
+                                    ? pctRaw.endsWith("%")
+                                        ? pctRaw
+                                        : `${pctRaw}%`
+                                    : row.percentage_compliance != null &&
+                                        !Number.isNaN(row.percentage_compliance)
+                                      ? `${row.percentage_compliance}%`
+                                      : "—";
+                            return (
+                                <View key={`${rt}-${idx}-${normalizeActivity(row.activity)}`}>
+                                    {idx > 0 ? <View style={styles.commitmentsReadonlyDivider} /> : null}
+                                    <View style={styles.commitmentsReadonlyRow}>
+                                        <View
+                                            style={[
+                                                styles.recompTypeBadge,
+                                                rt === "compromisos"
+                                                    ? styles.recompTypeBadgeComp
+                                                    : styles.recompTypeBadgeReco,
+                                            ]}
+                                        >
+                                            <ThemedText style={styles.recompTypeBadgeText}>
+                                                {rt === "compromisos" ? "Compromiso" : "Recomendación"}
+                                            </ThemedText>
+                                        </View>
+                                        <ThemedText style={styles.commitmentsActividadText}>
+                                            {row.activity.trim() || "—"}
+                                        </ThemedText>
+                                        <ThemedText style={styles.commitmentsDetailText}>
+                                            <ThemedText type="defaultSemiBold" style={styles.commitmentsDetailLabel}>
+                                                % Cumplimiento:
+                                            </ThemedText>
+                                            {"  "}
+                                            {pctLabel}
+                                        </ThemedText>
+                                        <ThemedText style={styles.commitmentsDetailText}>
+                                            <ThemedText type="defaultSemiBold" style={styles.commitmentsDetailLabel}>
+                                                Apropiación:
+                                            </ThemedText>
+                                            {"  "}
+                                            {row.appropriation_in_field.trim() || "—"}
+                                        </ThemedText>
+                                    </View>
+                                </View>
+                            );
+                        })
+                    )}
+                </View>
             </View>
         );
-    }, [expandedSections, commitments]);
+    }, [
+        expandedSections,
+        commitments,
+        visitRecoLines,
+        visitCompLines,
+        isSection52Complete,
+        openRecompSheet,
+    ]);
 
     // ── Loading state ─────────────────────────────────────────────────────
 
@@ -1305,6 +1662,284 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     </TouchableOpacity>
 
                     <View style={{ height: verticalScale(32) }} />
+                </BottomSheetScrollView>
+            </BottomSheetModal>
+
+            {/* Bottom sheet anidada: selección desde Visita 1 + % / apropiación (equiv. Visit2Dialog.vue) */}
+            <BottomSheetModal
+                ref={recompSheetRef}
+                index={0}
+                snapPoints={recompSnapPoints}
+                stackBehavior="push"
+                backdropComponent={renderBackdrop}
+                enablePanDownToClose
+                enableDynamicSizing={false}
+                backgroundStyle={styles.sheetBackground}
+                handleIndicatorStyle={styles.sheetHandle}
+                keyboardBehavior="interactive"
+                keyboardBlurBehavior="restore"
+                android_keyboardInputMode="adjustResize"
+            >
+                <View style={styles.recompModalHeader}>
+                    <ThemedText
+                        type="defaultSemiBold"
+                        style={styles.recompModalTitle}
+                        lightColor="#333"
+                        darkColor="#333"
+                    >
+                        Seleccionar Recomendaciones y Compromisos
+                    </ThemedText>
+                    <TouchableOpacity
+                        style={styles.sheetCloseBtn}
+                        onPress={() => recompSheetRef.current?.dismiss()}
+                        activeOpacity={0.7}
+                    >
+                        <X size={responsiveFont(20)} color="#666" />
+                    </TouchableOpacity>
+                </View>
+
+                <BottomSheetScrollView
+                    contentContainerStyle={styles.recompScrollContent}
+                    showsVerticalScrollIndicator
+                    keyboardShouldPersistTaps="handled"
+                >
+                    <View style={styles.recompOriginCard}>
+                        <ThemedText style={styles.recompSmallHeading}>Origen en Visita 1</ThemedText>
+                        <View style={styles.recompTypeTabs}>
+                            <TouchableOpacity
+                                style={[
+                                    styles.recompTypeTab,
+                                    recompDialogType === "recomendaciones" && styles.recompTypeTabActive,
+                                ]}
+                                onPress={() => setRecompDialogType("recomendaciones")}
+                                activeOpacity={0.75}
+                            >
+                                <ThemedText
+                                    style={[
+                                        styles.recompTypeTabText,
+                                        recompDialogType === "recomendaciones" &&
+                                            styles.recompTypeTabTextActive,
+                                    ]}
+                                >
+                                    Recomendaciones
+                                </ThemedText>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[
+                                    styles.recompTypeTab,
+                                    recompDialogType === "compromisos" && styles.recompTypeTabActive,
+                                ]}
+                                onPress={() => setRecompDialogType("compromisos")}
+                                activeOpacity={0.75}
+                            >
+                                <ThemedText
+                                    style={[
+                                        styles.recompTypeTabText,
+                                        recompDialogType === "compromisos" && styles.recompTypeTabTextActive,
+                                    ]}
+                                >
+                                    Compromisos
+                                </ThemedText>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+
+                    <ThemedText style={styles.recompListHeading}>
+                        {recompDialogType === "recomendaciones"
+                            ? "Recomendaciones (toque para seleccionar)"
+                            : "Compromisos (toque para seleccionar)"}
+                    </ThemedText>
+                    <View style={styles.recompPickList}>
+                        {recompDialogItems.length === 0 ? (
+                            <ThemedText style={styles.recompPickEmpty}>
+                                {recompDialogType === "recomendaciones"
+                                    ? "No hay líneas de recomendaciones en la Visita 1. Revise ese registro o elija Compromisos."
+                                    : "No hay líneas de compromisos en la Visita 1. Revise ese registro o elija Recomendaciones."}
+                            </ThemedText>
+                        ) : (
+                            recompDialogItems.map((item, idx) => {
+                                const selected = activeRecompDialogSelections.includes(idx);
+                                return (
+                                    <TouchableOpacity
+                                        key={`${recompDialogType}-${idx}`}
+                                        style={[styles.recompPickRow, selected && styles.recompPickRowSelected]}
+                                        onPress={() => toggleRecompDialogItem(idx)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <ThemedText
+                                            style={[styles.recompPickRowText, selected && styles.recompPickRowTextSelected]}
+                                        >
+                                            {item}
+                                        </ThemedText>
+                                    </TouchableOpacity>
+                                );
+                            })
+                        )}
+                    </View>
+
+                    <View style={styles.recompMetricsCard}>
+                        <ThemedText style={styles.recompSmallHeading}>
+                            % y apropiación (compromisos y recomendaciones)
+                        </ThemedText>
+                        <ThemedText style={styles.recompCounters}>
+                            Compromisos {recompBuckets.compromisos.selected.length} /{" "}
+                            {visitCompLines.length} · Recomendaciones{" "}
+                            {recompBuckets.recomendaciones.selected.length} / {visitRecoLines.length}
+                        </ThemedText>
+                    </View>
+
+                    {visitCompLines.length > 0 ? (
+                        <View style={styles.recompBucketBlock}>
+                            <ThemedText style={styles.recompBucketHeading}>Compromisos</ThemedText>
+                            {sortedCompSelectedIndices.length === 0 ? (
+                                <ThemedText style={styles.recompBucketHint}>
+                                    Aún sin compromisos seleccionados.
+                                </ThemedText>
+                            ) : (
+                                sortedCompSelectedIndices.map((selIdx, i) => (
+                                    <View key={`edc-${selIdx}`}>
+                                        {i > 0 ? <View style={styles.recompCardDivider} /> : null}
+                                        <View style={styles.recompInputCard}>
+                                            <ThemedText style={styles.recompCardBadge}>Compromiso</ThemedText>
+                                            <ThemedText style={styles.recompCardLine}>{visitCompLines[selIdx]}</ThemedText>
+                                            <View style={styles.recompPctRow}>
+                                                <View style={styles.recompPctCol}>
+                                                    <ThemedText style={styles.fieldLabel}>% cumplimiento</ThemedText>
+                                                    <TextInput
+                                                        style={styles.recompPctInput}
+                                                        value={recompBuckets.compromisos.percentage[selIdx] ?? ""}
+                                                        onChangeText={(t) =>
+                                                            setBucketPercentageDigits("compromisos", selIdx, t)
+                                                        }
+                                                        placeholder="0"
+                                                        placeholderTextColor="#aaa"
+                                                        keyboardType="number-pad"
+                                                        maxLength={5}
+                                                    />
+                                                </View>
+                                                <View style={styles.recompAprCol}>
+                                                    <ThemedText style={styles.fieldLabel}>Apropiación</ThemedText>
+                                                    <TextInput
+                                                        style={styles.recompAprInput}
+                                                        value={
+                                                            recompBuckets.compromisos.appropriation[selIdx] ?? ""
+                                                        }
+                                                        onChangeText={(t) =>
+                                                            setBucketAppropriationField(
+                                                                "compromisos",
+                                                                selIdx,
+                                                                t,
+                                                            )
+                                                        }
+                                                        placeholder="Descripción corta"
+                                                        placeholderTextColor="#aaa"
+                                                    />
+                                                </View>
+                                            </View>
+                                        </View>
+                                    </View>
+                                ))
+                            )}
+                        </View>
+                    ) : null}
+
+                    {visitRecoLines.length > 0 ? (
+                        <View style={styles.recompBucketBlock}>
+                            <ThemedText style={styles.recompBucketHeading}>Recomendaciones</ThemedText>
+                            {sortedRecoSelectedIndices.length === 0 ? (
+                                <ThemedText style={styles.recompBucketHint}>
+                                    Aún sin recomendaciones seleccionadas.
+                                </ThemedText>
+                            ) : (
+                                sortedRecoSelectedIndices.map((selIdx, i) => (
+                                    <View key={`edr-${selIdx}`}>
+                                        {i > 0 ? <View style={styles.recompCardDivider} /> : null}
+                                        <View style={styles.recompInputCard}>
+                                            <ThemedText style={styles.recompCardBadge}>Recomendación</ThemedText>
+                                            <ThemedText style={styles.recompCardLine}>
+                                                {visitRecoLines[selIdx]}
+                                            </ThemedText>
+                                            <View style={styles.recompPctRow}>
+                                                <View style={styles.recompPctCol}>
+                                                    <ThemedText style={styles.fieldLabel}>% cumplimiento</ThemedText>
+                                                    <TextInput
+                                                        style={styles.recompPctInput}
+                                                        value={
+                                                            recompBuckets.recomendaciones.percentage[
+                                                                selIdx
+                                                            ] ?? ""
+                                                        }
+                                                        onChangeText={(t) =>
+                                                            setBucketPercentageDigits(
+                                                                "recomendaciones",
+                                                                selIdx,
+                                                                t,
+                                                            )
+                                                        }
+                                                        placeholder="0"
+                                                        placeholderTextColor="#aaa"
+                                                        keyboardType="number-pad"
+                                                        maxLength={5}
+                                                    />
+                                                </View>
+                                                <View style={styles.recompAprCol}>
+                                                    <ThemedText style={styles.fieldLabel}>Apropiación</ThemedText>
+                                                    <TextInput
+                                                        style={styles.recompAprInput}
+                                                        value={
+                                                            recompBuckets.recomendaciones.appropriation[
+                                                                selIdx
+                                                            ] ?? ""
+                                                        }
+                                                        onChangeText={(t) =>
+                                                            setBucketAppropriationField(
+                                                                "recomendaciones",
+                                                                selIdx,
+                                                                t,
+                                                            )
+                                                        }
+                                                        placeholder="Descripción corta"
+                                                        placeholderTextColor="#aaa"
+                                                    />
+                                                </View>
+                                            </View>
+                                        </View>
+                                    </View>
+                                ))
+                            )}
+                        </View>
+                    ) : null}
+
+                    {visitRecoLines.length === 0 && visitCompLines.length === 0 ? (
+                        <ThemedText style={styles.recompPickEmpty}>
+                            No hay recomendaciones ni compromisos en la Visita 1 para cargar aquí.
+                        </ThemedText>
+                    ) : null}
+
+                    <View style={styles.recompFooterBtns}>
+                        <TouchableOpacity
+                            style={[styles.recompFooterBtnOutline, styles.recompFooterBtnHalf]}
+                            onPress={() => recompSheetRef.current?.dismiss()}
+                            activeOpacity={0.75}
+                        >
+                            <ThemedText style={styles.recompFooterBtnOutlineText}>Cancelar</ThemedText>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[
+                                styles.recompFooterBtnPrimary,
+                                styles.recompFooterBtnHalf,
+                                !isRecompDialogSaveReady && styles.saveButtonDisabled,
+                            ]}
+                            onPress={saveRecompDialog}
+                            disabled={!isRecompDialogSaveReady}
+                            activeOpacity={0.8}
+                        >
+                            <Save size={responsiveFont(18)} color="#fff" />
+                            <ThemedText style={styles.saveButtonText}>Guardar</ThemedText>
+                        </TouchableOpacity>
+                    </View>
+
+                    <View style={{ height: verticalScale(24) }} />
                 </BottomSheetScrollView>
             </BottomSheetModal>
         </View>
@@ -1677,74 +2312,303 @@ const styles = StyleSheet.create({
         color: "#333",
     },
 
-    // Commitments
-    commitmentsHeader: {
+    // Sección 5.2 seguimiento (lista + modal)
+    recompOpenBtn: {
         flexDirection: "row",
-        gap: widthScale(6),
-        paddingHorizontal: widthScale(2),
-        marginBottom: verticalScale(6),
+        alignItems: "center",
+        justifyContent: "center",
+        gap: widthScale(8),
+        paddingVertical: verticalScale(10),
+        paddingHorizontal: widthScale(14),
+        borderRadius: widthScale(8),
+        borderWidth: 1,
+        borderColor: "rgba(26,122,58,0.35)",
+        backgroundColor: "rgba(26,122,58,0.06)",
+        marginBottom: verticalScale(10),
     },
-    commitmentsHeaderText: {
-        fontSize: responsiveFont(11),
+    recompOpenBtnText: {
+        fontSize: responsiveFont(15),
         fontWeight: "700",
+        color: "#1a7a3a",
+    },
+    commitmentsReadonlyBox: {
+        borderRadius: widthScale(8),
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.1)",
+        backgroundColor: "rgba(248,249,250,0.95)",
+        paddingHorizontal: widthScale(10),
+        paddingVertical: verticalScale(10),
+    },
+    commitmentsEmptyText: {
+        fontSize: responsiveFont(14),
+        color: "#888",
+    },
+    commitmentsReadonlyDivider: {
+        height: 1,
+        backgroundColor: "rgba(0,0,0,0.08)",
+        marginVertical: verticalScale(10),
+    },
+    commitmentsReadonlyRow: {
+        gap: verticalScale(6),
+    },
+    recompTypeBadge: {
+        alignSelf: "flex-start",
+        paddingHorizontal: widthScale(8),
+        paddingVertical: verticalScale(3),
+        borderRadius: widthScale(4),
+        marginBottom: verticalScale(2),
+    },
+    recompTypeBadgeComp: {
+        backgroundColor: "rgba(26,122,58,0.15)",
+    },
+    recompTypeBadgeReco: {
+        backgroundColor: "rgba(2,132,199,0.12)",
+    },
+    recompTypeBadgeText: {
+        fontSize: responsiveFont(10),
+        fontWeight: "700",
+        color: "#333",
+        textTransform: "uppercase",
+    },
+    commitmentsActividadText: {
+        fontSize: responsiveFont(15),
+        color: "#222",
+        lineHeight: responsiveFont(22),
+    },
+    commitmentsDetailText: {
+        fontSize: responsiveFont(14),
+        color: "#444",
+        lineHeight: responsiveFont(20),
+    },
+    commitmentsDetailLabel: {
+        color: "#666",
+        fontWeight: "700",
+        fontSize: responsiveFont(13),
+    },
+
+    recompModalHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        paddingHorizontal: widthScale(14),
+        paddingBottom: verticalScale(10),
+        borderBottomWidth: 1,
+        borderBottomColor: "rgba(0,0,0,0.06)",
+        gap: widthScale(8),
+    },
+    recompModalTitle: {
+        flex: 1,
+        fontSize: responsiveFont(18),
+    },
+    recompScrollContent: {
+        paddingHorizontal: widthScale(14),
+        paddingTop: verticalScale(12),
+    },
+    recompOriginCard: {
+        backgroundColor: "#fff",
+        borderRadius: widthScale(10),
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.08)",
+        padding: widthScale(12),
+        marginBottom: verticalScale(12),
+    },
+    recompSmallHeading: {
+        fontSize: responsiveFont(11),
+        fontWeight: "800",
+        color: "#666",
+        textTransform: "uppercase",
+        letterSpacing: 0.4,
+        marginBottom: verticalScale(8),
+    },
+    recompTypeTabs: {
+        flexDirection: "row",
+        gap: widthScale(8),
+    },
+    recompTypeTab: {
+        flex: 1,
+        paddingVertical: verticalScale(10),
+        alignItems: "center",
+        borderRadius: widthScale(8),
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.1)",
+        backgroundColor: "#fafafa",
+    },
+    recompTypeTabActive: {
+        borderColor: "rgba(26,122,58,0.45)",
+        backgroundColor: "rgba(26,122,58,0.08)",
+    },
+    recompTypeTabText: {
+        fontSize: responsiveFont(14),
+        fontWeight: "600",
+        color: "#666",
+    },
+    recompTypeTabTextActive: {
+        color: "#1a7a3a",
+    },
+    recompListHeading: {
+        fontSize: responsiveFont(12),
+        fontWeight: "800",
+        color: "#555",
+        textTransform: "uppercase",
+        marginBottom: verticalScale(8),
+        letterSpacing: 0.3,
+    },
+    recompPickList: {
+        backgroundColor: "#fff",
+        borderRadius: widthScale(10),
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.08)",
+        marginBottom: verticalScale(14),
+        overflow: "hidden",
+    },
+    recompPickEmpty: {
+        fontSize: responsiveFont(14),
+        color: "#777",
+        lineHeight: responsiveFont(20),
+        padding: widthScale(16),
+        textAlign: "center",
+    },
+    recompPickRow: {
+        paddingHorizontal: widthScale(12),
+        paddingVertical: verticalScale(12),
+        borderBottomWidth: 1,
+        borderBottomColor: "rgba(0,0,0,0.06)",
+        backgroundColor: "#fff",
+    },
+    recompPickRowSelected: {
+        backgroundColor: "rgba(26,122,58,0.08)",
+        borderBottomColor: "rgba(26,122,58,0.12)",
+    },
+    recompPickRowText: {
+        fontSize: responsiveFont(15),
+        color: "#333",
+        lineHeight: responsiveFont(22),
+    },
+    recompPickRowTextSelected: {
+        fontWeight: "700",
+        color: "#1a7a3a",
+    },
+    recompMetricsCard: {
+        backgroundColor: "rgba(26,122,58,0.05)",
+        borderRadius: widthScale(8),
+        padding: widthScale(12),
+        marginBottom: verticalScale(14),
+        borderWidth: 1,
+        borderColor: "rgba(26,122,58,0.12)",
+    },
+    recompCounters: {
+        fontSize: responsiveFont(13),
+        color: "#555",
+        marginTop: verticalScale(4),
+    },
+    recompBucketBlock: {
+        marginBottom: verticalScale(16),
+    },
+    recompBucketHeading: {
+        fontSize: responsiveFont(11),
+        fontWeight: "800",
+        color: "#666",
+        textTransform: "uppercase",
+        marginBottom: verticalScale(8),
+    },
+    recompBucketHint: {
+        fontSize: responsiveFont(14),
+        color: "#888",
+        fontStyle: "italic",
+    },
+    recompCardDivider: {
+        height: 8,
+    },
+    recompInputCard: {
+        backgroundColor: "#fff",
+        borderRadius: widthScale(10),
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.1)",
+        padding: widthScale(12),
+        gap: verticalScale(6),
+    },
+    recompCardBadge: {
+        fontSize: responsiveFont(10),
+        fontWeight: "800",
         color: "#666",
         textTransform: "uppercase",
     },
-    commitmentRow: {
+    recompCardLine: {
+        fontSize: responsiveFont(15),
+        color: "#222",
+        lineHeight: responsiveFont(21),
+        marginBottom: verticalScale(4),
+    },
+    recompPctRow: {
         flexDirection: "row",
-        gap: widthScale(6),
-        alignItems: "flex-start",
-        marginBottom: verticalScale(8),
-    },
-    commitmentActivity: {
-        flex: 1,
-        backgroundColor: "#f8f9fa",
-        borderWidth: 1,
-        borderColor: "rgba(0,0,0,0.1)",
-        borderRadius: widthScale(8),
-        paddingHorizontal: widthScale(10),
-        paddingVertical: verticalScale(8),
-        fontSize: responsiveFont(14),
-        color: "#333",
-        minHeight: verticalScale(36),
-    },
-    commitmentPercentage: {
-        width: 60,
-        backgroundColor: "#f8f9fa",
-        borderWidth: 1,
-        borderColor: "rgba(0,0,0,0.1)",
-        borderRadius: widthScale(8),
-        paddingHorizontal: widthScale(8),
-        paddingVertical: verticalScale(8),
-        fontSize: responsiveFont(14),
-        color: "#333",
-        textAlign: "center",
-    },
-    commitmentAppropriation: {
-        flex: 1,
-        backgroundColor: "#f8f9fa",
-        borderWidth: 1,
-        borderColor: "rgba(0,0,0,0.1)",
-        borderRadius: widthScale(8),
-        paddingHorizontal: widthScale(10),
-        paddingVertical: verticalScale(8),
-        fontSize: responsiveFont(14),
-        color: "#333",
-        minHeight: verticalScale(36),
-    },
-    addCommitmentBtn: {
-        paddingVertical: verticalScale(10),
-        alignItems: "center",
-        borderWidth: 1,
-        borderColor: "rgba(0,0,0,0.1)",
-        borderRadius: widthScale(8),
-        borderStyle: "dashed",
+        gap: widthScale(10),
+        alignItems: "flex-end",
+        flexWrap: "wrap",
         marginTop: verticalScale(4),
     },
-    addCommitmentBtnText: {
-        fontSize: responsiveFont(14),
-        color: "#666",
-        fontWeight: "600",
+    recompPctCol: {
+        width: 88,
+        minWidth: 88,
+        flexShrink: 0,
+    },
+    recompAprCol: {
+        flex: 1,
+        minWidth: widthScale(120),
+    },
+    recompPctInput: {
+        backgroundColor: "#f8f9fa",
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.12)",
+        borderRadius: widthScale(8),
+        paddingHorizontal: widthScale(10),
+        paddingVertical: verticalScale(10),
+        fontSize: responsiveFont(15),
+        color: "#222",
+        marginTop: verticalScale(4),
+    },
+    recompAprInput: {
+        backgroundColor: "#f8f9fa",
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.12)",
+        borderRadius: widthScale(8),
+        paddingHorizontal: widthScale(10),
+        paddingVertical: verticalScale(10),
+        fontSize: responsiveFont(15),
+        color: "#222",
+        marginTop: verticalScale(4),
+        minHeight: verticalScale(44),
+        textAlignVertical: "top",
+    },
+    recompFooterBtns: {
+        flexDirection: "row",
+        gap: widthScale(10),
+        marginTop: verticalScale(8),
+        marginBottom: verticalScale(4),
+    },
+    recompFooterBtnHalf: {
+        flex: 1,
+    },
+    recompFooterBtnOutline: {
+        alignItems: "center",
+        justifyContent: "center",
+        paddingVertical: verticalScale(13),
+        borderRadius: widthScale(10),
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.2)",
+        backgroundColor: "#fff",
+    },
+    recompFooterBtnOutlineText: {
+        fontSize: responsiveFont(16),
+        fontWeight: "700",
+        color: "#444",
+    },
+    recompFooterBtnPrimary: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: widthScale(6),
+        paddingVertical: verticalScale(13),
+        borderRadius: widthScale(10),
+        backgroundColor: "#1a7a3a",
     },
 
     // Save button
