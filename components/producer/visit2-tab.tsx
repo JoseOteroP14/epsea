@@ -11,6 +11,7 @@ import { apiFetch } from "@/utils/api";
 import {
     markInterventionMethodApplied,
 } from "@/utils/database/repositories/producer-intervention-repository";
+import { getVisitServerCacheRaw } from "@/utils/database/repositories/server-extensionist-cache-repository";
 import {
     enqueueVisit2,
     getPendingLocalVisit2,
@@ -672,11 +673,30 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         (async () => {
             setLoading(true);
             try {
+                const uid = authUser?.user_id ?? 0;
                 let visit1: Visit1ForVisit2Response | null = null;
-                try {
-                    visit1 = await getVisit1ForVisit2(Number(projectId), Number(producerId));
-                } catch {
-                    /* sin red: líneas recomendaciones/compromisos vacías */
+                const online = await checkConnectivity();
+                if (online) {
+                    try {
+                        visit1 = await getVisit1ForVisit2(Number(projectId), Number(producerId));
+                    } catch {
+                        /* ignorar error de red */
+                    }
+                }
+                if (!visit1 && uid > 0) {
+                    const rawV1 = await getVisitServerCacheRaw(
+                        "visit1",
+                        Number(producerId),
+                        Number(projectId),
+                        uid,
+                    );
+                    if (rawV1) {
+                        try {
+                            visit1 = JSON.parse(rawV1) as Visit1ForVisit2Response;
+                        } catch {
+                            visit1 = null;
+                        }
+                    }
                 }
 
                 const recoLines = linesFromVisit1Text(visit1?.recommendations ?? undefined);
@@ -685,8 +705,6 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     setVisit1RecommendationsRaw(visit1?.recommendations ?? "");
                     setVisit1CommitmentsRaw(visit1?.commitments ?? "");
                 }
-
-                const uid = authUser?.user_id ?? 0;
                 const pendingLocal =
                     uid > 0
                         ? await getPendingLocalVisit2(Number(producerId), Number(projectId), uid)
@@ -764,10 +782,27 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     hydrateFromQueue(pendingLocal);
                 } else {
                     let data: Visit2Response | null = null;
-                    try {
-                        data = await getVisit2(Number(projectId), Number(producerId));
-                    } catch {
-                        data = null;
+                    if (online) {
+                        try {
+                            data = await getVisit2(Number(projectId), Number(producerId));
+                        } catch {
+                            data = null;
+                        }
+                    }
+                    if (!data && uid > 0) {
+                        const rawV2 = await getVisitServerCacheRaw(
+                            "visit2",
+                            Number(producerId),
+                            Number(projectId),
+                            uid,
+                        );
+                        if (rawV2) {
+                            try {
+                                data = JSON.parse(rawV2) as Visit2Response;
+                            } catch {
+                                data = null;
+                            }
+                        }
                     }
                     if (cancelled) return;
 

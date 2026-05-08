@@ -1,6 +1,10 @@
 import type { Project } from "@/schemas/project";
 import { useAuthStore } from "@/store/useAuthStore";
-import { VISIT2_INTERVENTION_METHOD_ID } from "@/store/useCharacterizationStore";
+import {
+  PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
+  VISIT2_INTERVENTION_METHOD_ID,
+  VISIT_INTERVENTION_METHOD_ID,
+} from "@/store/useCharacterizationStore";
 import { apiFetch } from "@/utils/api";
 import {
     deleteProducersNotIn,
@@ -45,10 +49,12 @@ import {
     getPendingAnswerUpdates,
     deleteAnswerUpdate,
 } from "@/utils/database/repositories/answer-update-repository";
+import { markInterventionMethodApplied } from "@/utils/database/repositories/producer-intervention-repository";
 import {
-    hasInterventionMethodApplied,
-    markInterventionMethodApplied,
-} from "@/utils/database/repositories/producer-intervention-repository";
+  upsertVisitServerCache,
+  upsertProductiveLinesBundleCache,
+  deleteExtensionistCachesNotInProject,
+} from "@/utils/database/repositories/server-extensionist-cache-repository";
 
 
 export interface SyncProgress {
@@ -74,6 +80,126 @@ function calcPhasePercent(phase: { start: number; weight: number }, current: num
   const safeTotal = total > 0 ? total : 1;
   const ratio = clamp(current / safeTotal, 0, 1);
   return (phase.start + phase.weight * ratio) * 100;
+}
+
+function isRecordWithId(value: unknown): value is Record<string, unknown> & {
+  id: unknown;
+} {
+  return typeof value === "object" && value !== null && "id" in value;
+}
+
+/**
+ * Persista visitas 1/2 y listas REST de líneas productivas tras la descarga por productor/proyecto.
+ */
+async function downloadExtensionistCachesForProducer(
+  userId: number,
+  projectId: number,
+  producerId: number,
+): Promise<void> {
+  const settleVisit1 = apiFetch<{ data?: unknown }>(
+    `/visit-1/project/${projectId}/producer/${producerId}`,
+  )
+    .then(async (res) => {
+      const data = res?.data;
+      if (isRecordWithId(data)) {
+        await upsertVisitServerCache({
+          userId,
+          producerId,
+          projectId,
+          kind: "visit1",
+          jsonPayload: JSON.stringify(data),
+        });
+        await markInterventionMethodApplied(
+          producerId,
+          projectId,
+          VISIT_INTERVENTION_METHOD_ID,
+          userId,
+        );
+      }
+    })
+    .catch(() => {});
+
+  const settleVisit2 = apiFetch<{ data?: unknown }>(
+    `/visit-2/project/${projectId}/producer/${producerId}`,
+  )
+    .then(async (res) => {
+      const data = res?.data;
+      if (isRecordWithId(data)) {
+        await upsertVisitServerCache({
+          userId,
+          producerId,
+          projectId,
+          kind: "visit2",
+          jsonPayload: JSON.stringify(data),
+        });
+        await markInterventionMethodApplied(
+          producerId,
+          projectId,
+          VISIT2_INTERVENTION_METHOD_ID,
+          userId,
+        );
+      }
+    })
+    .catch(() => {});
+
+  const settleBundle = Promise.all([
+    apiFetch<{ data?: unknown[] }>(
+      `/agricultural-lines/producer/${producerId}/project/${projectId}`,
+    ).catch(() => ({ data: [] })),
+    apiFetch<{ data?: unknown[] }>(
+      `/livestock-lines/producer/${producerId}/project/${projectId}`,
+    ).catch(() => ({ data: [] })),
+    apiFetch<{ data?: unknown[] }>(
+      `/forest-lines/producer/${producerId}/project/${projectId}`,
+    ).catch(() => ({ data: [] })),
+    apiFetch<{ data?: unknown[] }>(
+      `/fishing-lines/producer/${producerId}/project/${projectId}`,
+    ).catch(() => ({ data: [] })),
+    apiFetch<{ data?: unknown[] }>(
+      `/aquaculture-lines/producer/${producerId}/project/${projectId}`,
+    ).catch(() => ({ data: [] })),
+  ])
+    .then(async ([agriRes, livestockRes, forestRes, fishingRes, aquacultureRes]) => {
+      const agricultural = Array.isArray(agriRes?.data) ? agriRes!.data : [];
+      const livestock = Array.isArray(livestockRes?.data) ? livestockRes!.data : [];
+      const forest = Array.isArray(forestRes?.data) ? forestRes!.data : [];
+      const fishing = Array.isArray(fishingRes?.data) ? fishingRes!.data : [];
+      const aquaculture = Array.isArray(aquacultureRes?.data)
+        ? aquacultureRes!.data
+        : [];
+
+      await upsertProductiveLinesBundleCache({
+        userId,
+        producerId,
+        projectId,
+        jsonPayload: JSON.stringify({
+          agricultural,
+          livestock,
+          forest,
+          fishing,
+          aquaculture,
+        }),
+      });
+
+      const linesCount =
+        agricultural.length +
+        livestock.length +
+        forest.length +
+        fishing.length +
+        aquaculture.length;
+
+      if (linesCount > 0) {
+        await markInterventionMethodApplied(
+          producerId,
+          projectId,
+          PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
+          userId,
+        );
+      }
+    })
+    .catch(() => {});
+
+  await Promise.all([settleVisit1, settleVisit2, settleBundle]);
 }
 
 export async function downloadAllData(
@@ -178,6 +304,7 @@ export async function downloadAllData(
       }
       // Remove producers no longer assigned to this project
       await deleteProducersNotIn(project.id, fetchedProducerIds);
+      await deleteExtensionistCachesNotInProject(project.id, fetchedProducerIds);
       reportPhase(
         `Productores ${i + 1} de ${projects.length}`,
         DOWNLOAD_PHASES.producers,
@@ -189,7 +316,7 @@ export async function downloadAllData(
   }
 
   // 4. Download survey results for all producers across all intervention methods
-  const INTERVENTION_METHOD_IDS = [1, 2, 3, 5, 7, 8];
+  const INTERVENTION_METHOD_IDS = [1, 2, 3, 5, 6, 7, 8];
   const totalProducers = allProducerIds.length;
 
   reportPhase("Descargando resultados", DOWNLOAD_PHASES.results, 0, totalProducers || 1);
@@ -263,6 +390,12 @@ export async function downloadAllData(
         // Skip silently — endpoint may not exist or producer has no results
       }
     }
+
+    await downloadExtensionistCachesForProducer(
+      user.user_id,
+      projectId,
+      producerId,
+    );
 
     // Report once per producer (not per method) to avoid visual jumps
     reportPhase(

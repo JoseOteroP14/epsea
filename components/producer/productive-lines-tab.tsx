@@ -42,6 +42,7 @@ import {
     getAnswers,
     saveAnswersBatch,
 } from "@/utils/database/repositories/answer-repository";
+import { getProductiveLinesBundleCacheRaw } from "@/utils/database/repositories/server-extensionist-cache-repository";
 import { enqueue } from "@/utils/database/repositories/sync-repository";
 import {
     markInterventionMethodApplied,
@@ -710,9 +711,17 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
     return () => { cancelled = true; };
   }, []);
 
-  // Fetch existing lines on mount
+  // Fetch existing lines on mount (API en línea; caché tras sincronización sin red)
   useEffect(() => {
-    if (!producerId || !projectId) { setLoadingExisting(false); return; }
+    if (!producerId || !projectId) {
+      setLoadingExisting(false);
+      return;
+    }
+    if (currentUserId == null) {
+      setLoadingExisting(false);
+      return;
+    }
+
     let cancelled = false;
     setLoadingExisting(true);
 
@@ -721,16 +730,58 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
         .then((res) => { if (!cancelled) setter(res.data ?? []); })
         .catch(() => { if (!cancelled) setter([]); });
 
-    Promise.all([
-      fetch<ExistingAgriculturalLine>(`/agricultural-lines/producer/${producerId}/project/${projectId}`, setExistingAgriLines),
-      fetch<ExistingLivestockLine>(`/livestock-lines/producer/${producerId}/project/${projectId}`, setExistingLivestockLines),
-      fetch<ExistingForestLine>(`/forest-lines/producer/${producerId}/project/${projectId}`, setExistingForestLines),
-      fetch<ExistingFishingLine>(`/fishing-lines/producer/${producerId}/project/${projectId}`, setExistingFishingLines),
-      fetch<ExistingAquacultureLine>(`/aquaculture-lines/producer/${producerId}/project/${projectId}`, setExistingAquacultureLines),
-    ]).finally(() => { if (!cancelled) setLoadingExisting(false); });
+    void (async () => {
+      const online = await checkConnectivity();
+      if (cancelled) return;
+
+      if (online) {
+        await Promise.all([
+          fetch<ExistingAgriculturalLine>(`/agricultural-lines/producer/${producerId}/project/${projectId}`, setExistingAgriLines),
+          fetch<ExistingLivestockLine>(`/livestock-lines/producer/${producerId}/project/${projectId}`, setExistingLivestockLines),
+          fetch<ExistingForestLine>(`/forest-lines/producer/${producerId}/project/${projectId}`, setExistingForestLines),
+          fetch<ExistingFishingLine>(`/fishing-lines/producer/${producerId}/project/${projectId}`, setExistingFishingLines),
+          fetch<ExistingAquacultureLine>(`/aquaculture-lines/producer/${producerId}/project/${projectId}`, setExistingAquacultureLines),
+        ]);
+      } else {
+        const raw = await getProductiveLinesBundleCacheRaw(
+          Number(producerId),
+          Number(projectId),
+          currentUserId,
+        );
+        if (!cancelled && raw) {
+          try {
+            const bundle = JSON.parse(raw) as {
+              agricultural?: ExistingAgriculturalLine[];
+              livestock?: ExistingLivestockLine[];
+              forest?: ExistingForestLine[];
+              fishing?: ExistingFishingLine[];
+              aquaculture?: ExistingAquacultureLine[];
+            };
+            setExistingAgriLines(bundle.agricultural ?? []);
+            setExistingLivestockLines(bundle.livestock ?? []);
+            setExistingForestLines(bundle.forest ?? []);
+            setExistingFishingLines(bundle.fishing ?? []);
+            setExistingAquacultureLines(bundle.aquaculture ?? []);
+          } catch {
+            setExistingAgriLines([]);
+            setExistingLivestockLines([]);
+            setExistingForestLines([]);
+            setExistingFishingLines([]);
+            setExistingAquacultureLines([]);
+          }
+        } else if (!cancelled) {
+          setExistingAgriLines([]);
+          setExistingLivestockLines([]);
+          setExistingForestLines([]);
+          setExistingFishingLines([]);
+          setExistingAquacultureLines([]);
+        }
+      }
+      if (!cancelled) setLoadingExisting(false);
+    })();
 
     return () => { cancelled = true; };
-  }, [producerId, projectId]);
+  }, [producerId, projectId, currentUserId]);
 
   // Control bottom sheet
   useEffect(() => {

@@ -644,6 +644,37 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    version: 16,
+    up: async (db) => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS server_visit_cache (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          visit_kind TEXT NOT NULL,
+          producer_id INTEGER NOT NULL,
+          project_id INTEGER NOT NULL,
+          user_id INTEGER NOT NULL,
+          json_payload TEXT NOT NULL DEFAULT '{}',
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(visit_kind, producer_id, project_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_server_visit_cache_lookup
+          ON server_visit_cache(producer_id, project_id, user_id);
+
+        CREATE TABLE IF NOT EXISTS productive_lines_server_bundle (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          producer_id INTEGER NOT NULL,
+          project_id INTEGER NOT NULL,
+          user_id INTEGER NOT NULL,
+          json_payload TEXT NOT NULL DEFAULT '{}',
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(producer_id, project_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pl_bundle_lookup
+          ON productive_lines_server_bundle(producer_id, project_id, user_id);
+      `);
+    },
+  },
 ];
 
 /**
@@ -800,6 +831,31 @@ async function ensureCoreSchema(db: SQLiteDatabase): Promise<void> {
       ON producer_intervention_methods(producer_id, project_id);
     CREATE INDEX IF NOT EXISTS idx_pim_user
       ON producer_intervention_methods(user_id);
+
+    CREATE TABLE IF NOT EXISTS server_visit_cache (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      visit_kind TEXT NOT NULL,
+      producer_id INTEGER NOT NULL,
+      project_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      json_payload TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(visit_kind, producer_id, project_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_server_visit_cache_lookup
+      ON server_visit_cache(producer_id, project_id, user_id);
+
+    CREATE TABLE IF NOT EXISTS productive_lines_server_bundle (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      producer_id INTEGER NOT NULL,
+      project_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      json_payload TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(producer_id, project_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pl_bundle_lookup
+      ON productive_lines_server_bundle(producer_id, project_id, user_id);
   `);
 }
 

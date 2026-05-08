@@ -13,6 +13,7 @@ import { getAnswers } from "@/utils/database/repositories/answer-repository";
 import {
     markInterventionMethodApplied,
 } from "@/utils/database/repositories/producer-intervention-repository";
+import { getVisitServerCacheRaw } from "@/utils/database/repositories/server-extensionist-cache-repository";
 import {
     enqueueVisit1,
     getPendingLocalVisit1,
@@ -412,10 +413,32 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
           setExistingImages([null, null, null]);
         } else {
           let data: Visit1Response | null = null;
-          try {
-            data = await getVisit1(Number(projectId), Number(producerId));
-          } catch {
-            data = null;
+          const online = await checkConnectivity();
+          if (online) {
+            try {
+              data = await getVisit1(Number(projectId), Number(producerId));
+            } catch {
+              data = null;
+            }
+          }
+          if (
+            !data &&
+            userId > 0 &&
+            !cancelled
+          ) {
+            const raw = await getVisitServerCacheRaw(
+              "visit1",
+              Number(producerId),
+              Number(projectId),
+              userId,
+            );
+            if (raw) {
+              try {
+                data = JSON.parse(raw) as Visit1Response;
+              } catch {
+                data = null;
+              }
+            }
           }
           if (cancelled) return;
 
