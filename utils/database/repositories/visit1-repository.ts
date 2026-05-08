@@ -33,22 +33,63 @@ export interface Visit1Payload {
   origin: "web" | "app";
 }
 
+export interface Visit1QueuePhotosEnvelope {
+  photos: LocalPhoto[];
+  remote_visit_1_id?: number | null;
+}
+
+/** Compatibilidad: columnas viejas guardaban sólo JSON de `LocalPhoto[]`. */
+export function parseVisit1QueuePhotosColumn(raw: string | null | undefined): {
+  photos: LocalPhoto[];
+  remote_visit_1_id: number | null;
+} {
+  try {
+    const parsed = JSON.parse(raw ?? "[]") as
+      | LocalPhoto[]
+      | Visit1QueuePhotosEnvelope;
+    if (Array.isArray(parsed)) {
+      return { photos: parsed, remote_visit_1_id: null };
+    }
+    const photos = parsed.photos ?? [];
+    const rid = parsed.remote_visit_1_id;
+    return {
+      photos,
+      remote_visit_1_id:
+        rid != null && Number.isFinite(Number(rid)) ? Number(rid) : null,
+    };
+  } catch {
+    return { photos: [], remote_visit_1_id: null };
+  }
+}
+
 export async function enqueueVisit1(
   visitUuid: string,
   payload: Visit1Payload,
   photos: LocalPhoto[],
   userId: number,
+  remoteVisit1Id?: number | null,
 ): Promise<void> {
   const db = getDb();
+  const envelope: Visit1QueuePhotosEnvelope = {
+    photos,
+    ...(remoteVisit1Id != null && Number.isFinite(remoteVisit1Id)
+      ? { remote_visit_1_id: remoteVisit1Id }
+      : {}),
+  };
   await db.runAsync(
     `INSERT OR REPLACE INTO visit1_queue
       (visit_uuid, payload, photos, user_id, status, attempts, created_at, updated_at)
      VALUES (?, ?, ?, ?, 'pending', 0, datetime('now'), datetime('now'))`,
     visitUuid,
     JSON.stringify(payload),
-    JSON.stringify(photos),
+    JSON.stringify(envelope),
     userId,
   );
+}
+
+export async function deleteVisit1QueueRow(id: number): Promise<void> {
+  const db = getDb();
+  await db.runAsync("DELETE FROM visit1_queue WHERE id = ?", id);
 }
 
 export async function getPendingVisit1Items(

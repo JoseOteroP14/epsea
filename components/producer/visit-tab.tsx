@@ -16,6 +16,7 @@ import {
 import {
     enqueueVisit1,
     getPendingLocalVisit1,
+    parseVisit1QueuePhotosColumn,
 } from "@/utils/database/repositories/visit1-repository";
 import {
     convertPhotosToBase64,
@@ -391,8 +392,11 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
 
         if (pendingLocal) {
           const payload: Visit1Payload = JSON.parse(pendingLocal.payload);
-          setIsEditMode(false);
-          setExistingVisitId(null);
+          const parsedPhotos = parseVisit1QueuePhotosColumn(pendingLocal.photos);
+          const remoteVid = parsedPhotos.remote_visit_1_id;
+          const hasRemote = remoteVid != null;
+          setIsEditMode(hasRemote);
+          setExistingVisitId(hasRemote ? remoteVid : null);
           setObjective(payload.objetive || "");
           setDiagnosis(payload.diagnosis || "");
           setRecommendations(payload.recommendations || "");
@@ -400,9 +404,8 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
           setAttendanceId(payload.attendance_id ? String(payload.attendance_id) : "");
           setAttendanceName(payload.attendance_name || "");
           if (payload.registration_date) setRegistrationDate(payload.registration_date);
-          const photos: LocalPhoto[] = JSON.parse(pendingLocal.photos ?? "[]");
           const newLocal: (LocalPhoto | null)[] = [null, null, null];
-          photos.slice(0, 3).forEach((p, i) => {
+          parsedPhotos.photos.slice(0, 3).forEach((p, i) => {
             newLocal[i] = p;
           });
           setLocalPhotos(newLocal);
@@ -625,7 +628,17 @@ const handleSave = useCallback(async () => {
         setLocalPhotos([null, null, null]);
       } else {
         const visitUuid = `${userId}-${producerId}-${projectId}-visit1-offline`;
-        await enqueueVisit1(visitUuid, payload, newPhotos, userId);
+        const remoteForQueue =
+          isEditMode && existingVisitId != null && Number.isFinite(existingVisitId)
+            ? existingVisitId
+            : null;
+        await enqueueVisit1(
+          visitUuid,
+          payload,
+          newPhotos,
+          userId,
+          remoteForQueue,
+        );
         await markInterventionMethodApplied(
           Number(producerId),
           Number(projectId),
@@ -633,6 +646,13 @@ const handleSave = useCallback(async () => {
           userId,
         );
         setMethodAlreadyApplied(true);
+        if (remoteForQueue != null) {
+          setIsEditMode(true);
+          setExistingVisitId(remoteForQueue);
+        } else {
+          setIsEditMode(false);
+          setExistingVisitId(null);
+        }
         setLocalPhotos([null, null, null]);
         showAlert({
           title: "Sin internet",

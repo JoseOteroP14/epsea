@@ -11,9 +11,9 @@ import {
     upsertProjects,
 } from "@/utils/database/repositories/project-repository";
 import {
+    deleteSyncQueueRow,
     getMetadata,
     getPending,
-    markCompleted,
     markFailed,
     setMetadata,
 } from "@/utils/database/repositories/sync-repository";
@@ -21,14 +21,16 @@ import { deleteAnswers } from "@/utils/database/repositories/answer-repository";
 import { upsertSurveyResults, type SurveyResultRow } from "@/utils/database/repositories/survey-results-repository";
 import { getStoredToken } from "@/utils/secure-storage";
 import {
+    deleteVisit1QueueRow,
     getPendingVisit1Items,
-    markVisit1Completed,
     markVisit1Failed,
+    parseVisit1QueuePhotosColumn,
+    type Visit1Payload,
     type Visit1QueueItem,
 } from "@/utils/database/repositories/visit1-repository";
 import {
+    deleteVisit2QueueRow,
     getPendingVisit2Items,
-    markVisit2Completed,
     markVisit2Failed,
     type Visit2MonitoringCommitment,
     type Visit2Payload,
@@ -292,8 +294,56 @@ function getRetryDelay(attempts: number): number {
 
 async function uploadVisit1Item(item: Visit1QueueItem): Promise<void> {
   const token = await getStoredToken();
-  const payload = JSON.parse(item.payload);
-  const photos: LocalPhoto[] = JSON.parse(item.photos ?? "[]");
+  const payload = JSON.parse(item.payload) as Visit1Payload;
+  const { photos, remote_visit_1_id } = parseVisit1QueuePhotosColumn(
+    item.photos,
+  );
+
+  if (remote_visit_1_id != null) {
+    const putRes = await fetch(`${BASE_URL}/visit-1/${remote_visit_1_id}`, {
+      method: "PUT",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!putRes.ok) {
+      const errData = await putRes.json().catch(() => ({}));
+      throw new Error(
+        typeof errData?.message === "string"
+          ? errData.message
+          : `Error ${putRes.status}`,
+      );
+    }
+    if (photos.length > 0) {
+      const formData = new FormData();
+      for (const photo of photos) {
+        formData.append("images", {
+          uri: photo.uri,
+          name: photo.fileName,
+          type: photo.type,
+        } as any);
+      }
+      const imgRes = await fetch(
+        `${BASE_URL}/visit-1/${remote_visit_1_id}/images`,
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: formData,
+        },
+      );
+      if (!imgRes.ok) {
+        throw new Error("Error al subir imágenes visita 1");
+      }
+    }
+    return;
+  }
+
   const formData = new FormData();
   formData.append("project_id", String(payload.project_id));
   formData.append("producer_id", String(payload.producer_id));
@@ -301,7 +351,10 @@ async function uploadVisit1Item(item: Visit1QueueItem): Promise<void> {
   formData.append("diagnosis", payload.diagnosis);
   formData.append("recommendations", payload.recommendations);
   formData.append("observations", payload.observations ?? "");
-  formData.append("compliance_recommendation_id", String(payload.compliance_recommendation_id));
+  formData.append(
+    "compliance_recommendation_id",
+    String(payload.compliance_recommendation_id),
+  );
   formData.append("registration_date", payload.registration_date);
   formData.append("attendance_id", String(payload.attendance_id));
   formData.append("attendance_name", payload.attendance_name ?? "");
@@ -612,7 +665,7 @@ export async function uploadPendingAnswers(
         body: JSON.stringify(payload),
       });
 
-      await markCompleted(item.id);
+      await deleteSyncQueueRow(item.id);
 
       if (item.entity_type === "survey_answers") {
         const parts = item.entity_key.split("-").map((n) => Number(n));
@@ -662,7 +715,7 @@ export async function uploadPendingAnswers(
 
     try {
       await uploadVisit1Item(item);
-      await markVisit1Completed(item.id!);
+      await deleteVisit1QueueRow(item.id!);
       // Mark VISIT method as applied after successful upload
       try {
         const visitPayload = JSON.parse(item.payload);
@@ -700,7 +753,7 @@ export async function uploadPendingAnswers(
 
     try {
       await uploadVisit2Item(item);
-      await markVisit2Completed(item.id);
+      await deleteVisit2QueueRow(item.id);
       try {
         const visitPayload = JSON.parse(item.payload) as Visit2Payload;
         await markInterventionMethodApplied(
@@ -726,6 +779,14 @@ export async function uploadPendingAnswers(
     current: uploaded + failed,
     total: uploaded + failed,
   });
+
+  if (failed === 0 && uploaded > 0) {
+    try {
+      await downloadAllData(undefined);
+    } catch (e) {
+      console.error("Falló la actualización local tras la subida:", e);
+    }
+  }
 
   return { uploaded, failed };
 }

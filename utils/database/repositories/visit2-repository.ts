@@ -138,6 +138,11 @@ export async function clearCompletedVisit2(): Promise<void> {
   await db.runAsync("DELETE FROM visit2_queue WHERE status = 'completed'");
 }
 
+export async function deleteVisit2QueueRow(id: number): Promise<void> {
+  const db = getDb();
+  await db.runAsync("DELETE FROM visit2_queue WHERE id = ?", id);
+}
+
 export async function getLocalVisit2(
   producerId: number,
   projectId: number,

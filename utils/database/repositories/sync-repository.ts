@@ -66,6 +66,12 @@ export async function markCompleted(id: number): Promise<void> {
   );
 }
 
+/** Quita la fila ya enviada (evita acumular `completed` y duplica lógica con el servidor). */
+export async function deleteSyncQueueRow(id: number): Promise<void> {
+  const db = getDb();
+  await db.runAsync("DELETE FROM sync_queue WHERE id = ?", id);
+}
+
 export async function markFailed(id: number, error: string): Promise<void> {
   const db = getDb();
   await db.runAsync(
