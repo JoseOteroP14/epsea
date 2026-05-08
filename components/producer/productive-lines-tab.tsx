@@ -42,8 +42,13 @@ import {
     getAnswers,
     saveAnswersBatch,
 } from "@/utils/database/repositories/answer-repository";
-import { getProductiveLinesBundleCacheRaw } from "@/utils/database/repositories/server-extensionist-cache-repository";
+import {
+  getProductiveLinesBundleCacheRaw,
+  upsertProductiveLinesBundleCache,
+} from "@/utils/database/repositories/server-extensionist-cache-repository";
 import { enqueue } from "@/utils/database/repositories/sync-repository";
+import { useSyncStore } from "@/store/useSyncStore";
+import type { ProductiveLinesBulkKind } from "@/utils/sync/sync-service";
 import {
     markInterventionMethodApplied,
 } from "@/utils/database/repositories/producer-intervention-repository";
@@ -101,6 +106,44 @@ function getLineName(lineId: number, lineOptions: ProductiveLine[]): string {
 
 function getAssistantName(id: number, items: AssistantItem[]): string {
   return items.find((i) => i.id === id)?.name ?? `#${id}`;
+}
+
+/** Une filas nuevas al bundle SQLite usado sin red tras sincronizar descarga. */
+async function mergeAppendedLinesIntoBundleCache(
+  producerId: number,
+  projectId: number,
+  userId: number,
+  kind: ProductiveLinesBulkKind,
+  appended: unknown[],
+): Promise<void> {
+  const raw = await getProductiveLinesBundleCacheRaw(producerId, projectId, userId);
+  const base = raw
+    ? (JSON.parse(raw) as {
+        agricultural?: unknown[];
+        livestock?: unknown[];
+        forest?: unknown[];
+        fishing?: unknown[];
+        aquaculture?: unknown[];
+      })
+    : {};
+  const next = {
+    agricultural: [...(base.agricultural ?? [])],
+    livestock: [...(base.livestock ?? [])],
+    forest: [...(base.forest ?? [])],
+    fishing: [...(base.fishing ?? [])],
+    aquaculture: [...(base.aquaculture ?? [])],
+  };
+  if (kind === "agricultural") next.agricultural.push(...appended);
+  else if (kind === "livestock") next.livestock.push(...appended);
+  else if (kind === "forest") next.forest.push(...appended);
+  else if (kind === "fishing") next.fishing.push(...appended);
+  else next.aquaculture.push(...appended);
+  await upsertProductiveLinesBundleCache({
+    userId,
+    producerId,
+    projectId,
+    jsonPayload: JSON.stringify(next),
+  });
 }
 
 // ── Badge config ──────────────────────────────────────────────────────────────
@@ -992,79 +1035,299 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
   }, [producerId, projectId]);
 
   const handleSave = useCallback(async () => {
-    if (!producerId || !projectId) return;
+    if (!producerId || !projectId || currentUserId == null) {
+      showAlert({ title: "Sesión", message: "Inicie sesión para guardar líneas productivas.", type: "warning" });
+      return;
+    }
+    const pid = Number(producerId);
+    const projId = Number(projectId);
+    const userId = currentUserId;
+    const optimisticBase = -Date.now();
+
     setSaving(true);
     try {
+      const isOnline = await checkConnectivity();
+
+      const finishSuccess = (offline: boolean) => {
+        setShowSheet(false);
+        setAgriFormLines([]);
+        setLivestockFormLines([]);
+        setForestFormLines([]);
+        setFishingFormLines([]);
+        setAquacultureFormLines([]);
+        showAlert({
+          title: offline ? "Sin internet" : "Guardado",
+          message: offline
+            ? "Las líneas quedaron en cola y se enviarán al sincronizar."
+            : "Las líneas productivas se guardaron correctamente.",
+          type: offline ? "warning" : "success",
+        });
+        if (!offline) void refreshLines(activityType);
+      };
+
       if (activityType === "agricola") {
         const lines = agriFormLines.filter((f) => f.line_id).map((f) => ({
-          producer_id: Number(producerId), project_id: Number(projectId),
-          line_id: Number(f.line_id), area: parseFloat(f.area) || 0,
-          harvests: parseInt(f.harvests) || 0, production: parseFloat(f.production) || 0,
+          producer_id: pid,
+          project_id: projId,
+          line_id: Number(f.line_id),
+          area: parseFloat(f.area) || 0,
+          harvests: parseInt(f.harvests) || 0,
+          production: parseFloat(f.production) || 0,
           date: formatDateForApi(f.date),
         }));
-        if (!lines.length) { showAlert({ title: "Error", message: "Debe seleccionar al menos una línea productiva.", type: "error" }); return; }
-        await apiFetch("/agricultural-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
-
+        if (!lines.length) {
+          showAlert({ title: "Error", message: "Debe seleccionar al menos una línea productiva.", type: "error" });
+          return;
+        }
+        const kind: ProductiveLinesBulkKind = "agricultural";
+        if (isOnline) {
+          await apiFetch("/agricultural-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
+        } else {
+          await enqueue(
+            "productive_lines_bulk",
+            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
+            { kind, body: { lines } },
+            userId,
+          );
+          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
+          const forms = agriFormLines.filter((f) => f.line_id);
+          const optimistic: ExistingAgriculturalLine[] = forms.map((f, idx) => ({
+            id: optimisticBase - idx,
+            producer_id: pid,
+            project_id: projId,
+            line_id: Number(f.line_id),
+            line: { id: Number(f.line_id), name: getLineName(Number(f.line_id), lineOptions) },
+            area: parseFloat(f.area) || 0,
+            harvests: parseInt(f.harvests) || 0,
+            production: parseFloat(f.production) || 0,
+            date: formatDateForApi(f.date),
+          }));
+          setExistingAgriLines((prev) => [...prev, ...optimistic]);
+          await mergeAppendedLinesIntoBundleCache(pid, projId, userId, kind, optimistic);
+          void useSyncStore.getState().refreshStatus();
+        }
+        finishSuccess(!isOnline);
       } else if (activityType === "pecuaria") {
         const lines = livestockFormLines.filter((f) => f.line_id).map((f) => {
           const unitName = f.unit_of_measure || LIVESTOCK_UNIT_MAP[f.line_name]?.value || "";
           return {
-            producer_id: Number(producerId), project_id: Number(projectId),
-            line_id: Number(f.line_id), unit_of_measure_id: UNIT_NAME_TO_ID[unitName] ?? 0,
-            area: parseFloat(f.area) || 0, cycles: parseInt(f.cycles) || 0,
-            production: parseFloat(f.production) || 0, date: formatDateForApi(f.date),
+            producer_id: pid,
+            project_id: projId,
+            line_id: Number(f.line_id),
+            unit_of_measure_id: UNIT_NAME_TO_ID[unitName] ?? 0,
+            area: parseFloat(f.area) || 0,
+            cycles: parseInt(f.cycles) || 0,
+            production: parseFloat(f.production) || 0,
+            date: formatDateForApi(f.date),
           };
         });
-        if (!lines.length) { showAlert({ title: "Error", message: "Debe seleccionar al menos una línea productiva.", type: "error" }); return; }
-        await apiFetch("/livestock-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
-
+        if (!lines.length) {
+          showAlert({ title: "Error", message: "Debe seleccionar al menos una línea productiva.", type: "error" });
+          return;
+        }
+        const kind: ProductiveLinesBulkKind = "livestock";
+        if (isOnline) {
+          await apiFetch("/livestock-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
+        } else {
+          await enqueue(
+            "productive_lines_bulk",
+            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
+            { kind, body: { lines } },
+            userId,
+          );
+          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
+          const forms = livestockFormLines.filter((f) => f.line_id);
+          const optimistic: ExistingLivestockLine[] = forms.map((f, idx) => ({
+            id: optimisticBase - idx,
+            producer_id: pid,
+            project_id: projId,
+            line_id: Number(f.line_id),
+            line: { id: Number(f.line_id), name: getLineName(Number(f.line_id), allLineOptions) },
+            unit_of_measure_id: UNIT_NAME_TO_ID[f.unit_of_measure || LIVESTOCK_UNIT_MAP[f.line_name]?.value || ""] ?? 0,
+            area: parseFloat(f.area) || 0,
+            cycles: parseInt(f.cycles) || 0,
+            production: parseFloat(f.production) || 0,
+            date: formatDateForApi(f.date),
+          }));
+          setExistingLivestockLines((prev) => [...prev, ...optimistic]);
+          await mergeAppendedLinesIntoBundleCache(pid, projId, userId, kind, optimistic);
+          void useSyncStore.getState().refreshStatus();
+        }
+        finishSuccess(!isOnline);
       } else if (activityType === "forestal") {
         const lines = forestFormLines.filter((f) => f.line_id && f.unit_of_measure_id).map((f) => ({
-          producer_id: Number(producerId), project_id: Number(projectId),
-          line_id: Number(f.line_id), unit_of_measure_id: parseInt(f.unit_of_measure_id) || 0,
-          area: parseFloat(f.area) || 0, cycles: parseFloat(f.cycles) || 0,
-          production: parseFloat(f.production) || 0, date: formatDateForApi(f.date),
-        }));
-        if (!lines.length) { showAlert({ title: "Error", message: "Debe seleccionar al menos una especie forestal.", type: "error" }); return; }
-        await apiFetch("/forest-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
-
-      } else if (activityType === "pesca") {
-        const lines = fishingFormLines.filter((f) => f.type_id && f.fishing_area_id && f.species.length > 0).map((f) => ({
-          producer_id: Number(producerId), project_id: Number(projectId),
-          type_id: parseInt(f.type_id) || 0, fishing_area_id: parseInt(f.fishing_area_id) || 0,
-          weight: parseFloat(f.weight) || 0, date: formatDateForApi(f.date),
-          lines: f.species.map((s) => ({ line_id: s.line_id })),
-        }));
-        if (!lines.length) { showAlert({ title: "Error", message: "Debe completar al menos una línea de pesca con tipo, zona y especies.", type: "error" }); return; }
-        await apiFetch("/fishing-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
-
-      } else if (activityType === "acuicola") {
-        const lines = aquacultureFormLines.filter((f) => f.type_id && f.area_crop_id && f.species.length > 0).map((f) => ({
-          producer_id: Number(producerId), project_id: Number(projectId),
-          type_id: parseInt(f.type_id) || 0, area_crop_id: parseInt(f.area_crop_id) || 0,
-          area_value_crop: parseFloat(f.area_value_crop) || 0,
-          number_of_animals: parseInt(f.number_of_animals) || 0,
-          cycles: parseFloat(f.cycles) || 0, production: parseFloat(f.production) || 0,
+          producer_id: pid,
+          project_id: projId,
+          line_id: Number(f.line_id),
+          unit_of_measure_id: parseInt(f.unit_of_measure_id) || 0,
+          area: parseFloat(f.area) || 0,
+          cycles: parseFloat(f.cycles) || 0,
+          production: parseFloat(f.production) || 0,
           date: formatDateForApi(f.date),
-          lines: f.species.map((s) => ({ line_id: s.line_id })),
         }));
-        if (!lines.length) { showAlert({ title: "Error", message: "Debe completar al menos una línea acuícola con tipo, especies y unidad de cultivo.", type: "error" }); return; }
-        await apiFetch("/aquaculture-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
+        if (!lines.length) {
+          showAlert({ title: "Error", message: "Debe seleccionar al menos una especie forestal.", type: "error" });
+          return;
+        }
+        const kind: ProductiveLinesBulkKind = "forest";
+        if (isOnline) {
+          await apiFetch("/forest-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
+        } else {
+          await enqueue(
+            "productive_lines_bulk",
+            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
+            { kind, body: { lines } },
+            userId,
+          );
+          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
+          const forms = forestFormLines.filter((f) => f.line_id && f.unit_of_measure_id);
+          const optimistic: ExistingForestLine[] = forms.map((f, idx) => ({
+            id: optimisticBase - idx,
+            producer_id: pid,
+            project_id: projId,
+            line_id: Number(f.line_id),
+            line: { id: Number(f.line_id), name: getLineName(Number(f.line_id), allLineOptions) },
+            unit_of_measure_id: parseInt(f.unit_of_measure_id) || 0,
+            area: parseFloat(f.area) || 0,
+            cycles: parseFloat(f.cycles) || 0,
+            production: parseFloat(f.production) || 0,
+            date: formatDateForApi(f.date),
+          }));
+          setExistingForestLines((prev) => [...prev, ...optimistic]);
+          await mergeAppendedLinesIntoBundleCache(pid, projId, userId, kind, optimistic);
+          void useSyncStore.getState().refreshStatus();
+        }
+        finishSuccess(!isOnline);
+      } else if (activityType === "pesca") {
+        const lines = fishingFormLines
+          .filter((f) => f.type_id && f.fishing_area_id && f.species.length > 0)
+          .map((f) => ({
+            producer_id: pid,
+            project_id: projId,
+            type_id: parseInt(f.type_id) || 0,
+            fishing_area_id: parseInt(f.fishing_area_id) || 0,
+            weight: parseFloat(f.weight) || 0,
+            date: formatDateForApi(f.date),
+            lines: f.species.map((s) => ({ line_id: s.line_id })),
+          }));
+        if (!lines.length) {
+          showAlert({
+            title: "Error",
+            message: "Debe completar al menos una línea de pesca con tipo, zona y especies.",
+            type: "error",
+          });
+          return;
+        }
+        const kind: ProductiveLinesBulkKind = "fishing";
+        if (isOnline) {
+          await apiFetch("/fishing-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
+        } else {
+          await enqueue(
+            "productive_lines_bulk",
+            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
+            { kind, body: { lines } },
+            userId,
+          );
+          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
+          const forms = fishingFormLines.filter((f) => f.type_id && f.fishing_area_id && f.species.length > 0);
+          const optimistic: ExistingFishingLine[] = forms.map((f, idx) => ({
+            id: optimisticBase - idx,
+            producer_id: pid,
+            project_id: projId,
+            type_id: parseInt(f.type_id) || 0,
+            fishing_area_id: parseInt(f.fishing_area_id) || 0,
+            type_name: f.type_name,
+            fishing_area_name: f.fishing_area_name,
+            weight: parseFloat(f.weight) || 0,
+            date: formatDateForApi(f.date),
+            lines: f.species.map((s) => ({ line_id: s.line_id })),
+          }));
+          setExistingFishingLines((prev) => [...prev, ...optimistic]);
+          await mergeAppendedLinesIntoBundleCache(pid, projId, userId, kind, optimistic);
+          void useSyncStore.getState().refreshStatus();
+        }
+        finishSuccess(!isOnline);
+      } else if (activityType === "acuicola") {
+        const lines = aquacultureFormLines
+          .filter((f) => f.type_id && f.area_crop_id && f.species.length > 0)
+          .map((f) => ({
+            producer_id: pid,
+            project_id: projId,
+            type_id: parseInt(f.type_id) || 0,
+            area_crop_id: parseInt(f.area_crop_id) || 0,
+            area_value_crop: parseFloat(f.area_value_crop) || 0,
+            number_of_animals: parseInt(f.number_of_animals) || 0,
+            cycles: parseFloat(f.cycles) || 0,
+            production: parseFloat(f.production) || 0,
+            date: formatDateForApi(f.date),
+            lines: f.species.map((s) => ({ line_id: s.line_id })),
+          }));
+        if (!lines.length) {
+          showAlert({
+            title: "Error",
+            message: "Debe completar al menos una línea acuícola con tipo, especies y unidad de cultivo.",
+            type: "error",
+          });
+          return;
+        }
+        const kind: ProductiveLinesBulkKind = "aquaculture";
+        if (isOnline) {
+          await apiFetch("/aquaculture-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
+        } else {
+          await enqueue(
+            "productive_lines_bulk",
+            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
+            { kind, body: { lines } },
+            userId,
+          );
+          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
+          const forms = aquacultureFormLines.filter((f) => f.type_id && f.area_crop_id && f.species.length > 0);
+          const optimistic: ExistingAquacultureLine[] = forms.map((f, idx) => ({
+            id: optimisticBase - idx,
+            producer_id: pid,
+            project_id: projId,
+            type_id: parseInt(f.type_id) || 0,
+            area_crop_id: parseInt(f.area_crop_id) || 0,
+            area_value_crop: parseFloat(f.area_value_crop) || 0,
+            type_system_name: f.type_name,
+            area_crop_name: f.area_crop_name,
+            number_of_animals: parseInt(f.number_of_animals) || 0,
+            cycles: parseFloat(f.cycles) || 0,
+            production: parseFloat(f.production) || 0,
+            date: formatDateForApi(f.date),
+            lines: f.species.map((s) => ({ line_id: s.line_id })),
+          }));
+          setExistingAquacultureLines((prev) => [...prev, ...optimistic]);
+          await mergeAppendedLinesIntoBundleCache(pid, projId, userId, kind, optimistic);
+          void useSyncStore.getState().refreshStatus();
+        }
+        finishSuccess(!isOnline);
       }
-
-      setShowSheet(false);
-      setAgriFormLines([]); setLivestockFormLines([]); setForestFormLines([]);
-      setFishingFormLines([]); setAquacultureFormLines([]);
-      showAlert({ title: "Guardado", message: "Las líneas productivas se guardaron correctamente.", type: "success" });
-      refreshLines(activityType);
-
     } catch (e: any) {
       console.error("Failed to save productive lines:", e);
-      showAlert({ title: "Error", message: e?.message ?? "No se pudieron guardar las líneas productivas.", type: "error" });
+      showAlert({
+        title: "Error",
+        message: e?.message ?? "No se pudieron guardar las líneas productivas.",
+        type: "error",
+      });
     } finally {
       setSaving(false);
     }
-  }, [producerId, projectId, activityType, agriFormLines, livestockFormLines, forestFormLines, fishingFormLines, aquacultureFormLines, showAlert, refreshLines]);
+  }, [
+    producerId,
+    projectId,
+    currentUserId,
+    activityType,
+    agriFormLines,
+    livestockFormLines,
+    forestFormLines,
+    fishingFormLines,
+    aquacultureFormLines,
+    showAlert,
+    refreshLines,
+    lineOptions,
+    allLineOptions,
+  ]);
 
   const handleOpenComplementarySheet = useCallback(() => {
     if (!productiveLinesComponent) {

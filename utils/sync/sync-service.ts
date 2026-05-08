@@ -63,6 +63,27 @@ export interface SyncProgress {
   total: number;
 }
 
+/** Cola offline: POST masivos de líneas productivas (`productive-lines-tab`). */
+export type ProductiveLinesBulkKind =
+  | "agricultural"
+  | "livestock"
+  | "forest"
+  | "fishing"
+  | "aquaculture";
+
+export interface ProductiveLinesBulkQueuePayload {
+  kind: ProductiveLinesBulkKind;
+  body: { lines: unknown[] };
+}
+
+const PRODUCTIVE_LINES_BULK_PATH: Record<ProductiveLinesBulkKind, string> = {
+  agricultural: "/agricultural-lines/bulk",
+  livestock: "/livestock-lines/bulk",
+  forest: "/forest-lines/bulk",
+  fishing: "/fishing-lines/bulk",
+  aquaculture: "/aquaculture-lines/bulk",
+};
+
 type DownloadPhaseKey = "projects" | "producers" | "results" | "finalize";
 
 const DOWNLOAD_PHASES: Record<DownloadPhaseKey, { start: number; weight: number }> = {
@@ -798,6 +819,18 @@ export async function uploadPendingAnswers(
 
     try {
       const payload = JSON.parse(item.payload);
+
+      if (item.entity_type === "productive_lines_bulk") {
+        const pl = payload as ProductiveLinesBulkQueuePayload;
+        const path = PRODUCTIVE_LINES_BULK_PATH[pl.kind];
+        await apiFetch(path, {
+          method: "POST",
+          body: JSON.stringify(pl.body),
+        });
+        await deleteSyncQueueRow(item.id);
+        uploaded++;
+        continue;
+      }
 
       await apiFetch(`/surveys`, {
         method: "POST",
