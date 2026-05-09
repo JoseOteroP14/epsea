@@ -16,6 +16,7 @@ import type {
 } from "@/schemas/characterization";
 import { useCharacterizationStore } from "@/store/useCharacterizationStore";
 import { getEffectiveDependentListItems } from "@/utils/survey/dependent-child-ids";
+import { isQuestionRequired } from "@/utils/survey/question-required";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { ChevronDown, Search } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -809,7 +810,7 @@ export function QuestionRenderer({
             </ThemedText>
           )}
         </View>
-        {question.is_required && (
+        {isQuestionRequired(question) && (
           <ThemedText style={styles.requiredBadge}>*</ThemedText>
         )}
       </View>

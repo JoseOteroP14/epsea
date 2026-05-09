@@ -277,11 +277,17 @@ export default function HomeScreen() {
       }
     >
       <View style={styles.statsRow}>
-        <ThemedView style={styles.statCard}>
+        <TouchableOpacity
+          style={styles.statCard}
+          onPress={() => router.push("/projects")}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Ver proyectos asignados"
+        >
           <Briefcase size={responsiveFont(20)} color="#2ecc71" />
           <ThemedText type="defaultSemiBold">{projects.length}</ThemedText>
           <ThemedText style={styles.statLabel}>Proyectos Asignados</ThemedText>
-        </ThemedView>
+        </TouchableOpacity>
       </View>
 
       {/* Sync progress card — visible during/after background download */}

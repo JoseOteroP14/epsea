@@ -263,10 +263,10 @@ export default function ProjectDetailScreen() {
           activeOpacity={0.6}
           onPress={() =>
             router.push({
-              pathname: "/(tabs)/projects/producer/[producerId]",
+              pathname: "/projects/producer/[producerId]",
               params: {
-                producerId: producerId,
-                projectId: id,
+                producerId: String(producerId),
+                projectId: id != null ? String(id) : "",
                 projectName: name ?? "",
               },
             })
