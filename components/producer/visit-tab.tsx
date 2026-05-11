@@ -37,6 +37,7 @@ import {
 } from "@/utils/pdf/visit1-pdf";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { getStoredToken } from "@/utils/secure-storage";
+import { persistLocalVisitPhotoSlots } from "@/utils/visit-offline-photos";
 import {
     BottomSheetBackdrop,
     BottomSheetModal,
@@ -941,10 +942,19 @@ const handleSave = useCallback(async () => {
           isEditMode && existingVisitId != null && Number.isFinite(existingVisitId)
             ? existingVisitId
             : null;
+        const persistedSlots = await persistLocalVisitPhotoSlots(localPhotos, {
+          kind: "visit1",
+          userId,
+          producerId: Number(producerId),
+          projectId: Number(projectId),
+        });
+        const photosForQueue = persistedSlots.filter(
+          (p): p is LocalPhoto => p !== null,
+        );
         await enqueueVisit1(
           visitUuid,
           payload,
-          newPhotos,
+          photosForQueue,
           userId,
           remoteForQueue,
         );
@@ -962,7 +972,7 @@ const handleSave = useCallback(async () => {
           setIsEditMode(false);
           setExistingVisitId(null);
         }
-        setLocalPhotos([null, null, null]);
+        setLocalPhotos(persistedSlots);
         showAlert({
           title: "Sin internet",
           message: "La visita se guardó localmente y se enviará al sincronizar.",

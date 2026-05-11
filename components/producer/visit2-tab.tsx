@@ -32,6 +32,7 @@ import {
 } from "@/utils/database/repositories/visit2-repository";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { getStoredToken } from "@/utils/secure-storage";
+import { persistLocalVisitPhotoSlots } from "@/utils/visit-offline-photos";
 import {
     BottomSheetBackdrop,
     BottomSheetModal,
@@ -1202,11 +1203,20 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     existingVisitId != null && Number.isFinite(existingVisitId)
                         ? existingVisitId
                         : null;
+                const persistedSlots = await persistLocalVisitPhotoSlots(localPhotos, {
+                    kind: "visit2",
+                    userId,
+                    producerId: Number(producerId),
+                    projectId: Number(projectId),
+                });
+                const photosForQueue = persistedSlots.filter(
+                    (p): p is LocalPhoto => p !== null,
+                );
                 await enqueueVisit2(
                     visitUuid,
                     payload,
                     commitmentsForQueue,
-                    newPhotos,
+                    photosForQueue,
                     userId,
                     remoteForQueue,
                 );
@@ -1224,7 +1234,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     setIsEditMode(false);
                     setExistingVisitId(null);
                 }
-                setLocalPhotos([null, null, null]);
+                setLocalPhotos(persistedSlots);
                 showAlert({
                     title: "Sin internet",
                     message: "La visita 2 se guardó localmente y se enviará al sincronizar.",
