@@ -95,6 +95,14 @@ export async function refreshVisitObjectivesCacheForLine(lineId: number): Promis
     }
 }
 
+/** Solo descripciones de tipo «específico» (como Visit1Dialog.vue). */
+export function objectiveItemsToSpecificLines(items: ObjectiveApiItem[]): string[] {
+  return items
+    .filter((row) => isSpecificObjectiveType(row.type))
+    .map((row) => row.description.trim())
+    .filter(Boolean);
+}
+
 export function objectiveItemsToFormStrings(items: ObjectiveApiItem[]): { general: string; specific: string } {
     const general = items
         .filter((row) => isGeneralObjectiveType(row.type))

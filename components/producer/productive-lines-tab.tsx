@@ -12,7 +12,6 @@ import {
     createEmptyForestForm,
     createEmptyLivestockForm,
     LIVESTOCK_UNIT_MAP,
-    SPECIES_ACTIVITY_ID,
     UNIT_ID_TO_NAME,
     UNIT_NAME_TO_ID,
     type ActivityType,
@@ -38,6 +37,12 @@ import {
     useCharacterizationStore,
 } from "@/store/useCharacterizationStore";
 import { apiFetch } from "@/utils/api";
+import { useFocusEffect } from "expo-router";
+import {
+  loadResolvedProductiveLinesStaticCatalog,
+  refreshProductiveLinesStaticCatalog,
+  type ProductiveLinesStaticCatalog,
+} from "@/utils/productive-lines-static-catalog";
 import {
     getAnswers,
     saveAnswersBatch,
@@ -586,6 +591,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
   const [lineOptions, setLineOptions] = useState<ProductiveLine[]>([]);
   const [allLineOptions, setAllLineOptions] = useState<ProductiveLine[]>([]);
   const [loadingOptions, setLoadingOptions] = useState(false);
+  const [plCatalog, setPlCatalog] = useState<ProductiveLinesStaticCatalog | null>(null);
 
   // Assistants (pesca / acuicola)
   const [typesOfFishing, setTypesOfFishing] = useState<AssistantItem[]>([]);
@@ -701,58 +707,66 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
     })();
   }, [producerId, projectId, currentUserId, hasInterventionMethodApplied]);
 
-  // Fetch line options when activity type changes (skip pesca/acuicola)
+  const applyProductiveLinesCatalog = useCallback((catalog: ProductiveLinesStaticCatalog) => {
+    setPlCatalog(catalog);
+    setTypesOfFishing(catalog.typesOfFishing);
+    setFishingAreas(catalog.fishingAreas);
+    setAquacultureTypes(catalog.aquacultureTypes);
+    setCroppingSystemAreas(catalog.croppingSystemAreas);
+    setSpeciesLines(catalog.speciesLines);
+    setAllLineOptions([
+      ...(catalog.linesByActivityId[ACTIVITY_IDS.agricola] ?? []),
+      ...(catalog.linesByActivityId[ACTIVITY_IDS.pecuaria] ?? []),
+      ...(catalog.linesByActivityId[ACTIVITY_IDS.forestal] ?? []),
+    ]);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const cat = await loadResolvedProductiveLinesStaticCatalog();
+      if (cancelled) return;
+      applyProductiveLinesCatalog(cat);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyProductiveLinesCatalog]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void (async () => {
+        if (!(await checkConnectivity())) return;
+        setLoadingOptions(true);
+        try {
+          await refreshProductiveLinesStaticCatalog();
+          const cat = await loadResolvedProductiveLinesStaticCatalog();
+          if (!cancelled) applyProductiveLinesCatalog(cat);
+        } catch (e) {
+          console.warn("productive lines catalog refresh on focus:", e);
+        } finally {
+          if (!cancelled) setLoadingOptions(false);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [applyProductiveLinesCatalog]),
+  );
+
   useEffect(() => {
     if (activityType === "pesca" || activityType === "acuicola") {
       setLineOptions([]);
       return;
     }
-    let cancelled = false;
-    setLoadingOptions(true);
-    apiFetch<{ data: ProductiveLine[] }>(`/productive-lines/activity/${ACTIVITY_IDS[activityType]}`)
-      .then((res) => { if (!cancelled) setLineOptions(res.data ?? []); })
-      .catch(() => { if (!cancelled) setLineOptions([]); })
-      .finally(() => { if (!cancelled) setLoadingOptions(false); });
-    return () => { cancelled = true; };
-  }, [activityType]);
-
-  // Fetch all line options for carousel name resolution (agricola + pecuaria + forestal)
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      apiFetch<{ data: ProductiveLine[] }>(`/productive-lines/activity/${ACTIVITY_IDS.agricola}`),
-      apiFetch<{ data: ProductiveLine[] }>(`/productive-lines/activity/${ACTIVITY_IDS.pecuaria}`),
-      apiFetch<{ data: ProductiveLine[] }>(`/productive-lines/activity/${ACTIVITY_IDS.forestal}`),
-    ])
-      .then(([agriRes, pecRes, forestRes]) => {
-        if (!cancelled) setAllLineOptions([...(agriRes.data ?? []), ...(pecRes.data ?? []), ...(forestRes.data ?? [])]);
-      })
-      .catch(() => { if (!cancelled) setAllLineOptions([]); });
-    return () => { cancelled = true; };
-  }, []);
-
-  // Fetch assistants and species lines on mount
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      apiFetch<{ data: AssistantItem[] }>("/assistants/types-of-fishing"),
-      apiFetch<{ data: AssistantItem[] }>("/assistants/fishing-areas"),
-      apiFetch<{ data: AssistantItem[] }>("/assistants/aquaculture-types-of-system"),
-      apiFetch<{ data: AssistantItem[] }>("/assistants/area-of-cropping-system"),
-      apiFetch<{ data: ProductiveLine[] }>(`/productive-lines/activity/${SPECIES_ACTIVITY_ID}`),
-    ])
-      .then(([fishing, areas, aquaculture, cropping, species]) => {
-        if (!cancelled) {
-          setTypesOfFishing(fishing.data ?? []);
-          setFishingAreas(areas.data ?? []);
-          setAquacultureTypes(aquaculture.data ?? []);
-          setCroppingSystemAreas(cropping.data ?? []);
-          setSpeciesLines(species.data ?? []);
-        }
-      })
-      .catch((err) => console.error("Failed to fetch assistants:", err));
-    return () => { cancelled = true; };
-  }, []);
+    if (!plCatalog) {
+      setLineOptions([]);
+      return;
+    }
+    const aid = ACTIVITY_IDS[activityType];
+    setLineOptions(plCatalog.linesByActivityId[aid] ?? []);
+  }, [activityType, plCatalog]);
 
   // Fetch existing lines on mount (API en línea; caché tras sincronización sin red)
   useEffect(() => {
@@ -1004,21 +1018,28 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
       handleForestChange(idx, "line_name", line.name);
       handleForestChange(idx, "unit_of_measure_id", "");
       handleForestChange(idx, "unit_of_measure_name", "");
-      try {
-        const res = await apiFetch<{ data: UnitOfMeasureItem[] }>(`/unit-of-measure/${line.id}`);
-        const units = res.data ?? [];
-        if (units.length === 1) {
-          handleForestChange(idx, "unit_of_measure_id", String(units[0].unit_id));
-          handleForestChange(idx, "unit_of_measure_name", units[0].unit_of_measure_name);
-        } else if (units.length > 1) {
-          setForestUnitOptions(units);
-          setShowForestUnitPicker(true);
+      let units: UnitOfMeasureItem[] = [];
+      const online = await checkConnectivity();
+      if (online) {
+        try {
+          const res = await apiFetch<{ data: UnitOfMeasureItem[] }>(`/unit-of-measure/${line.id}`);
+          units = res.data ?? [];
+        } catch (e) {
+          console.error("Failed to fetch forest units:", e);
         }
-      } catch (e) {
-        console.error("Failed to fetch forest units:", e);
+      }
+      if (units.length === 0) {
+        units = plCatalog?.unitsByLineId[line.id] ?? [];
+      }
+      if (units.length === 1) {
+        handleForestChange(idx, "unit_of_measure_id", String(units[0].unit_id));
+        handleForestChange(idx, "unit_of_measure_name", units[0].unit_of_measure_name);
+      } else if (units.length > 1) {
+        setForestUnitOptions(units);
+        setShowForestUnitPicker(true);
       }
     }
-  }, [activityType, activeLineIndex, handleAgriChange, handleLivestockChange, handleForestChange]);
+  }, [activityType, activeLineIndex, handleAgriChange, handleLivestockChange, handleForestChange, plCatalog]);
 
   const handleSelectUnit = useCallback((unit: string) => {
     setShowUnitPicker(false);

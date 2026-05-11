@@ -31,6 +31,11 @@ export interface Visit1Payload {
   attendance_id: number;
   attendance_name: string | null;
   origin: "web" | "app";
+  lat?: string | null;
+  lng?: string | null;
+  masl?: number | null;
+  commitments?: string | null;
+  attendance_identification?: string | null;
 }
 
 export interface Visit1QueuePhotosEnvelope {

@@ -12,7 +12,7 @@ import { apiFetch } from "@/utils/api";
 import {
     getObjectivesForEventAndLine,
     mergeObjectivesForVisit1Field,
-    objectiveItemsToFormStrings,
+    objectiveItemsToSpecificLines,
     readProductionLineId,
     VISIT_OBJECTIVE_EVENT_IDS,
 } from "@/utils/agro-objectives";
@@ -28,6 +28,7 @@ import {
     enqueueVisit1,
     getPendingLocalVisit1,
     parseVisit1QueuePhotosColumn,
+    type Visit1Payload,
 } from "@/utils/database/repositories/visit1-repository";
 import {
     convertPhotosToBase64,
@@ -53,6 +54,8 @@ import {
     ClipboardList,
     FileDown,
     ImagePlus,
+    ListTodo,
+    MapPin,
     MessageSquare,
     Save,
     Stethoscope,
@@ -77,20 +80,6 @@ interface VisitTabProps {
   projectId?: string;
 }
 
-interface Visit1Payload {
-  project_id: number;
-  producer_id: number;
-  objetive: string;
-  diagnosis: string;
-  recommendations: string;
-  observations: string;
-  compliance_recommendation_id: number;
-  registration_date: string;
-  attendance_id: number;
-  attendance_name: string | null;
-  origin: "web" | "app";
-}
-
 interface VisitImage {
   id: number;
   filename: string;
@@ -111,6 +100,11 @@ interface Visit1Response {
   attendance_name: string | null;
   option_attendance_name?: string;
   origin: string;
+  lat?: string | null;
+  lng?: string | null;
+  masl?: number | null;
+  commitments?: string | null;
+  attendance_identification?: string | null;
   created_by?: number;
   updated_by?: number;
   created_at?: string;
@@ -127,7 +121,7 @@ interface LocalPhoto {
 // ─── Attendance options ─────────────────────────────────────────────────────
 
 const ATTENDANCE_OPTIONS = [
-  { id: "1", label: "Usuario" },
+  { id: "1", label: "Usuario Productor" },
   { id: "2", label: "Trabajador UP" },
   { id: "3", label: "Persona núcleo familiar" },
   { id: "4", label: "Otro" },
@@ -136,9 +130,11 @@ const ATTENDANCE_OPTIONS = [
 // ─── Section config ─────────────────────────────────────────────────────────
 
 type SectionKey =
+  | "location"
   | "objective"
   | "diagnosis"
   | "recommendations"
+  | "commitments"
   | "observations"
   | "photos"
   | "attendance";
@@ -153,13 +149,26 @@ interface SectionConfig {
 }
 
 const SECTIONS: SectionConfig[] = [
-  { key: "objective", label: "Objetivo del Acompañamiento", shortLabel: "Objetivo", sectionNum: "5.0", icon: Target, color: "#1a7a3a" },
+  { key: "location", label: "Ubicación Geográfica y ASNM", shortLabel: "Ubicación", sectionNum: "2", icon: MapPin, color: "#7c3aed" },
+  { key: "objective", label: "Objetivos Específicos del Acompañamiento", shortLabel: "Objetivos", sectionNum: "5.0", icon: Target, color: "#1a7a3a" },
   { key: "diagnosis", label: "Diagnóstico visita", shortLabel: "Diagnóstico", sectionNum: "5.1", icon: Stethoscope, color: "#0284c7" },
-  { key: "recommendations", label: "Recomendaciones y Compromisos", shortLabel: "Recomend.", sectionNum: "5.2", icon: ClipboardList, color: "#0284c7" },
+  { key: "recommendations", label: "Recomendaciones Generales", shortLabel: "Recomend.", sectionNum: "5.2.1", icon: ClipboardList, color: "#0284c7" },
+  { key: "commitments", label: "Compromisos", shortLabel: "Comprom.", sectionNum: "5.2.2", icon: ListTodo, color: "#0284c7" },
   { key: "observations", label: "Observaciones visita", shortLabel: "Observac.", sectionNum: "5.4", icon: MessageSquare, color: "#0284c7" },
   { key: "photos", label: "Registro Fotográfico", shortLabel: "Fotos", sectionNum: "5.5", icon: Camera, color: "#059669" },
-  { key: "attendance", label: "Datos del Acompañamiento", shortLabel: "Acompañ.", sectionNum: "6.0", icon: Users, color: "#d97706" },
+  { key: "attendance", label: "Datos del Acompañamiento", shortLabel: "Acompañ.", sectionNum: "6", icon: Users, color: "#d97706" },
 ];
+
+/** Misma redacción que Visit1Dialog.vue (objetivo general fijo). */
+const VISIT1_GENERAL_OBJECTIVE_FIXED =
+  "Realizar caracterización y clasificación del usuario, así como un diagnóstico integral de la unidad productiva agropecuaria.";
+
+const COORDINATE_REGEX = /^-?\d*\.?\d*$/;
+
+function isValidCoordinate(value: string): boolean {
+  return COORDINATE_REGEX.test(value.trim());
+}
+
 
 // ─── API Helpers ────────────────────────────────────────────────────────────
 
@@ -204,6 +213,17 @@ async function createVisit1WithImages(
   formData.append("attendance_id", String(payload.attendance_id));
   formData.append("attendance_name", payload.attendance_name ?? "");
   formData.append("origin", payload.origin);
+  formData.append("lat", (payload.lat ?? "").trim());
+  formData.append("lng", (payload.lng ?? "").trim());
+  formData.append(
+    "masl",
+    payload.masl != null && Number.isFinite(payload.masl) ? String(payload.masl) : "",
+  );
+  formData.append("commitments", (payload.commitments ?? "").trim());
+  formData.append(
+    "attendance_identification",
+    (payload.attendance_identification ?? "").trim(),
+  );
 
   for (const photo of photos) {
     formData.append("images", {
@@ -288,6 +308,19 @@ function todayString(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function parseRegistrationParts(iso: string | undefined): { date: string; time: string } {
+  if (!iso?.trim()) return { date: todayString(), time: "09:00:00" };
+  const m = iso.trim().match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/);
+  if (m?.[1] && m[2]) {
+    const t = m[2].length === 5 ? `${m[2]}:00` : m[2];
+    return { date: m[1], time: t };
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso.trim())) {
+    return { date: iso.trim(), time: "09:00:00" };
+  }
+  return { date: todayString(), time: "09:00:00" };
+}
+
 function formatDisplayDate(dateStr: string): string {
   if (!dateStr) return "";
   const [y, m, d] = dateStr.split("-");
@@ -310,23 +343,43 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   const sheetSnapPoints = useMemo(() => ["94%"], []);
 
   // Form state
-  /** Catálogo servidor/caché (solo lectura en pantalla salvo borrador offline). */
-  const [catalogObjectiveMerged, setCatalogObjectiveMerged] = useState("");
-  /** Si hay cola offline, se conserva el texto congelado al guardar. */
+  /** Objetivos específicos del catálogo (GET /objetives/… o SQLite). */
+  const [catalogSpecificLines, setCatalogSpecificLines] = useState<string[]>([]);
+  /** `objetive` guardado en la visita remota/caché (edición). */
+  const [savedVisitObjetive, setSavedVisitObjetive] = useState("");
+  /** Si hay cola offline, se conserva el `objetive` congelado al guardar. */
   const [objectiveFromOfflineQueue, setObjectiveFromOfflineQueue] = useState<string | null>(null);
+  const [lat, setLat] = useState("");
+  const [lng, setLng] = useState("");
+  const [masl, setMasl] = useState("");
   const [diagnosis, setDiagnosis] = useState("");
   const [recommendations, setRecommendations] = useState("");
+  const [commitments, setCommitments] = useState("");
   const [observations, setObservations] = useState("");
   const [attendanceId, setAttendanceId] = useState("");
   const [attendanceName, setAttendanceName] = useState("");
+  const [attendanceIdentification, setAttendanceIdentification] = useState("");
   const [registrationDate, setRegistrationDate] = useState(todayString());
+  const [registrationTime, setRegistrationTime] = useState("09:00:00");
 
   // Photos: local picks + existing server images
   const [localPhotos, setLocalPhotos] = useState<(LocalPhoto | null)[]>([null, null, null]);
   const [existingImages, setExistingImages] = useState<(VisitImage | null)[]>([null, null, null]);
 
   // UI state
-  const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(new Set(["objective"]));
+  const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(
+    () =>
+      new Set([
+        "location",
+        "objective",
+        "diagnosis",
+        "recommendations",
+        "commitments",
+        "observations",
+        "photos",
+        "attendance",
+      ]),
+  );
   const [showAttendanceDropdown, setShowAttendanceDropdown] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -368,9 +421,40 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
 
   // ── Section completion ──────────────────────────────────────────────────
 
-  const objectiveDisplay = useMemo(
-    () => (objectiveFromOfflineQueue != null ? objectiveFromOfflineQueue : catalogObjectiveMerged),
-    [objectiveFromOfflineQueue, catalogObjectiveMerged],
+  /** Líneas de objetivos específicos mostradas (misma lógica que `availableObjectives` en Visit1Dialog.vue). */
+  const specificObjectiveLines = useMemo(() => {
+    if (objectiveFromOfflineQueue != null) {
+      return objectiveFromOfflineQueue
+        .split(/\r?\n/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+    }
+    if (isEditMode && savedVisitObjetive.trim()) {
+      return savedVisitObjetive
+        .split(/\r?\n/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+    }
+    return catalogSpecificLines;
+  }, [
+    objectiveFromOfflineQueue,
+    isEditMode,
+    savedVisitObjetive,
+    catalogSpecificLines,
+  ]);
+
+  const objetiveForPayload = useMemo(
+    () => specificObjectiveLines.join("\n"),
+    [specificObjectiveLines],
+  );
+
+  const objectivePdfText = useMemo(
+    () =>
+      mergeObjectivesForVisit1Field(
+        VISIT1_GENERAL_OBJECTIVE_FIXED,
+        objetiveForPayload,
+      ).trim(),
+    [objetiveForPayload],
   );
 
   const sectionStatus = useMemo(() => {
@@ -379,16 +463,33 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
       existingImages.some((img) => img !== null);
     const attendanceComplete =
       !!attendanceId && (attendanceId === "1" || !!attendanceName.trim());
+    const locationStarted =
+      !!lat.trim() || !!lng.trim() || !!masl.trim();
 
     return {
-      objective: !!objectiveDisplay.trim(),
+      location: locationStarted,
+      objective: specificObjectiveLines.length > 0,
       diagnosis: !!diagnosis.trim(),
       recommendations: !!recommendations.trim(),
+      commitments: !!commitments.trim(),
       observations: !!observations.trim(),
       photos: hasPhotos,
       attendance: attendanceComplete,
     };
-  }, [objectiveDisplay, diagnosis, recommendations, observations, localPhotos, existingImages, attendanceId, attendanceName]);
+  }, [
+    lat,
+    lng,
+    masl,
+    specificObjectiveLines,
+    diagnosis,
+    recommendations,
+    commitments,
+    observations,
+    localPhotos,
+    existingImages,
+    attendanceId,
+    attendanceName,
+  ]);
 
   // ── Load existing visit ─────────────────────────────────────────────────
 
@@ -398,7 +499,16 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      setCatalogObjectiveMerged("");
+      setCatalogSpecificLines([]);
+      setSavedVisitObjetive("");
+      setObjectiveFromOfflineQueue(null);
+      setLat("");
+      setLng("");
+      setMasl("");
+      setCommitments("");
+      setAttendanceIdentification("");
+      setRegistrationTime("09:00:00");
+      setRegistrationDate(todayString());
       try {
         const userId = authUser?.user_id ?? 0;
         const pendingLocal =
@@ -421,10 +531,23 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
           setObjectiveFromOfflineQueue(payload.objetive || "");
           setDiagnosis(payload.diagnosis || "");
           setRecommendations(payload.recommendations || "");
+          setCommitments(payload.commitments ?? "");
           setObservations(payload.observations || "");
           setAttendanceId(payload.attendance_id ? String(payload.attendance_id) : "");
           setAttendanceName(payload.attendance_name || "");
-          if (payload.registration_date) setRegistrationDate(payload.registration_date);
+          setAttendanceIdentification(payload.attendance_identification ?? "");
+          setLat(payload.lat != null ? String(payload.lat) : "");
+          setLng(payload.lng != null ? String(payload.lng) : "");
+          setMasl(
+            payload.masl != null && Number.isFinite(payload.masl)
+              ? String(payload.masl)
+              : "",
+          );
+          if (payload.registration_date) {
+            const { date, time } = parseRegistrationParts(payload.registration_date);
+            setRegistrationDate(date);
+            setRegistrationTime(time);
+          }
           const newLocal: (LocalPhoto | null)[] = [null, null, null];
           parsedPhotos.photos.slice(0, 3).forEach((p, i) => {
             newLocal[i] = p;
@@ -479,12 +602,26 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
           if (data) {
             setIsEditMode(true);
             setExistingVisitId(data.id);
+            setSavedVisitObjetive(data.objetive || "");
             setDiagnosis(data.diagnosis || "");
             setRecommendations(data.recommendations || "");
+            setCommitments(data.commitments ?? "");
             setObservations(data.observations || "");
             setAttendanceId(data.attendance_id ? String(data.attendance_id) : "");
             setAttendanceName(data.attendance_name || "");
-            if (data.registration_date) setRegistrationDate(data.registration_date);
+            setAttendanceIdentification(data.attendance_identification ?? "");
+            setLat(data.lat != null ? String(data.lat) : "");
+            setLng(data.lng != null ? String(data.lng) : "");
+            setMasl(
+              data.masl != null && Number.isFinite(Number(data.masl))
+                ? String(data.masl)
+                : "",
+            );
+            if (data.registration_date) {
+              const { date, time } = parseRegistrationParts(data.registration_date);
+              setRegistrationDate(date);
+              setRegistrationTime(time);
+            }
 
             const imgs = data.images ?? [];
             const newExisting: (VisitImage | null)[] = [null, null, null];
@@ -492,6 +629,22 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
               newExisting[i] = img;
             });
             setExistingImages(newExisting);
+          } else {
+            setIsEditMode(false);
+            setExistingVisitId(null);
+            setSavedVisitObjetive("");
+            setDiagnosis("");
+            setRecommendations("");
+            setCommitments("");
+            setObservations("");
+            setAttendanceId("");
+            setAttendanceName("");
+            setAttendanceIdentification("");
+            setLat("");
+            setLng("");
+            setMasl("");
+            setLocalPhotos([null, null, null]);
+            setExistingImages([null, null, null]);
           }
         }
       } catch (err) {
@@ -540,13 +693,12 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
       setObjectivesApiLoading(false);
 
       if (items == null || items.length === 0) {
-        if (!cancelled) setCatalogObjectiveMerged("");
+        if (!cancelled) setCatalogSpecificLines([]);
         return;
       }
 
-      const { general, specific } = objectiveItemsToFormStrings(items);
-      const merged = mergeObjectivesForVisit1Field(general, specific);
-      if (!cancelled) setCatalogObjectiveMerged(merged.trim());
+      const specifics = objectiveItemsToSpecificLines(items);
+      if (!cancelled) setCatalogSpecificLines(specifics);
     })();
 
     return () => {
@@ -654,11 +806,42 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   // ── Save ──────────────────────────────────────────────────────────────
 
 const handleSave = useCallback(async () => {
-    if (!objectiveDisplay.trim()) {
+    if (!isValidCoordinate(lat)) {
+      showAlert({
+        title: "Coordenadas",
+        message:
+          "Revise latitud: solo números 0-9, un guion inicial y un punto como máximo.",
+        type: "warning",
+      });
+      return;
+    }
+    if (!isValidCoordinate(lng)) {
+      showAlert({
+        title: "Coordenadas",
+        message:
+          "Revise longitud: solo números 0-9, un guion inicial y un punto como máximo.",
+        type: "warning",
+      });
+      return;
+    }
+    if (!masl.trim()) {
+      showAlert({
+        title: "Campo requerido",
+        message: "Ingrese la altura sobre el nivel del mar (ASNM).",
+        type: "warning",
+      });
+      return;
+    }
+    const lineId = readProductionLineId(
+      producerDetail as { production_line_id?: number | null } | null,
+    );
+    if (!objetiveForPayload.trim()) {
       showAlert({
         title: "Campo requerido",
         message:
-          "No hay objetivos del catálogo para esta línea productiva. Descargue datos con conexión o sincronice.",
+          lineId == null
+            ? "Falta el id de línea productiva principal del productor; no se pueden cargar los objetivos."
+            : "No hay objetivos específicos disponibles para esta línea y visita. Descargue datos con conexión o sincronice.",
         type: "warning",
       });
       return;
@@ -668,7 +851,11 @@ const handleSave = useCallback(async () => {
       return;
     }
     if (!recommendations.trim()) {
-      showAlert({ title: "Campo requerido", message: "Ingrese las recomendaciones y compromisos.", type: "warning" });
+      showAlert({
+        title: "Campo requerido",
+        message: "Ingrese las recomendaciones generales.",
+        type: "warning",
+      });
       return;
     }
     if (!attendanceId) {
@@ -679,21 +866,44 @@ const handleSave = useCallback(async () => {
       showAlert({ title: "Campo requerido", message: "Ingrese el nombre de la persona que atiene.", type: "warning" });
       return;
     }
+    if (
+      attendanceId !== "1" &&
+      attendanceIdentification.trim() &&
+      !/^\d+$/.test(attendanceIdentification.trim())
+    ) {
+      showAlert({
+        title: "Identificación",
+        message: "El número de identificación solo debe contener dígitos (0-9).",
+        type: "warning",
+      });
+      return;
+    }
+
+    const maslNum = Number(masl.trim());
+    const regDate = `${registrationDate} ${registrationTime.trim() || "09:00:00"}`;
 
     setSaving(true);
     try {
       const payload: Visit1Payload = {
         project_id: Number(projectId),
         producer_id: Number(producerId),
-        objetive: objectiveDisplay.trim(),
+        objetive: objetiveForPayload.trim(),
         diagnosis: diagnosis.trim(),
         recommendations: recommendations.trim(),
         observations: observations.trim(),
         compliance_recommendation_id: 3,
-        registration_date: registrationDate,
+        registration_date: regDate,
         attendance_id: Number(attendanceId),
         attendance_name: attendanceId !== "1" ? attendanceName.trim() : null,
         origin: "app",
+        lat: lat.trim() || null,
+        lng: lng.trim() || null,
+        masl: Number.isFinite(maslNum) ? maslNum : null,
+        commitments: commitments.trim() || null,
+        attendance_identification:
+          attendanceId !== "1"
+            ? attendanceIdentification.trim() || null
+            : null,
       };
 
       const newPhotos = localPhotos.filter((p): p is LocalPhoto => p !== null);
@@ -703,6 +913,7 @@ const handleSave = useCallback(async () => {
       if (isOnline) {
         if (isEditMode && existingVisitId) {
           await updateVisit1(existingVisitId, payload);
+          setSavedVisitObjetive(payload.objetive);
           if (newPhotos.length > 0) {
             try {
               await uploadVisitImages(existingVisitId, newPhotos);
@@ -720,6 +931,7 @@ const handleSave = useCallback(async () => {
           }
           setExistingVisitId(result?.id ?? null);
           setIsEditMode(true);
+          if (result?.objetive != null) setSavedVisitObjetive(result.objetive);
           showAlert({ title: "Éxito", message: "Visita 1 guardada exitosamente.", type: "success" });
         }
         setLocalPhotos([null, null, null]);
@@ -768,9 +980,27 @@ const handleSave = useCallback(async () => {
       setSaving(false);
     }
   }, [
-    objectiveDisplay, diagnosis, recommendations, observations, attendanceId,
-    attendanceName, registrationDate, producerId, projectId,
-    localPhotos, isEditMode, existingVisitId, showAlert, authUser,
+    lat,
+    lng,
+    masl,
+    objetiveForPayload,
+    producerDetail,
+    diagnosis,
+    recommendations,
+    commitments,
+    observations,
+    attendanceId,
+    attendanceName,
+    attendanceIdentification,
+    registrationDate,
+    registrationTime,
+    producerId,
+    projectId,
+    localPhotos,
+    isEditMode,
+    existingVisitId,
+    showAlert,
+    authUser,
   ]);
 
   // ── Generate PDF (pdfmake) ──────────────────────────────────────────────
@@ -797,9 +1027,10 @@ const handleSave = useCallback(async () => {
             .join(" ")
         : "";
 
-      // Format current time
-      const now = new Date();
-      const hora = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      const hora =
+        registrationTime.trim().length >= 5
+          ? registrationTime.trim().slice(0, 5)
+          : registrationTime.trim();
 
       // ── Fetch property info for the PDF ──────────────────────────────
       let nombreDelPredio = "";
@@ -960,9 +1191,14 @@ const handleSave = useCallback(async () => {
         // Section 4: Clasificación
         nivelClasificacion: "",
         // Section 5: Enfoque Técnico
-        objetivoAcompanamiento: objectiveDisplay,
+        objetivoAcompanamiento: objectivePdfText,
         diagnosticoVisita: diagnosis,
-        recomendacionesCompromisos: recommendations,
+        recomendacionesCompromisos: [
+          recommendations.trim(),
+          commitments.trim() ? `Compromisos:\n${commitments.trim()}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
         observacionesVisita: observations,
         photoBase64Uris,
         // Section 6: Datos del Acompañamiento
@@ -984,8 +1220,15 @@ const handleSave = useCallback(async () => {
       setGeneratingPdf(false);
     }
   }, [
-    objectiveDisplay, diagnosis, recommendations, observations,
-    attendanceId, attendanceName, registrationDate,
+    objectivePdfText,
+    diagnosis,
+    recommendations,
+    commitments,
+    observations,
+    attendanceId,
+    attendanceName,
+    registrationDate,
+    registrationTime,
     localPhotos, existingImages, token, producerDetail, authUser,
     producerId, projectId,
   ]);
@@ -1044,40 +1287,128 @@ const handleSave = useCallback(async () => {
       placeholder: string,
       hint?: string,
       topContent?: React.ReactNode,
-      readOnly?: boolean,
     ) => {
       if (!expandedSections.has(sectionKey)) return null;
       return (
         <View style={styles.sectionContent}>
           {topContent}
           {hint && <ThemedText style={styles.sectionHint}>{hint}</ThemedText>}
-          {readOnly ? (
-            <View style={styles.readOnlyObjectivePanel}>
-              <ThemedText style={styles.readOnlyObjectiveText}>
-                {value.trim()
-                  ? value
-                  : objectivesApiLoading
-                    ? ""
-                    : "No hay objetivos configurados para esta línea en el servidor o en la copia local. Use «Descargar datos» o «Sincronizar» con conexión."}
-              </ThemedText>
-            </View>
-          ) : (
-            <TextInput
-              style={styles.textArea}
-              value={value}
-              onChangeText={onChangeText}
-              placeholder={placeholder}
-              placeholderTextColor="#aaa"
-              multiline
-              textAlignVertical="top"
-              numberOfLines={4}
-            />
-          )}
+          <TextInput
+            style={styles.textArea}
+            value={value}
+            onChangeText={onChangeText}
+            placeholder={placeholder}
+            placeholderTextColor="#aaa"
+            multiline
+            textAlignVertical="top"
+            numberOfLines={4}
+          />
         </View>
       );
     },
-    [expandedSections, objectivesApiLoading],
+    [expandedSections],
   );
+
+  const mainProductiveLineName = useMemo(() => {
+    const d = producerDetail as { production_line?: { name?: string } } | null;
+    return (d?.production_line?.name ?? "").trim();
+  }, [producerDetail]);
+
+  const renderLocationContent = useCallback(() => {
+    if (!expandedSections.has("location")) return null;
+    return (
+      <View style={styles.sectionContent}>
+        <ThemedText style={styles.sectionHint}>
+          Ingrese las coordenadas geográficas y la altura sobre el nivel del mar (ASNM) del predio visitado.
+        </ThemedText>
+        <ThemedText style={styles.fieldLabel}>Latitud</ThemedText>
+        <TextInput
+          style={styles.textInput}
+          value={lat}
+          onChangeText={setLat}
+          placeholder="Ej: 8.7489"
+          placeholderTextColor="#aaa"
+          keyboardType="decimal-pad"
+        />
+        <ThemedText style={[styles.fieldLabel, { marginTop: verticalScale(10) }]}>Longitud</ThemedText>
+        <TextInput
+          style={styles.textInput}
+          value={lng}
+          onChangeText={setLng}
+          placeholder="Ej: -75.8814"
+          placeholderTextColor="#aaa"
+          keyboardType="decimal-pad"
+        />
+        <ThemedText style={[styles.fieldLabel, { marginTop: verticalScale(10) }]}>ASNM (metros)</ThemedText>
+        <TextInput
+          style={styles.textInput}
+          value={masl}
+          onChangeText={setMasl}
+          placeholder="Ej: 150"
+          placeholderTextColor="#aaa"
+          keyboardType="number-pad"
+        />
+      </View>
+    );
+  }, [expandedSections, lat, lng, masl]);
+
+  const renderObjectiveContent = useCallback(() => {
+    if (!expandedSections.has("objective")) return null;
+    const lineHint = mainProductiveLineName
+      ? ` (${mainProductiveLineName})`
+      : "";
+    return (
+      <View style={styles.sectionContent}>
+        {objectivesApiLoading ? (
+          <View style={styles.objectivesLoadingRow}>
+            <ActivityIndicator size="small" color="#1a7a3a" />
+            <ThemedText style={styles.objectivesLoadingText}>
+              Cargando objetivos desde el servidor…
+            </ThemedText>
+          </View>
+        ) : null}
+        <View style={styles.generalObjectiveBox}>
+          <ThemedText style={styles.generalObjectiveLabel}>Objetivo General (fijo)</ThemedText>
+          <ThemedText style={styles.generalObjectiveText}>{VISIT1_GENERAL_OBJECTIVE_FIXED}</ThemedText>
+        </View>
+        <ThemedText style={styles.sectionHint}>
+          Los objetivos específicos del acompañamiento se cargan automáticamente según la línea productiva principal del productor.
+        </ThemedText>
+        {specificObjectiveLines.length > 0 ? (
+          <View style={styles.objectivesReadonlyPanel}>
+            {specificObjectiveLines.map((obj, idx) => (
+              <View key={`${idx}-${obj.slice(0, 24)}`}>
+                {idx > 0 ? <View style={styles.objectivesReadonlySeparator} /> : null}
+                <ThemedText style={styles.objectivesReadonlyParagraph}>
+                  <ThemedText style={styles.objectivesReadonlyIndex}>{idx + 1}. </ThemedText>
+                  {obj}
+                </ThemedText>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <View style={styles.objectivesEmptyPanel}>
+            <ThemedText style={styles.objectivesEmptyText}>
+              {`No hay objetivos configurados para la línea productiva principal${lineHint}.`}
+            </ThemedText>
+          </View>
+        )}
+        {specificObjectiveLines.length > 0 ? (
+          <ThemedText style={styles.objectivesFooterNote}>
+            {isEditMode
+              ? `Objetivos específicos registrados en esta visita${lineHint ? ` (${mainProductiveLineName})` : ""}.`
+              : `Se cargaron ${specificObjectiveLines.length} objetivo${specificObjectiveLines.length === 1 ? "" : "s"}${lineHint ? ` para ${mainProductiveLineName}` : ""}.`}
+          </ThemedText>
+        ) : null}
+      </View>
+    );
+  }, [
+    expandedSections,
+    objectivesApiLoading,
+    specificObjectiveLines,
+    mainProductiveLineName,
+    isEditMode,
+  ]);
 
   // ── Render: photo slot ────────────────────────────────────────────────
 
@@ -1154,17 +1485,33 @@ const handleSave = useCallback(async () => {
 
     return (
       <View style={styles.sectionContent}>
-        {/* Date & Origin */}
         <View style={styles.fieldRow}>
           <View style={styles.fieldHalf}>
             <ThemedText style={styles.fieldLabel}>Fecha de registro</ThemedText>
-            <View style={styles.readonlyField}>
-              <CalendarCheck size={responsiveFont(14)} color="#1a7a3a" />
-              <ThemedText style={styles.readonlyFieldText}>
-                {formatDisplayDate(registrationDate)}
-              </ThemedText>
-            </View>
+            <TextInput
+              style={styles.textInput}
+              value={registrationDate}
+              onChangeText={setRegistrationDate}
+              placeholder="AAAA-MM-DD"
+              placeholderTextColor="#aaa"
+            />
+            <ThemedText style={styles.fieldHintSmall}>
+              Mostrada también como: {formatDisplayDate(registrationDate)}
+            </ThemedText>
           </View>
+          <View style={styles.fieldHalf}>
+            <ThemedText style={styles.fieldLabel}>Hora de registro</ThemedText>
+            <TextInput
+              style={styles.textInput}
+              value={registrationTime}
+              onChangeText={setRegistrationTime}
+              placeholder="09:00:00"
+              placeholderTextColor="#aaa"
+            />
+          </View>
+        </View>
+
+        <View style={styles.fieldRow}>
           <View style={styles.fieldHalf}>
             <ThemedText style={styles.fieldLabel}>Origen registro</ThemedText>
             <View style={styles.originBadge}>
@@ -1175,9 +1522,8 @@ const handleSave = useCallback(async () => {
 
         <View style={styles.separator} />
 
-        {/* Attendance selector */}
         <ThemedText type="defaultSemiBold" style={styles.attendanceTitle}>
-          Persona quien atiende el Acompañamiento
+          Nombre Persona quien atiende el Acompañamiento
         </ThemedText>
 
         <TouchableOpacity
@@ -1205,7 +1551,10 @@ const handleSave = useCallback(async () => {
                 onPress={() => {
                   setAttendanceId(opt.id);
                   setShowAttendanceDropdown(false);
-                  if (opt.id === "1") setAttendanceName("");
+                  if (opt.id === "1") {
+                    setAttendanceName("");
+                    setAttendanceIdentification("");
+                  }
                 }}
               >
                 <ThemedText
@@ -1224,7 +1573,6 @@ const handleSave = useCallback(async () => {
           </View>
         )}
 
-        {/* Conditional name input */}
         {attendanceId && attendanceId !== "1" && (
           <View style={styles.conditionalField}>
             <View style={styles.conditionalIndicator} />
@@ -1235,21 +1583,41 @@ const handleSave = useCallback(async () => {
                   : `Nombre del ${selectedOption?.label ?? ""}`}
               </ThemedText>
               <ThemedText style={styles.fieldHintSmall}>
-                Solo se habilita si selecciona una opción diferente a Usuario
+                Solo se habilita si selecciona una opción diferente a Usuario Productor.
+                Ejemplo: Rosa María Perez López (Hija), Martin Rojas González (Vecino)
               </ThemedText>
               <TextInput
                 style={styles.textInput}
                 value={attendanceName}
                 onChangeText={setAttendanceName}
-                placeholder="Ingrese el nombre de la persona..."
+                placeholder="Nombre completo y parentesco. Ej: Rosa María Perez López (Hija)"
                 placeholderTextColor="#aaa"
+              />
+              <ThemedText style={[styles.fieldLabel, { marginTop: verticalScale(12) }]}>
+                Número de identificación de quien atiende
+              </ThemedText>
+              <TextInput
+                style={styles.textInput}
+                value={attendanceIdentification}
+                onChangeText={setAttendanceIdentification}
+                placeholder="Número de documento de identidad (solo dígitos si aplica)"
+                placeholderTextColor="#aaa"
+                keyboardType="number-pad"
               />
             </View>
           </View>
         )}
       </View>
     );
-  }, [expandedSections, registrationDate, attendanceId, attendanceName, showAttendanceDropdown]);
+  }, [
+    expandedSections,
+    registrationDate,
+    registrationTime,
+    attendanceId,
+    attendanceName,
+    attendanceIdentification,
+    showAttendanceDropdown,
+  ]);
 
   // ── Loading state ─────────────────────────────────────────────────────
 
@@ -1280,7 +1648,7 @@ const handleSave = useCallback(async () => {
               {isEditMode ? "Visita 1 registrada" : "Visita 1"}
             </ThemedText>
             <ThemedText style={styles.summarySubtitle}>
-              Formulario de enfoque técnico productivo
+              Formulario de enfoque técnico productivo y acompañamiento
             </ThemedText>
           </View>
         </View>
@@ -1374,69 +1742,70 @@ const handleSave = useCallback(async () => {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Section 1: Objetivo */}
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[0]!, sectionStatus.objective)}
-            {renderTextSection(
-              "objective",
-              objectiveDisplay,
-              () => {},
-              "",
-              "Objetivos del catálogo EPSEA (solo lectura): provienen del servidor y de la copia local tras sincronizar. Si trabaja sin conexión, descargue datos antes.",
-              objectivesApiLoading ? (
-                <View style={styles.objectivesLoadingRow}>
-                  <ActivityIndicator size="small" color="#1a7a3a" />
-                  <ThemedText style={styles.objectivesLoadingText}>
-                    Cargando objetivos desde el servidor…
-                  </ThemedText>
-                </View>
-              ) : undefined,
-              true,
-            )}
+            {renderSectionHeader(SECTIONS[0]!, sectionStatus.location)}
+            {renderLocationContent()}
           </View>
 
-          {/* Section 2: Diagnóstico */}
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[1]!, sectionStatus.diagnosis)}
+            {renderSectionHeader(SECTIONS[1]!, sectionStatus.objective)}
+            {renderObjectiveContent()}
+          </View>
+
+          <View style={styles.section}>
+            {renderSectionHeader(SECTIONS[2]!, sectionStatus.diagnosis)}
             {renderTextSection(
               "diagnosis",
               diagnosis,
               setDiagnosis,
-              "Describa el diagnóstico de la visita...",
-              "Realice un recorrido total de la Unidad Productiva para identificar los problemas críticos.",
+              "Describa detalladamente el diagnóstico técnico inicial del sistema productivo, teniendo en cuenta cada uno de los objetivos específicos del acompañamiento definidos por la EPSEA Universidad de Córdoba. Resalte puntualmente las principales fortalezas y problemáticas de la línea principal a atender.",
+              "Para generar el diagnóstico inicial técnico productivo del sistema, usted deberá realizar un recorrido total de la Unidad Productiva, que le permita identificar los problemas críticos relevantes y/o ventajas y oportunidades.",
             )}
           </View>
 
-          {/* Section 3: Recomendaciones */}
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[2]!, sectionStatus.recommendations)}
+            {renderSectionHeader(SECTIONS[3]!, sectionStatus.recommendations)}
             {renderTextSection(
               "recommendations",
               recommendations,
               setRecommendations,
-              "Ingrese las recomendaciones y compromisos...",
-              "Plantee recomendaciones técnicas de acuerdo al diagnóstico encontrado.",
+              "Plantee estas recomendaciones técnicas de acuerdo al diagnóstico inicial encontrado en la unidad productiva. Redacte recomendaciones profesionales, relevantes y en procura de mejorar los aspectos de la extensión del usuario a intervenir y adaptadas a las condiciones del sistema productivo.",
+              "Plantee recomendaciones técnicas de acuerdo al diagnóstico inicial encontrado en la unidad productiva. Deberán ser recomendaciones profesionales, relevantes y en procura de mejorar los aspectos de la extensión del usuario a intervenir y adaptadas a las condiciones del sistema productivo.",
             )}
           </View>
 
-          {/* Section 4: Observaciones */}
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[3]!, sectionStatus.observations)}
+            {renderSectionHeader(SECTIONS[4]!, sectionStatus.commitments)}
+            {renderTextSection(
+              "commitments",
+              commitments,
+              setCommitments,
+              "Redacte compromisos puntuales, de manera clara, acordes a los objetivos específicos del acompañamiento (si aplican), medibles y realizables dentro del tiempo del acompañamiento.",
+              "Redacte compromisos puntuales, de manera clara, acordes a los objetivos específicos del acompañamiento (si aplican), medibles y realizables dentro del tiempo del acompañamiento.",
+            )}
+          </View>
+
+          <View style={styles.section}>
+            {renderSectionHeader(SECTIONS[5]!, sectionStatus.observations)}
             {renderTextSection(
               "observations",
               observations,
               setObservations,
-              "Ingrese las observaciones de la visita...",
+              "Describa aquí, si aplica, cualquier otra situación particular que considere relevante para la realización del acompañamiento, o para dejar trazabilidad de las evidencias del mismo.",
             )}
           </View>
 
-          {/* Section 5: Fotos */}
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[4]!, sectionStatus.photos)}
+            {renderSectionHeader(SECTIONS[6]!, sectionStatus.photos)}
             {expandedSections.has("photos") && (
               <View style={styles.sectionContent}>
                 <ThemedText style={styles.sectionHint}>
-                  Seleccione hasta 3 fotografías de la visita
+                  Arrastre o seleccione hasta 3 fotografías de la visita.
+                </ThemedText>
+                <ThemedText style={[styles.sectionHint, styles.photoHintItalic]}>
+                  Tomar mínimo 3 fotos con su respectiva marca de agua (lugar, georreferenciación, ASNM, fecha, hora).
+                  Foto 1: Panorámica del predio y el usuario. Foto 2: Donde se vea al usuario en su actividad productiva principal.
+                  Foto 3: Donde se vea al usuario junto con el extensionista.
                 </ThemedText>
                 <View style={styles.photosGrid}>
                   {[0, 1, 2].map(renderPhotoSlot)}
@@ -1445,9 +1814,8 @@ const handleSave = useCallback(async () => {
             )}
           </View>
 
-          {/* Section 6: Datos Acompañamiento */}
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[5]!, sectionStatus.attendance)}
+            {renderSectionHeader(SECTIONS[7]!, sectionStatus.attendance)}
             {renderAttendanceContent()}
           </View>
 
@@ -1656,6 +2024,76 @@ const styles = StyleSheet.create({
     fontSize: responsiveFont(13),
     color: "#555",
   },
+  generalObjectiveBox: {
+    backgroundColor: "rgba(0,0,0,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.08)",
+    borderRadius: widthScale(8),
+    paddingHorizontal: widthScale(12),
+    paddingVertical: verticalScale(10),
+    marginBottom: verticalScale(10),
+  },
+  generalObjectiveLabel: {
+    fontSize: responsiveFont(10),
+    fontWeight: "700",
+    color: "#666",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: verticalScale(4),
+  },
+  generalObjectiveText: {
+    fontSize: responsiveFont(13),
+    color: "#555",
+    lineHeight: responsiveFont(19),
+  },
+  objectivesReadonlyPanel: {
+    backgroundColor: "#f8f9fa",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.1)",
+    borderRadius: widthScale(8),
+    paddingHorizontal: widthScale(12),
+    paddingVertical: verticalScale(12),
+  },
+  objectivesEmptyPanel: {
+    backgroundColor: "rgba(245, 158, 11, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.35)",
+    borderStyle: "dashed",
+    borderRadius: widthScale(8),
+    paddingHorizontal: widthScale(12),
+    paddingVertical: verticalScale(18),
+  },
+  objectivesEmptyText: {
+    fontSize: responsiveFont(14),
+    color: "#92400e",
+    textAlign: "center",
+    lineHeight: responsiveFont(20),
+  },
+  objectivesReadonlySeparator: {
+    height: 1,
+    backgroundColor: "rgba(0,0,0,0.1)",
+    marginVertical: verticalScale(14),
+  },
+  objectivesReadonlyParagraph: {
+    fontSize: responsiveFont(15),
+    color: "#222",
+    lineHeight: responsiveFont(22),
+  },
+  objectivesReadonlyIndex: {
+    fontSize: responsiveFont(15),
+    fontWeight: "700",
+    color: "#666",
+  },
+  objectivesFooterNote: {
+    fontSize: responsiveFont(11),
+    color: "#666",
+    lineHeight: responsiveFont(16),
+    marginTop: verticalScale(8),
+  },
+  photoHintItalic: {
+    fontStyle: "italic",
+    marginTop: verticalScale(4),
+  },
 
   // Text areas
   textArea: {
@@ -1670,21 +2108,6 @@ const styles = StyleSheet.create({
     color: "#333",
     lineHeight: responsiveFont(22),
   },
-  readOnlyObjectivePanel: {
-    backgroundColor: "#f8f9fa",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
-    borderRadius: widthScale(8),
-    paddingHorizontal: widthScale(12),
-    paddingVertical: verticalScale(12),
-    minHeight: verticalScale(110),
-  },
-  readOnlyObjectiveText: {
-    fontSize: responsiveFont(15),
-    color: "#222",
-    lineHeight: responsiveFont(22),
-  },
-
   // Photos
   photosGrid: {
     flexDirection: "row",

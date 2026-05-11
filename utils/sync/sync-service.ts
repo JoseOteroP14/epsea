@@ -454,7 +454,6 @@ export async function downloadAllData(
 
   reportPhase("Resultados descargados", DOWNLOAD_PHASES.results, 1, 1);
 
-
   // Note: Producer details endpoint (/producers/:id) is not available for extensionists.
   // Components, questions, question types, and innova fields are pre-seeded in the DB.
 
@@ -544,6 +543,19 @@ async function uploadVisit1Item(item: Visit1QueueItem): Promise<void> {
   formData.append("attendance_id", String(payload.attendance_id));
   formData.append("attendance_name", payload.attendance_name ?? "");
   formData.append("origin", payload.origin ?? "app");
+  formData.append("lat", (payload.lat ?? "").trim());
+  formData.append("lng", (payload.lng ?? "").trim());
+  formData.append(
+    "masl",
+    payload.masl != null && Number.isFinite(payload.masl)
+      ? String(payload.masl)
+      : "",
+  );
+  formData.append("commitments", (payload.commitments ?? "").trim());
+  formData.append(
+    "attendance_identification",
+    (payload.attendance_identification ?? "").trim(),
+  );
   for (const photo of photos) {
     formData.append("images", {
       uri: photo.uri,

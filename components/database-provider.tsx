@@ -1,5 +1,7 @@
+import { checkConnectivity } from "@/hooks/use-network";
 import { initDatabase } from "@/utils/database/client";
 import { useAuthStore } from "@/store/useAuthStore";
+import { refreshProductiveLinesStaticCatalog } from "@/utils/productive-lines-static-catalog";
 import React, { useEffect, useState, useCallback } from "react";
 import { ActivityIndicator, View, Text, TouchableOpacity, StyleSheet } from "react-native";
 
@@ -13,6 +15,12 @@ export function DatabaseProvider({ children }: { children: React.ReactNode }) {
     try {
       await initDatabase();
       await useAuthStore.getState().hydrate();
+      const { isAuthenticated } = useAuthStore.getState();
+      if (isAuthenticated && (await checkConnectivity())) {
+        void refreshProductiveLinesStaticCatalog().catch((err) =>
+          console.warn("Catálogo estático de líneas productivas (bootstrap):", err),
+        );
+      }
       setReady(true);
     } catch (err) {
       const message =
