@@ -7,16 +7,18 @@ import {
   isSurveyAnswerEmpty,
   resolveDependentChildIdsFromDetail,
 } from "@/utils/survey/dependent-child-ids";
+import { isQuestionRequired } from "@/utils/survey/question-required";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { ChevronLeft, ChevronRight } from "lucide-react-native";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-    ScrollView,
-    StyleSheet,
-    TouchableOpacity,
-    View,
-    type ComponentType,
-} from "react-native";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+} from "react";
+import { ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import Animated, {
     useAnimatedStyle,
@@ -145,6 +147,18 @@ export function QuestionWizard({
     return false;
   }, [visibleQuestions, answers, questionDetails, getTypeName]);
 
+  /** Todas las preguntas visibles marcadas como obligatorias deben tener respuesta para Guardar. */
+  const requiredFieldsIncomplete = useMemo(() => {
+    for (const q of visibleQuestions) {
+      if (!isQuestionRequired(q)) continue;
+      if (isSurveyAnswerEmpty(answers[q.id])) return true;
+    }
+    return false;
+  }, [visibleQuestions, answers]);
+
+  const saveBlocked =
+    dependentChildrenIncomplete || requiredFieldsIncomplete;
+
   const handleAnswerChange = useCallback(
     (questionId: number, value: any) => {
       const question = questionById.get(questionId);
@@ -201,6 +215,14 @@ export function QuestionWizard({
 
   const totalQuestions = visibleQuestions.length;
   const currentQuestion = visibleQuestions[currentIndex];
+
+  const currentRequiredBlocksNext = useMemo(() => {
+    if (!currentQuestion) return false;
+    return (
+      isQuestionRequired(currentQuestion) &&
+      isSurveyAnswerEmpty(answers[currentQuestion.id])
+    );
+  }, [currentQuestion, answers]);
 
   const answeredCount = useMemo(
     () =>
@@ -272,7 +294,7 @@ export function QuestionWizard({
           value={answers[currentQuestion.id]}
           onChange={handleAnswerChange}
         />
-        {currentQuestion.is_required && (
+        {isQuestionRequired(currentQuestion) && (
           <ThemedText style={styles.requiredHint}>Campo obligatorio</ThemedText>
         )}
       </ScrollViewComponent>
@@ -351,16 +373,16 @@ export function QuestionWizard({
             <TouchableOpacity
               style={[
                 styles.saveButton,
-                dependentChildrenIncomplete && styles.saveButtonDisabled,
+                saveBlocked && styles.saveButtonDisabled,
               ]}
               onPress={onSave}
-              disabled={dependentChildrenIncomplete}
+              disabled={saveBlocked}
               activeOpacity={0.7}
             >
               <ThemedText
                 style={[
                   styles.saveButtonText,
-                  dependentChildrenIncomplete && styles.saveButtonTextDisabled,
+                  saveBlocked && styles.saveButtonTextDisabled,
                 ]}
               >
                 Guardar
@@ -376,25 +398,32 @@ export function QuestionWizard({
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity
-            style={[styles.navButton, isLast && styles.navButtonDisabled]}
-            onPress={goNext}
-            disabled={isLast}
-            activeOpacity={0.7}
-          >
-            <ThemedText
+          {isLast ? (
+            <View style={styles.navEndSpacer} />
+          ) : (
+            <TouchableOpacity
               style={[
-                styles.navButtonText,
-                isLast && styles.navButtonTextDisabled,
+                styles.navButton,
+                currentRequiredBlocksNext && styles.navButtonDisabled,
               ]}
+              onPress={goNext}
+              disabled={currentRequiredBlocksNext}
+              activeOpacity={0.7}
             >
-              Siguiente
-            </ThemedText>
-            <ChevronRight
-              size={responsiveFont(18)}
-              color={isLast ? "#ccc" : "#1a7a3a"}
-            />
-          </TouchableOpacity>
+              <ThemedText
+                style={[
+                  styles.navButtonText,
+                  currentRequiredBlocksNext && styles.navButtonTextDisabled,
+                ]}
+              >
+                Siguiente
+              </ThemedText>
+              <ChevronRight
+                size={responsiveFont(18)}
+                color={currentRequiredBlocksNext ? "#ccc" : "#1a7a3a"}
+              />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     </View>
@@ -496,6 +525,14 @@ const styles = StyleSheet.create({
     gap: widthScale(4),
     paddingVertical: verticalScale(10),
     paddingHorizontal: widthScale(8),
+  },
+  /** Misma huella que el botón Siguiente + icono para no descentrar la fila en la última pregunta. */
+  navEndSpacer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: verticalScale(10),
+    paddingHorizontal: widthScale(8),
+    minWidth: widthScale(100),
   },
   navButtonDisabled: {
   },

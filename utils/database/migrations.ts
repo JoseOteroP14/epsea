@@ -678,6 +678,78 @@ const migrations: Migration[] = [
   {
     version: 17,
     up: async (db) => {
+      /**
+       * Orden de GET /questions/with-options/1 (información personal).
+       * Sin esto, sort_order=0 para todas y el listado cae en orden por `id`.
+       */
+      const PERSONAL_INFO_ORDER: number[] = [
+        57, 58, 2, 1, 59, 3, 4, 5, 60, 61, 6, 7, 8, 10, 9, 11,
+      ];
+      for (let i = 0; i < PERSONAL_INFO_ORDER.length; i++) {
+        await db.runAsync(
+          `UPDATE questions SET sort_order = ? WHERE id = ? AND component_id = 1`,
+          i,
+          PERSONAL_INFO_ORDER[i],
+        );
+      }
+    },
+  },
+  {
+    version: 18,
+    up: async (db) => {
+      /**
+       * Resto de componentes de encuesta (predio, líneas, clasificación, caracterización, etc.):
+       * `order` en raw_json si existe; si no, desempate por `id` (mejor que sort_order=0 para todas).
+       * Tras sincronizar, `downloadSurveyQuestionsCatalog` sobrescribe con el orden del API.
+       */
+      const rows = await db.getAllAsync<{
+        id: number;
+        component_id: number;
+        raw_json: string;
+      }>(`SELECT id, component_id, raw_json FROM questions WHERE component_id != 1`);
+
+      const byComp = new Map<number, typeof rows>();
+      for (const r of rows) {
+        const list = byComp.get(r.component_id) ?? [];
+        list.push(r);
+        byComp.set(r.component_id, list);
+      }
+
+      const NO_ORDER_SENTINEL = 1_000_000;
+      for (const [compId, list] of byComp) {
+        const decorated = list.map((r) => {
+          let ordFromJson: number | null = null;
+          try {
+            const j = JSON.parse(r.raw_json) as Record<string, unknown>;
+            const n = Number(j.order ?? j.Order ?? j.orden);
+            if (Number.isFinite(n)) ordFromJson = Math.trunc(n);
+          } catch {
+            /* raw_json inválido */
+          }
+          return { id: r.id, ordFromJson };
+        });
+
+        decorated.sort((a, b) => {
+          const ao = a.ordFromJson ?? NO_ORDER_SENTINEL;
+          const bo = b.ordFromJson ?? NO_ORDER_SENTINEL;
+          if (ao !== bo) return ao - bo;
+          return a.id - b.id;
+        });
+
+        for (let i = 0; i < decorated.length; i++) {
+          await db.runAsync(
+            `UPDATE questions SET sort_order = ? WHERE id = ? AND component_id = ?`,
+            i,
+            decorated[i].id,
+            compId,
+          );
+        }
+      }
+    },
+  },
+  {
+    version: 19,
+    up: async (db) => {
       await db.execAsync(`
         CREATE TABLE IF NOT EXISTS visit_objectives_cache (
           event_id INTEGER NOT NULL,

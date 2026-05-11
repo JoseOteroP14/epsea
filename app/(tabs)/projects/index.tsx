@@ -82,12 +82,12 @@ export default function ProjectsScreen() {
       <TouchableOpacity
         onPress={() =>
           router.push({
-            pathname: `/(tabs)/projects/[id]`,
+            pathname: "/projects/[id]",
             params: {
-              id: item.id,
-              name: item.name,
+              id: String(item.id),
+              name: item.name ?? "",
               description: item.description ?? "",
-              type_id: item.type_id?.toString() ?? "",
+              type_id: item.type_id != null ? String(item.type_id) : "",
               role_name: item.role_name ?? "",
             },
           })

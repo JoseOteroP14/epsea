@@ -16,6 +16,7 @@ import type {
 } from "@/schemas/characterization";
 import { useCharacterizationStore } from "@/store/useCharacterizationStore";
 import { getEffectiveDependentListItems } from "@/utils/survey/dependent-child-ids";
+import { isQuestionRequired } from "@/utils/survey/question-required";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { ChevronDown, Search } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -172,7 +173,8 @@ function BoolQuestion({
 }: {
   question: Question;
   detail?: QuestionBoolDetail;
-  value: boolean;
+  /** SQLite / stores may surface booleans as strings or 0/1 */
+  value: boolean | string | number | null | undefined;
   onChange: (id: number, val: boolean) => void;
 }) {
   // Normalize: SQLite stores booleans as strings "true"/"false"
@@ -809,7 +811,7 @@ export function QuestionRenderer({
             </ThemedText>
           )}
         </View>
-        {question.is_required && (
+        {isQuestionRequired(question) && (
           <ThemedText style={styles.requiredBadge}>*</ThemedText>
         )}
       </View>

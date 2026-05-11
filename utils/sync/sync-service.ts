@@ -1,11 +1,18 @@
+import type { Question } from "@/schemas/characterization";
 import type { Project } from "@/schemas/project";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
+  CHARACTERIZATION_COMPONENT_ID,
+  CLASSIFICATION_COMPONENT_ID,
+  PERSONAL_INFO_COMPONENT_ID,
+  PRODUCTIVE_LINES_COMPONENT_ID,
   PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
+  PROPERTY_INFO_COMPONENT_ID,
   VISIT2_INTERVENTION_METHOD_ID,
   VISIT_INTERVENTION_METHOD_ID,
 } from "@/store/useCharacterizationStore";
 import { apiFetch } from "@/utils/api";
+import { upsertQuestions } from "@/utils/database/repositories/characterization-repository";
 import {
     deleteProducersNotIn,
     getProducerRawJsonRow,
@@ -99,6 +106,41 @@ const DOWNLOAD_PHASES: Record<DownloadPhaseKey, { start: number; weight: number 
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Un componente por cada flujo de encuesta / método de intervención con preguntas.
+ * El orden del array en `GET /questions/with-options/{id}/` se persiste en `sort_order`.
+ */
+const SURVEY_CATALOG_COMPONENT_IDS = [
+  PERSONAL_INFO_COMPONENT_ID,
+  PROPERTY_INFO_COMPONENT_ID,
+  PRODUCTIVE_LINES_COMPONENT_ID,
+  CLASSIFICATION_COMPONENT_ID,
+  CHARACTERIZATION_COMPONENT_ID,
+] as const;
+
+/**
+ * Refresca preguntas desde el API en el orden devuelto por cada componente
+ * (`GET /questions/with-options/{componentId}/`).
+ */
+async function downloadSurveyQuestionsCatalog(): Promise<void> {
+  for (const componentId of SURVEY_CATALOG_COMPONENT_IDS) {
+    try {
+      const res = await apiFetch<{ data?: unknown; status?: number }>(
+        `/questions/with-options/${componentId}/`,
+      );
+      const raw = res?.data;
+      const list = Array.isArray(raw) ? raw : [];
+      if (list.length === 0) continue;
+      await upsertQuestions(list as Question[]);
+    } catch (e) {
+      console.error(
+        `Failed to download questions catalog for component ${componentId}:`,
+        e,
+      );
+    }
+  }
 }
 
 function calcPhasePercent(phase: { start: number; weight: number }, current: number, total: number): number {
@@ -242,6 +284,8 @@ export async function downloadAllData(
     const percent = Math.round(calcPhasePercent(phase, current, total));
     onProgress?.({ stage, current: percent, total: 100 });
   };
+
+  await downloadSurveyQuestionsCatalog();
 
   // 1. Projects
   reportPhase("Descargando proyectos", DOWNLOAD_PHASES.projects, 0, 1);

@@ -68,16 +68,37 @@ function effectiveQuestionListOrder(question: Question, rowSortOrder: number): n
 
 export async function upsertQuestions(questions: Question[]): Promise<void> {
   const db = getDb();
+  const indexByComponent = new Map<number, number>();
   for (const q of questions) {
+    const compId = q.component_id;
+    const position = indexByComponent.get(compId) ?? 0;
+    indexByComponent.set(compId, position + 1);
+
+    const qRec = q as Record<string, unknown>;
+    const explicitOrd = Number(qRec.order ?? qRec.Order ?? qRec.orden);
+    const sortOrder = Number.isFinite(explicitOrd)
+      ? Math.trunc(explicitOrd)
+      : position;
+
+    const required =
+      q.is_required === true || q.required === true ? 1 : 0;
+
+    const displayName =
+      typeof q.name === "string" && q.name.trim() !== ""
+        ? q.name
+        : typeof qRec.description === "string"
+          ? qRec.description
+          : "";
+
     await db.runAsync(
       `INSERT OR REPLACE INTO questions (id, name, component_id, question_type_id, is_required, sort_order, raw_json)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       q.id,
-      q.name ?? "",
+      displayName,
       q.component_id,
       q.question_type_id,
-      q.is_required ? 1 : 0,
-      q.order ?? 0,
+      required,
+      sortOrder,
       JSON.stringify(q),
     );
   }

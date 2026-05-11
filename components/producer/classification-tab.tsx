@@ -691,6 +691,8 @@ export function ClassificationTab({
         });
       }
 
+      // Sheet dismiss calls handleCloseSheet → restores snapshot; keep submitted answers
+      answersSnapshotRef.current = { ...answers };
       setMethodAlreadyApplied(true);
       setShowSheet(false);
       setHasSurvey(true);
