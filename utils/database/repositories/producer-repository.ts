@@ -38,6 +38,25 @@ export async function getProducersByProject(
   return rows.map((r) => JSON.parse(r.raw_json) as Producer);
 }
 
+/** `raw_json` de la lista de productores (incluye campos passthrough como línea productiva). */
+export async function getProducerRawJsonRow(
+  producerId: number,
+  projectId: number,
+): Promise<Record<string, unknown> | null> {
+  const db = getDb();
+  const row = await db.getFirstAsync<{ raw_json: string }>(
+    "SELECT raw_json FROM producers WHERE id = ? AND project_id = ?",
+    producerId,
+    projectId,
+  );
+  if (!row?.raw_json) return null;
+  try {
+    return JSON.parse(row.raw_json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export async function upsertProducerDetail(
   detail: ProducerDetail,
 ): Promise<void> {

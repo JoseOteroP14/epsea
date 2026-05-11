@@ -675,6 +675,22 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 17,
+    up: async (db) => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS visit_objectives_cache (
+          event_id INTEGER NOT NULL,
+          production_line_id INTEGER NOT NULL,
+          items_json TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (event_id, production_line_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_visit_objectives_line
+          ON visit_objectives_cache(production_line_id);
+      `);
+    },
+  },
 ];
 
 /**
@@ -856,6 +872,16 @@ async function ensureCoreSchema(db: SQLiteDatabase): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_pl_bundle_lookup
       ON productive_lines_server_bundle(producer_id, project_id, user_id);
+
+    CREATE TABLE IF NOT EXISTS visit_objectives_cache (
+      event_id INTEGER NOT NULL,
+      production_line_id INTEGER NOT NULL,
+      items_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (event_id, production_line_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_visit_objectives_line
+      ON visit_objectives_cache(production_line_id);
   `);
 }
 

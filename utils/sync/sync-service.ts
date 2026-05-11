@@ -8,7 +8,8 @@ import {
 import { apiFetch } from "@/utils/api";
 import {
     deleteProducersNotIn,
-    upsertProducers
+    getProducerRawJsonRow,
+    upsertProducers,
 } from "@/utils/database/repositories/producer-repository";
 import {
     deleteProjectsNotIn,
@@ -55,7 +56,10 @@ import {
   upsertProductiveLinesBundleCache,
   deleteExtensionistCachesNotInProject,
 } from "@/utils/database/repositories/server-extensionist-cache-repository";
-
+import {
+    readProductionLineId,
+    refreshVisitObjectivesCacheForLine,
+} from "@/utils/agro-objectives";
 
 export interface SyncProgress {
   stage: string;
@@ -342,6 +346,8 @@ export async function downloadAllData(
 
   reportPhase("Descargando resultados", DOWNLOAD_PHASES.results, 0, totalProducers || 1);
 
+  const objectiveLineIds = new Set<number>();
+
   for (let i = 0; i < totalProducers; i++) {
     const { producerId, projectId } = allProducerIds[i]!;
 
@@ -418,6 +424,10 @@ export async function downloadAllData(
       producerId,
     );
 
+    const rawProducer = await getProducerRawJsonRow(producerId, projectId);
+    const lineId = readProductionLineId(rawProducer);
+    if (lineId != null) objectiveLineIds.add(lineId);
+
     // Report once per producer (not per method) to avoid visual jumps
     reportPhase(
       `Resultados ${i + 1} de ${totalProducers}`,
@@ -425,6 +435,18 @@ export async function downloadAllData(
       i + 1,
       totalProducers,
     );
+  }
+
+  if (objectiveLineIds.size > 0) {
+    reportPhase(
+      "Precargando objetivos de visitas (por línea productiva)",
+      DOWNLOAD_PHASES.results,
+      totalProducers,
+      totalProducers,
+    );
+    for (const lineId of objectiveLineIds) {
+      await refreshVisitObjectivesCacheForLine(lineId);
+    }
   }
 
   reportPhase("Resultados descargados", DOWNLOAD_PHASES.results, 1, 1);
@@ -946,19 +968,36 @@ export async function uploadPendingAnswers(
   }
 
   await setMetadata("last_upload", new Date().toISOString());
-  onProgress?.({
-    stage: "Subida completa",
-    current: uploaded + failed,
-    total: uploaded + failed,
-  });
 
-  if (failed === 0 && uploaded > 0) {
+  const shouldRefreshLocal = failed === 0 && uploaded > 0;
+  if (shouldRefreshLocal) {
+    onProgress?.({
+      stage: "Respuestas enviadas. Actualizando datos en el dispositivo…",
+      current: 0,
+      total: 100,
+    });
     try {
-      await downloadAllData(undefined);
+      await downloadAllData((p) =>
+        onProgress?.({
+          stage: `Actualizando: ${p.stage}`,
+          current: p.current,
+          total: p.total,
+        }),
+      );
     } catch (e) {
       console.error("Falló la actualización local tras la subida:", e);
     }
   }
+
+  onProgress?.({
+    stage: shouldRefreshLocal
+      ? "Sincronización completada"
+      : uploaded + failed > 0
+        ? "Subida finalizada"
+        : "Sin cambios que subir",
+    current: uploaded + failed,
+    total: Math.max(uploaded + failed, 1),
+  });
 
   return { uploaded, failed };
 }

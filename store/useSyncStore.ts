@@ -13,6 +13,24 @@ import { getPendingVisit2Count } from "@/utils/database/repositories/visit2-repo
 import { getPendingAnswerUpdateCount } from "@/utils/database/repositories/answer-update-repository";
 import { useAuthStore } from "./useAuthStore";
 
+export interface FullSyncResult {
+  uploaded: number;
+  failed: number;
+  /** True si `downloadAllData` ya corrió dentro de `uploadPendingAnswers` (subida con éxito). */
+  downloadRanAfterUpload: boolean;
+  /** True si se ejecutó una descarga en este flujo (incluye la interna tras subida). */
+  downloadCompleted: boolean;
+}
+
+async function countPendingUploads(userId: number | undefined): Promise<number> {
+  if (userId == null) return 0;
+  const pendingSurvey = await getPendingCount(userId);
+  const pendingVisit1 = await getPendingVisit1Count(userId);
+  const pendingVisit2 = await getPendingVisit2Count(userId);
+  const pendingAnswerUpdates = await getPendingAnswerUpdateCount(userId);
+  return pendingSurvey + pendingVisit1 + pendingVisit2 + pendingAnswerUpdates;
+}
+
 interface SyncState {
   isDownloading: boolean;
   isUploading: boolean;
@@ -24,6 +42,8 @@ interface SyncState {
 
   startDownload: (externalProgressCallback?: (p: SyncProgress) => void) => Promise<void>;
   startUpload: () => Promise<{ uploaded: number; failed: number }>;
+  /** Sube pendientes primero (si hay); luego descarga. Evita descargar antes y pisar trabajo offline. */
+  startFullSync: () => Promise<FullSyncResult>;
   refreshStatus: () => Promise<void>;
 }
 
@@ -80,6 +100,94 @@ export const useSyncStore = create<SyncState>((set) => ({
       });
       throw error;
     }
+  },
+
+  startFullSync: async () => {
+    const userId = useAuthStore.getState().user?.user_id;
+    set({
+      error: null,
+      progress: null,
+      isDownloading: false,
+      isUploading: false,
+    });
+
+    const pending = await countPendingUploads(userId);
+    set({ pendingUploads: pending });
+
+    let uploaded = 0;
+    let failed = 0;
+    let downloadRanAfterUpload = false;
+    let downloadCompleted = false;
+
+    if (pending > 0) {
+      set({ isUploading: true, progress: null });
+      try {
+        const result = await uploadPendingAnswers((progress) =>
+          set({ progress }),
+        );
+        uploaded = result.uploaded;
+        failed = result.failed;
+        const newPending = await countPendingUploads(userId);
+        const lastUpload = await getMetadata("last_upload");
+        set({
+          isUploading: false,
+          pendingUploads: newPending,
+          lastUpload,
+        });
+
+        if (failed > 0) {
+          const msg = `${failed} envío(s) con error. No se ejecutó la descarga para no sobrescribir datos locales que siguen pendientes.`;
+          set({ error: msg });
+          throw new Error(msg);
+        }
+
+        if (uploaded > 0) {
+          downloadRanAfterUpload = true;
+          downloadCompleted = true;
+          const lastDownload = await getMetadata("last_full_download");
+          set({ lastDownload });
+          return {
+            uploaded,
+            failed,
+            downloadRanAfterUpload,
+            downloadCompleted,
+          };
+        }
+      } catch (error) {
+        set({ isUploading: false });
+        set({
+          error:
+            error instanceof Error ? error.message : "Error durante la subida",
+        });
+        throw error;
+      }
+    }
+
+    set({ isDownloading: true, progress: null });
+    try {
+      await downloadAllData((progress) => set({ progress }));
+      const lastDownload = await getMetadata("last_full_download");
+      const newPending = await countPendingUploads(userId);
+      set({
+        isDownloading: false,
+        lastDownload,
+        pendingUploads: newPending,
+      });
+      downloadCompleted = true;
+    } catch (error) {
+      set({
+        isDownloading: false,
+        error: error instanceof Error ? error.message : "Error de descarga",
+      });
+      throw error;
+    }
+
+    return {
+      uploaded,
+      failed,
+      downloadRanAfterUpload,
+      downloadCompleted,
+    };
   },
 
   refreshStatus: async () => {

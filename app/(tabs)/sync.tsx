@@ -6,22 +6,20 @@ import { useNetwork } from "@/hooks/use-network";
 import { useSyncStore } from "@/store/useSyncStore";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
-    AlertCircle,
-    ArrowDownToLine,
-    ArrowUpFromLine,
-    CheckCircle2,
-    Clock,
-    Cloud,
-    CloudOff,
-    RefreshCw,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  Cloud,
+  CloudOff,
+  RefreshCw,
 } from "lucide-react-native";
 import { useFocusEffect } from "expo-router";
 import React, { useCallback } from "react";
 import {
-    ActivityIndicator,
-    StyleSheet,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 function formatDate(iso: string | null): string {
@@ -45,8 +43,7 @@ export default function SyncScreen() {
     lastDownload,
     lastUpload,
     error,
-    startDownload,
-    startUpload,
+    startFullSync,
     refreshStatus,
   } = useSyncStore();
 
@@ -57,54 +54,49 @@ export default function SyncScreen() {
   useFocusEffect(
     useCallback(() => {
       refreshStatus();
-    }, [refreshStatus])
+    }, [refreshStatus]),
   );
 
-  const handleDownload = useCallback(async () => {
+  const handleSync = useCallback(async () => {
     if (!isConnected) {
       showAlert({
         title: "Sin conexión",
-        message: "Necesitas conexión a internet para descargar datos.",
+        message: "Necesitas conexión a internet para sincronizar.",
         type: "warning",
       });
       return;
     }
     try {
-      await startDownload();
-      showAlert({ title: "Descarga completa", message: "Todos los datos han sido descargados.", type: "success" });
-    } catch (e) {
+      const r = await startFullSync();
+      const parts: string[] = [];
+      if (r.uploaded > 0 || r.failed > 0) {
+        parts.push(
+          `${r.uploaded} elemento(s) enviado(s) al servidor${r.failed ? `, ${r.failed} con error` : ""}.`,
+        );
+      }
+      if (r.downloadCompleted) {
+        if (r.downloadRanAfterUpload) {
+          parts.push("La copia local se actualizó tras enviar los pendientes.");
+        } else {
+          parts.push("Se descargaron los datos más recientes del servidor.");
+        }
+      }
       showAlert({
-        title: "Error",
-        message: e instanceof Error ? e.message : "Error durante la descarga",
-        type: "error",
-      });
-    }
-  }, [isConnected, startDownload]);
-
-  const handleUpload = useCallback(async () => {
-    if (!isConnected) {
-      showAlert({
-        title: "Sin conexión",
-        message: "Necesitas conexión a internet para subir datos.",
-        type: "warning",
-      });
-      return;
-    }
-    try {
-      const result = await startUpload();
-      showAlert({
-        title: "Subida completa",
-        message: `${result.uploaded} enviados, ${result.failed} fallidos.`,
+        title: "Sincronización completada",
+        message:
+          parts.length > 0
+            ? parts.join(" ")
+            : "No hubo envíos ni descarga en esta ejecución.",
         type: "success",
       });
     } catch (e) {
       showAlert({
         title: "Error",
-        message: e instanceof Error ? e.message : "Error durante la subida",
+        message: e instanceof Error ? e.message : "Error durante la sincronización",
         type: "error",
       });
     }
-  }, [isConnected, startUpload]);
+  }, [isConnected, startFullSync, showAlert]);
 
   return (
     <StandardView
@@ -152,17 +144,16 @@ export default function SyncScreen() {
         </ThemedView>
       )}
 
-      {/* Download button */}
       <TouchableOpacity
         style={[styles.actionButton, isBusy && styles.actionButtonDisabled]}
-        onPress={handleDownload}
-        disabled={isBusy}
+        onPress={handleSync}
+        disabled={isBusy || !isConnected}
         activeOpacity={0.8}
       >
-        {isDownloading ? (
+        {isBusy ? (
           <ActivityIndicator size="small" color="#ffffff" />
         ) : (
-          <ArrowDownToLine size={responsiveFont(22)} color="#ffffff" />
+          <RefreshCw size={responsiveFont(22)} color="#ffffff" />
         )}
         <View style={styles.actionTextContainer}>
           <ThemedText
@@ -171,49 +162,18 @@ export default function SyncScreen() {
             type="defaultSemiBold"
             style={styles.actionTitle}
           >
-            Descargar Datos
+            Sincronizar
           </ThemedText>
           <ThemedText
             lightColor="rgba(255,255,255,0.7)"
             darkColor="rgba(255,255,255,0.7)"
             style={styles.actionSubtitle}
           >
-            Proyectos, usuarios, preguntas
-          </ThemedText>
-        </View>
-      </TouchableOpacity>
-
-      {/* Upload button */}
-      <TouchableOpacity
-        style={[
-          styles.actionButton,
-          styles.uploadButton,
-          isBusy && styles.actionButtonDisabled,
-        ]}
-        onPress={handleUpload}
-        disabled={isBusy || pendingUploads === 0}
-        activeOpacity={0.8}
-      >
-        {isUploading ? (
-          <ActivityIndicator size="small" color="#ffffff" />
-        ) : (
-          <ArrowUpFromLine size={responsiveFont(22)} color="#ffffff" />
-        )}
-        <View style={styles.actionTextContainer}>
-          <ThemedText
-            lightColor="#ffffff"
-            darkColor="#ffffff"
-            type="defaultSemiBold"
-            style={styles.actionTitle}
-          >
-            Subir Respuestas Pendientes
-          </ThemedText>
-          <ThemedText
-            lightColor="rgba(255,255,255,0.7)"
-            darkColor="rgba(255,255,255,0.7)"
-            style={styles.actionSubtitle}
-          >
-            {pendingUploads} pendiente{pendingUploads !== 1 ? "s" : ""}
+            {isBusy && progress?.stage
+              ? progress.stage
+              : pendingUploads > 0
+                ? `Primero sube ${pendingUploads} pendiente${pendingUploads !== 1 ? "s" : ""}, luego descarga del servidor.`
+                : "Sin pendientes: solo se descargan datos del servidor."}
           </ThemedText>
         </View>
       </TouchableOpacity>
@@ -315,9 +275,6 @@ const styles = StyleSheet.create({
     borderRadius: widthScale(14),
     backgroundColor: "#1a7a3a",
     gap: widthScale(14),
-  },
-  uploadButton: {
-    backgroundColor: "#3498db",
   },
   actionButtonDisabled: {
   },

@@ -9,6 +9,13 @@ import {
 import { useProducerStore } from "@/store/useProducerStore";
 import { apiFetch } from "@/utils/api";
 import {
+    getObjectivesForEventAndLine,
+    objectiveItemsToFormStrings,
+    parseObjectiveDisplayBlocks,
+    readProductionLineId,
+    VISIT_OBJECTIVE_EVENT_IDS,
+} from "@/utils/agro-objectives";
+import {
     markInterventionMethodApplied,
 } from "@/utils/database/repositories/producer-intervention-repository";
 import { getVisitServerCacheRaw } from "@/utils/database/repositories/server-extensionist-cache-repository";
@@ -252,94 +259,6 @@ async function getVisit1ForVisit2(
     } catch {
         return null;
     }
-}
-
-/** IDs de evento en `/objetives/event/:eventId/line/:lineId` (backend). */
-const VISIT_OBJECTIVE_EVENT_IDS = {
-    visit1: 4,
-    visit2: 5,
-} as const;
-
-interface ObjectiveApiItem {
-    id: number;
-    production_line_id?: number;
-    production_line_name?: string;
-    type: string;
-    description: string;
-    event_id?: number;
-}
-
-function normalizeObjectiveType(type: string) {
-    return type
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .trim();
-}
-
-/** Tipo marcado como general (no específico). */
-function isGeneralObjectiveType(type: string) {
-    const n = normalizeObjectiveType(type);
-    return n.includes("general") && !n.includes("especific");
-}
-
-/** Tipo marcado como específico. */
-function isSpecificObjectiveType(type: string) {
-    return normalizeObjectiveType(type).includes("especific");
-}
-
-/**
- * GET /objetives/event/:eventId/line/:lineId
- */
-async function getObjectivesForEventAndLine(
-    eventId: number,
-    lineId: number,
-): Promise<ObjectiveApiItem[] | null> {
-    try {
-        const res = await apiFetch<{ code?: string; data?: ObjectiveApiItem[] }>(
-            `/objetives/event/${eventId}/line/${lineId}`,
-        );
-        const list = res?.data;
-        return Array.isArray(list) ? list : [];
-    } catch {
-        return null;
-    }
-}
-
-function objectiveItemsToFormStrings(items: ObjectiveApiItem[]): { general: string; specific: string } {
-    const general = items
-        .filter((row) => isGeneralObjectiveType(row.type))
-        .map((row) => row.description.trim())
-        .filter(Boolean)
-        .join("\n\n");
-    const specifics = items
-        .filter((row) => isSpecificObjectiveType(row.type))
-        .map((row) => row.description.trim())
-        .filter(Boolean)
-        .join("\n");
-    return { general, specific: specifics };
-}
-
-/** Lista de bloques para mostrar objetivos solo lectura (como Vue: generales por párrafo / específicos por línea). */
-function parseObjectiveDisplayBlocks(text: string | undefined, mode: "double" | "line"): string[] {
-    const raw = (text ?? "").trim();
-    if (!raw) return [];
-    if (mode === "double") {
-        return raw
-            .split(/\n{2,}/)
-            .map((t) => t.trim())
-            .filter(Boolean);
-    }
-    return raw
-        .split(/\r?\n/)
-        .map((t) => t.trim())
-        .filter(Boolean);
-}
-
-function readProductionLineId(detail: { production_line_id?: number | null } | null): number | null {
-    if (!detail || detail.production_line_id == null) return null;
-    const n = Number(detail.production_line_id);
-    return Number.isFinite(n) ? n : null;
 }
 
 async function createVisit2(payload: Visit2Payload): Promise<Visit2Response> {
@@ -861,10 +780,9 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         return () => { cancelled = true; };
     }, [producerId, projectId, authUser]);
 
-    /** Objetivos general / específico desde API (solo sin Visita 2 guardada ni campos ya rellenos). */
+    /** Objetivos GET …/event/5/line/:id (Visita 2). También en edición; no pisa general/específico ya guardados. */
     useEffect(() => {
         if (!producerId || !projectId || loading) return;
-        if (isEditMode) return;
 
         const lineId = readProductionLineId(
             producerDetail as { production_line_id?: number | null } | null,
@@ -893,7 +811,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             cancelled = true;
             setObjectivesApiLoading(false);
         };
-    }, [producerId, projectId, producerDetail, loading, isEditMode]);
+    }, [producerId, projectId, producerDetail, loading]);
 
     // Check if method already applied
     useEffect(() => {
@@ -1399,6 +1317,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             hint: string,
             emptyMessage: string,
             belowHint?: React.ReactNode,
+            catalogLoading?: boolean,
         ) => {
             if (!expandedSections.has(sectionKey)) return null;
             const lines = parseObjectiveDisplayBlocks(body, blockMode);
@@ -1406,7 +1325,16 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                 <View style={styles.sectionContent}>
                     <ThemedText style={styles.sectionHint}>{hint}</ThemedText>
                     {belowHint}
-                    {lines.length === 0 ? (
+                    {lines.length === 0 && catalogLoading ? (
+                        <View style={styles.objectivesReadonlyPanel}>
+                            <View style={styles.objectivesLoadingRow}>
+                                <ActivityIndicator size="small" color="#1a7a3a" />
+                                <ThemedText style={styles.objectivesLoadingText}>
+                                    Cargando objetivos desde el servidor…
+                                </ThemedText>
+                            </View>
+                        </View>
+                    ) : lines.length === 0 ? (
                         <View style={styles.objectivesReadonlyPanel}>
                             <ThemedText style={styles.objectivesReadonlyEmpty}>{emptyMessage}</ThemedText>
                         </View>
@@ -1827,14 +1755,8 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                             "double",
                             "Solo lectura. Objetivos tipo «General» definidos en el servidor para el evento Visita 2 y la línea productiva principal del usuario (`production_line_id`).",
                             "Sin objetivo general cargado para esta línea y visita.",
-                            !isEditMode && objectivesApiLoading ? (
-                                <View style={styles.objectivesLoadingRow}>
-                                    <ActivityIndicator size="small" color="#1a7a3a" />
-                                    <ThemedText style={styles.objectivesLoadingText}>
-                                        Cargando objetivos desde el servidor…
-                                    </ThemedText>
-                                </View>
-                            ) : undefined,
+                            undefined,
+                            objectivesApiLoading,
                         )}
                     </View>
 
@@ -1850,6 +1772,8 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                             "line",
                             "Solo lectura. Objetivos tipo «Específico» del mismo catálogo (evento Visita 2, línea principal).",
                             "No hay objetivos específicos configurados para esta línea en el servidor.",
+                            undefined,
+                            objectivesApiLoading,
                         )}
                     </View>
 

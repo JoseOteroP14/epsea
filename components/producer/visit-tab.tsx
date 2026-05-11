@@ -9,6 +9,13 @@ import {
 } from "@/store/useCharacterizationStore";
 import { useProducerStore } from "@/store/useProducerStore";
 import { apiFetch } from "@/utils/api";
+import {
+    getObjectivesForEventAndLine,
+    mergeObjectivesForVisit1Field,
+    objectiveItemsToFormStrings,
+    readProductionLineId,
+    VISIT_OBJECTIVE_EVENT_IDS,
+} from "@/utils/agro-objectives";
 import { getAnswers } from "@/utils/database/repositories/answer-repository";
 import {
     markInterventionMethodApplied,
@@ -300,7 +307,10 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   const sheetSnapPoints = useMemo(() => ["94%"], []);
 
   // Form state
-  const [objective, setObjective] = useState("");
+  /** Catálogo servidor/caché (solo lectura en pantalla salvo borrador offline). */
+  const [catalogObjectiveMerged, setCatalogObjectiveMerged] = useState("");
+  /** Si hay cola offline, se conserva el texto congelado al guardar. */
+  const [objectiveFromOfflineQueue, setObjectiveFromOfflineQueue] = useState<string | null>(null);
   const [diagnosis, setDiagnosis] = useState("");
   const [recommendations, setRecommendations] = useState("");
   const [observations, setObservations] = useState("");
@@ -322,6 +332,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   const [deletingPhotoIndex, setDeletingPhotoIndex] = useState<number | null>(null);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
+  const [objectivesApiLoading, setObjectivesApiLoading] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
   const token = useAuthStore((s) => s.token);
@@ -354,6 +365,11 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
 
   // ── Section completion ──────────────────────────────────────────────────
 
+  const objectiveDisplay = useMemo(
+    () => (objectiveFromOfflineQueue != null ? objectiveFromOfflineQueue : catalogObjectiveMerged),
+    [objectiveFromOfflineQueue, catalogObjectiveMerged],
+  );
+
   const sectionStatus = useMemo(() => {
     const hasPhotos =
       localPhotos.some((p) => p !== null) ||
@@ -362,14 +378,14 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
       !!attendanceId && (attendanceId === "1" || !!attendanceName.trim());
 
     return {
-      objective: !!objective.trim(),
+      objective: !!objectiveDisplay.trim(),
       diagnosis: !!diagnosis.trim(),
       recommendations: !!recommendations.trim(),
       observations: !!observations.trim(),
       photos: hasPhotos,
       attendance: attendanceComplete,
     };
-  }, [objective, diagnosis, recommendations, observations, localPhotos, existingImages, attendanceId, attendanceName]);
+  }, [objectiveDisplay, diagnosis, recommendations, observations, localPhotos, existingImages, attendanceId, attendanceName]);
 
   // ── Load existing visit ─────────────────────────────────────────────────
 
@@ -379,6 +395,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setCatalogObjectiveMerged("");
       try {
         const userId = authUser?.user_id ?? 0;
         const pendingLocal =
@@ -398,7 +415,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
           const hasRemote = remoteVid != null;
           setIsEditMode(hasRemote);
           setExistingVisitId(hasRemote ? remoteVid : null);
-          setObjective(payload.objetive || "");
+          setObjectiveFromOfflineQueue(payload.objetive || "");
           setDiagnosis(payload.diagnosis || "");
           setRecommendations(payload.recommendations || "");
           setObservations(payload.observations || "");
@@ -412,6 +429,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
           setLocalPhotos(newLocal);
           setExistingImages([null, null, null]);
         } else {
+          setObjectiveFromOfflineQueue(null);
           let data: Visit1Response | null = null;
           const online = await checkConnectivity();
           if (online) {
@@ -445,7 +463,6 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
           if (data) {
             setIsEditMode(true);
             setExistingVisitId(data.id);
-            setObjective(data.objetive || "");
             setDiagnosis(data.diagnosis || "");
             setRecommendations(data.recommendations || "");
             setObservations(data.observations || "");
@@ -485,6 +502,42 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
       setMethodAlreadyApplied(applied);
     })();
   }, [producerId, projectId]);
+
+  /** Objetivos del catálogo GET …/event/4/line/:id (Visita 1). También en edición (no pisa texto ya guardado). */
+  useEffect(() => {
+    if (!producerId || !projectId || loading) return;
+
+    const lineId = readProductionLineId(
+      producerDetail as { production_line_id?: number | null } | null,
+    );
+    if (lineId == null) return;
+
+    let cancelled = false;
+    setObjectivesApiLoading(true);
+
+    void (async () => {
+      const items = await getObjectivesForEventAndLine(
+        VISIT_OBJECTIVE_EVENT_IDS.visit1,
+        lineId,
+      );
+      if (cancelled) return;
+      setObjectivesApiLoading(false);
+
+      if (items == null || items.length === 0) {
+        if (!cancelled) setCatalogObjectiveMerged("");
+        return;
+      }
+
+      const { general, specific } = objectiveItemsToFormStrings(items);
+      const merged = mergeObjectivesForVisit1Field(general, specific);
+      if (!cancelled) setCatalogObjectiveMerged(merged.trim());
+    })();
+
+    return () => {
+      cancelled = true;
+      setObjectivesApiLoading(false);
+    };
+  }, [producerId, projectId, producerDetail, loading]);
 
   // ── Toggle section ──────────────────────────────────────────────────────
 
@@ -585,8 +638,13 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   // ── Save ──────────────────────────────────────────────────────────────
 
 const handleSave = useCallback(async () => {
-    if (!objective.trim()) {
-      showAlert({ title: "Campo requerido", message: "Ingrese el objetivo del acompañamiento.", type: "warning" });
+    if (!objectiveDisplay.trim()) {
+      showAlert({
+        title: "Campo requerido",
+        message:
+          "No hay objetivos del catálogo para esta línea productiva. Descargue datos con conexión o sincronice.",
+        type: "warning",
+      });
       return;
     }
     if (!diagnosis.trim()) {
@@ -611,7 +669,7 @@ const handleSave = useCallback(async () => {
       const payload: Visit1Payload = {
         project_id: Number(projectId),
         producer_id: Number(producerId),
-        objetive: objective.trim(),
+        objetive: objectiveDisplay.trim(),
         diagnosis: diagnosis.trim(),
         recommendations: recommendations.trim(),
         observations: observations.trim(),
@@ -694,7 +752,7 @@ const handleSave = useCallback(async () => {
       setSaving(false);
     }
   }, [
-    objective, diagnosis, recommendations, observations, attendanceId,
+    objectiveDisplay, diagnosis, recommendations, observations, attendanceId,
     attendanceName, registrationDate, producerId, projectId,
     localPhotos, isEditMode, existingVisitId, showAlert, authUser,
   ]);
@@ -886,7 +944,7 @@ const handleSave = useCallback(async () => {
         // Section 4: Clasificación
         nivelClasificacion: "",
         // Section 5: Enfoque Técnico
-        objetivoAcompanamiento: objective,
+        objetivoAcompanamiento: objectiveDisplay,
         diagnosticoVisita: diagnosis,
         recomendacionesCompromisos: recommendations,
         observacionesVisita: observations,
@@ -910,7 +968,7 @@ const handleSave = useCallback(async () => {
       setGeneratingPdf(false);
     }
   }, [
-    objective, diagnosis, recommendations, observations,
+    objectiveDisplay, diagnosis, recommendations, observations,
     attendanceId, attendanceName, registrationDate,
     localPhotos, existingImages, token, producerDetail, authUser,
     producerId, projectId,
@@ -969,25 +1027,40 @@ const handleSave = useCallback(async () => {
       onChangeText: (t: string) => void,
       placeholder: string,
       hint?: string,
+      topContent?: React.ReactNode,
+      readOnly?: boolean,
     ) => {
       if (!expandedSections.has(sectionKey)) return null;
       return (
         <View style={styles.sectionContent}>
+          {topContent}
           {hint && <ThemedText style={styles.sectionHint}>{hint}</ThemedText>}
-          <TextInput
-            style={styles.textArea}
-            value={value}
-            onChangeText={onChangeText}
-            placeholder={placeholder}
-            placeholderTextColor="#aaa"
-            multiline
-            textAlignVertical="top"
-            numberOfLines={4}
-          />
+          {readOnly ? (
+            <View style={styles.readOnlyObjectivePanel}>
+              <ThemedText style={styles.readOnlyObjectiveText}>
+                {value.trim()
+                  ? value
+                  : objectivesApiLoading
+                    ? ""
+                    : "No hay objetivos configurados para esta línea en el servidor o en la copia local. Use «Descargar datos» o «Sincronizar» con conexión."}
+              </ThemedText>
+            </View>
+          ) : (
+            <TextInput
+              style={styles.textArea}
+              value={value}
+              onChangeText={onChangeText}
+              placeholder={placeholder}
+              placeholderTextColor="#aaa"
+              multiline
+              textAlignVertical="top"
+              numberOfLines={4}
+            />
+          )}
         </View>
       );
     },
-    [expandedSections],
+    [expandedSections, objectivesApiLoading],
   );
 
   // ── Render: photo slot ────────────────────────────────────────────────
@@ -1290,10 +1363,19 @@ const handleSave = useCallback(async () => {
             {renderSectionHeader(SECTIONS[0]!, sectionStatus.objective)}
             {renderTextSection(
               "objective",
-              objective,
-              setObjective,
-              "Describa el objetivo del acompañamiento...",
-              "Redacte y escriba el objetivo acorde a lo definido por la EPSEA.",
+              objectiveDisplay,
+              () => {},
+              "",
+              "Objetivos del catálogo EPSEA (solo lectura): provienen del servidor y de la copia local tras sincronizar. Si trabaja sin conexión, descargue datos antes.",
+              objectivesApiLoading ? (
+                <View style={styles.objectivesLoadingRow}>
+                  <ActivityIndicator size="small" color="#1a7a3a" />
+                  <ThemedText style={styles.objectivesLoadingText}>
+                    Cargando objetivos desde el servidor…
+                  </ThemedText>
+                </View>
+              ) : undefined,
+              true,
             )}
           </View>
 
@@ -1548,6 +1630,16 @@ const styles = StyleSheet.create({
     marginTop: verticalScale(10),
     marginBottom: verticalScale(8),
   },
+  objectivesLoadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: widthScale(10),
+    marginBottom: verticalScale(8),
+  },
+  objectivesLoadingText: {
+    fontSize: responsiveFont(13),
+    color: "#555",
+  },
 
   // Text areas
   textArea: {
@@ -1560,6 +1652,20 @@ const styles = StyleSheet.create({
     fontSize: responsiveFont(16),
     minHeight: verticalScale(110),
     color: "#333",
+    lineHeight: responsiveFont(22),
+  },
+  readOnlyObjectivePanel: {
+    backgroundColor: "#f8f9fa",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.1)",
+    borderRadius: widthScale(8),
+    paddingHorizontal: widthScale(12),
+    paddingVertical: verticalScale(12),
+    minHeight: verticalScale(110),
+  },
+  readOnlyObjectiveText: {
+    fontSize: responsiveFont(15),
+    color: "#222",
     lineHeight: responsiveFont(22),
   },
 
