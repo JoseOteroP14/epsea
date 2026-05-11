@@ -4,7 +4,7 @@
     "slug": "epsea",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/tree-logo-design-illustration-vector.jpg",
+    "icon": "./assets/images/Epsea.png",
     "scheme": "epsea",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -14,9 +14,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/tree-logo-design-illustration-vector.jpg",
-        "backgroundImage": "./assets/images/android-icon-background.png",
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/Epsea.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
@@ -32,7 +31,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/tree-logo-design-illustration-vector.jpg",
+          "image": "./assets/images/Epsea.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
