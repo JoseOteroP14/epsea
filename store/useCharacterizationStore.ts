@@ -31,11 +31,14 @@ import {
     getAppliedInterventionMethods,
     hasInterventionMethodApplied as hasAppliedInDb,
 } from "@/utils/database/repositories/producer-intervention-repository";
-import { getSurveyResults as getSurveyResultsFromDb } from "@/utils/database/repositories/survey-results-repository";
 import {
-  compareInterventionMethodItemsStable,
-  getInterventionMethodItemOrder,
-} from "@/utils/survey/intervention-method-order";
+  getSurveyResults as getSurveyResultsFromDb,
+  upsertSurveyResults,
+} from "@/utils/database/repositories/survey-results-repository";
+import {
+  flattenInterventionMethodSurveyPayloadToRows,
+  mapSurveyResultRowsToItems,
+} from "@/utils/survey/flatten-intervention-method-survey-results";
 
 // Component IDs (from backend)
 export const PERSONAL_INFO_COMPONENT_ID = 1;
@@ -332,52 +335,16 @@ export const useCharacterizationStore = create<CharacterizationState>(
             ? response
             : [];
 
-        // Always use the raw `value` field — this is the option value (e.g., "1", "2")
-        // that the API expects. `item_name` is only a display label.
-        const pickAnswerValue = (answer: any): any => {
-          return answer?.value ?? answer?.answer_value ?? answer?.answerValue ?? "";
-        };
-
-        // The API returns questions with nested `answers` arrays:
-        //   { id, description, answers: [{ id, survey_id, question_id, value }] }
-        // Flatten into SurveyResultItem[] expected by the tabs.
-        // Sort by payload `order` — tolerate Order/orden; Hermes does not rely on incoming array order alone.
-        const sortedData = [...rawData].sort(compareInterventionMethodItemsStable);
-        const flattened: SurveyResultItem[] = [];
-        for (const item of sortedData) {
-          const nestedAnswers = item.answers;
-          const qOrder = getInterventionMethodItemOrder(item);
-          if (Array.isArray(nestedAnswers) && nestedAnswers.length > 0) {
-            for (const ans of nestedAnswers) {
-              const answerValue = pickAnswerValue(ans);
-              flattened.push({
-                survey_id: ans.survey_id ?? 0,
-                created_at: item.created_at ?? "",
-                updated_at: item.updated_at ?? "",
-                intervention_method_id: interventionMethodId,
-                intervention_method_name: "",
-                answer_id: ans.id,
-                answer_value: answerValue ?? "",
-                item_name: ans.item_name ?? null,
-                question_id: ans.question_id ?? item.id,
-                question_description: item.description ?? null,
-                question_type_id: item.question_type_id ?? 0,
-                question_parent_id: item.question_parent_id ?? null,
-                question_order: qOrder,
-              });
-            }
-          } else if (item.answer_id != null) {
-            const flatAnswerValue = pickAnswerValue({
-              value: item?.answer_value ?? item?.value ?? item?.answer?.value,
-            });
-            flattened.push({
-              ...(item as SurveyResultItem),
-              answer_value: flatAnswerValue ?? item?.answer_value ?? "",
-              question_order: qOrder,
-            });
-          }
+        const rows = flattenInterventionMethodSurveyPayloadToRows(
+          rawData,
+          interventionMethodId,
+          producerId,
+          projectId,
+        );
+        if (rows.length > 0) {
+          await upsertSurveyResults(rows);
         }
-        return flattened;
+        return mapSurveyResultRowsToItems(rows);
       } catch (error) {
         // API failed — return cached results if available
         if (cachedResults.length > 0) {

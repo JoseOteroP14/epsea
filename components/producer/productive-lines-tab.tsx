@@ -768,23 +768,67 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
     let cancelled = false;
     setLoadingExisting(true);
 
-    const fetch = <T,>(url: string, setter: (v: T[]) => void) =>
-      apiFetch<{ data: T[] }>(url)
-        .then((res) => { if (!cancelled) setter(res.data ?? []); })
-        .catch(() => { if (!cancelled) setter([]); });
-
     void (async () => {
       const online = await checkConnectivity();
       if (cancelled) return;
 
       if (online) {
-        await Promise.all([
-          fetch<ExistingAgriculturalLine>(`/agricultural-lines/producer/${producerId}/project/${projectId}`, setExistingAgriLines),
-          fetch<ExistingLivestockLine>(`/livestock-lines/producer/${producerId}/project/${projectId}`, setExistingLivestockLines),
-          fetch<ExistingForestLine>(`/forest-lines/producer/${producerId}/project/${projectId}`, setExistingForestLines),
-          fetch<ExistingFishingLine>(`/fishing-lines/producer/${producerId}/project/${projectId}`, setExistingFishingLines),
-          fetch<ExistingAquacultureLine>(`/aquaculture-lines/producer/${producerId}/project/${projectId}`, setExistingAquacultureLines),
+        const safe = async <T,>(url: string): Promise<T[]> => {
+          try {
+            const res = await apiFetch<{ data: T[] }>(url);
+            return res.data ?? [];
+          } catch {
+            return [];
+          }
+        };
+        const [
+          agricultural,
+          livestock,
+          forest,
+          fishing,
+          aquaculture,
+        ] = await Promise.all([
+          safe<ExistingAgriculturalLine>(
+            `/agricultural-lines/producer/${producerId}/project/${projectId}`,
+          ),
+          safe<ExistingLivestockLine>(
+            `/livestock-lines/producer/${producerId}/project/${projectId}`,
+          ),
+          safe<ExistingForestLine>(
+            `/forest-lines/producer/${producerId}/project/${projectId}`,
+          ),
+          safe<ExistingFishingLine>(
+            `/fishing-lines/producer/${producerId}/project/${projectId}`,
+          ),
+          safe<ExistingAquacultureLine>(
+            `/aquaculture-lines/producer/${producerId}/project/${projectId}`,
+          ),
         ]);
+        if (!cancelled) {
+          setExistingAgriLines(agricultural);
+          setExistingLivestockLines(livestock);
+          setExistingForestLines(forest);
+          setExistingFishingLines(fishing);
+          setExistingAquacultureLines(aquaculture);
+        }
+        if (!cancelled && currentUserId != null) {
+          try {
+            await upsertProductiveLinesBundleCache({
+              userId: currentUserId,
+              producerId: Number(producerId),
+              projectId: Number(projectId),
+              jsonPayload: JSON.stringify({
+                agricultural,
+                livestock,
+                forest,
+                fishing,
+                aquaculture,
+              }),
+            });
+          } catch (e) {
+            console.warn("productive lines bundle cache persist failed:", e);
+          }
+        }
       } else {
         const raw = await getProductiveLinesBundleCacheRaw(
           Number(producerId),

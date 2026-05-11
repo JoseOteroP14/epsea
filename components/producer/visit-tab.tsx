@@ -20,7 +20,10 @@ import { getAnswers } from "@/utils/database/repositories/answer-repository";
 import {
     markInterventionMethodApplied,
 } from "@/utils/database/repositories/producer-intervention-repository";
-import { getVisitServerCacheRaw } from "@/utils/database/repositories/server-extensionist-cache-repository";
+import {
+  getVisitServerCacheRaw,
+  upsertVisitServerCache,
+} from "@/utils/database/repositories/server-extensionist-cache-repository";
 import {
     enqueueVisit1,
     getPendingLocalVisit1,
@@ -435,6 +438,19 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
           if (online) {
             try {
               data = await getVisit1(Number(projectId), Number(producerId));
+              if (data && userId > 0 && data.id != null) {
+                try {
+                  await upsertVisitServerCache({
+                    userId,
+                    producerId: Number(producerId),
+                    projectId: Number(projectId),
+                    kind: "visit1",
+                    jsonPayload: JSON.stringify(data),
+                  });
+                } catch (e) {
+                  console.warn("visit1 server cache persist failed:", e);
+                }
+              }
             } catch {
               data = null;
             }

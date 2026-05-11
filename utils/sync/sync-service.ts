@@ -30,11 +30,8 @@ import {
     setMetadata,
 } from "@/utils/database/repositories/sync-repository";
 import { deleteAnswers } from "@/utils/database/repositories/answer-repository";
-import { upsertSurveyResults, type SurveyResultRow } from "@/utils/database/repositories/survey-results-repository";
-import {
-  compareInterventionMethodItemsStable,
-  getInterventionMethodItemOrder,
-} from "@/utils/survey/intervention-method-order";
+import { upsertSurveyResults } from "@/utils/database/repositories/survey-results-repository";
+import { flattenInterventionMethodSurveyPayloadToRows } from "@/utils/survey/flatten-intervention-method-survey-results";
 import { getStoredToken } from "@/utils/secure-storage";
 import {
     deleteVisit1QueueRow,
@@ -408,53 +405,15 @@ export async function downloadAllData(
             : [];
 
         if (rawData.length > 0) {
-          await markInterventionMethodApplied(producerId, projectId, methodId, user.user_id);
-
-          const flatResults: SurveyResultRow[] = [];
-          const sortedRaw = [...rawData].sort(compareInterventionMethodItemsStable);
-          for (const item of sortedRaw) {
-            const nestedAnswers = item.answers;
-            const qOrder = getInterventionMethodItemOrder(item);
-            if (Array.isArray(nestedAnswers) && nestedAnswers.length > 0) {
-              for (const ans of nestedAnswers) {
-                flatResults.push({
-                  survey_id: ans.survey_id ?? 0,
-                  answer_id: ans.id,
-                  question_id: ans.question_id ?? item.id,
-                  answer_value: ans.value ?? ans.answer_value ?? "",
-                  item_name: ans.item_name ?? null,
-                  question_description: item.description ?? null,
-                  question_type_id: item.question_type_id ?? 0,
-                  question_parent_id: item.question_parent_id ?? null,
-                  question_order: qOrder,
-                  intervention_method_id: methodId,
-                  producer_id: producerId,
-                  project_id: projectId,
-                  created_at: item.created_at ?? null,
-                  updated_at: item.updated_at ?? null,
-                });
-              }
-            } else if (item.answer_id != null) {
-              flatResults.push({
-                survey_id: item.survey_id ?? 0,
-                answer_id: item.answer_id,
-                question_id: item.question_id ?? 0,
-                answer_value: item.answer_value ?? item.value ?? "",
-                item_name: item.item_name ?? null,
-                question_description: item.question_description ?? null,
-                question_type_id: item.question_type_id ?? 0,
-                question_parent_id: item.question_parent_id ?? null,
-                question_order: qOrder,
-                intervention_method_id: methodId,
-                producer_id: producerId,
-                project_id: projectId,
-                created_at: item.created_at ?? null,
-                updated_at: item.updated_at ?? null,
-              });
-            }
-          }
+          const flatResults = flattenInterventionMethodSurveyPayloadToRows(
+            rawData,
+            methodId,
+            producerId,
+            projectId,
+          );
           if (flatResults.length > 0) {
             await upsertSurveyResults(flatResults);
+            await markInterventionMethodApplied(producerId, projectId, methodId, user.user_id);
           }
         }
       } catch {
