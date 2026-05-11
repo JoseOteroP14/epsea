@@ -16,10 +16,14 @@ import { useAuthStore } from "./useAuthStore";
 export interface FullSyncResult {
   uploaded: number;
   failed: number;
-  /** True si `downloadAllData` ya corrió dentro de `uploadPendingAnswers` (subida con éxito). */
+  /** True si hubo subida exitosa y se intentó alinear la copia local con el servidor. */
   downloadRanAfterUpload: boolean;
-  /** True si se ejecutó una descarga en este flujo (incluye la interna tras subida). */
+  /** True si la copia local se actualizó (descarga global o refresco selectivo). */
   downloadCompleted: boolean;
+  /** True si se ejecutó `downloadAllData` (proyectos, todos los productores y resultados). */
+  fullDownloadRan: boolean;
+  /** True si solo se refrescaron productores/métodos tocados tras la subida. */
+  selectiveRefreshRan: boolean;
 }
 
 async function countPendingUploads(userId: number | undefined): Promise<number> {
@@ -151,6 +155,8 @@ export const useSyncStore = create<SyncState>((set) => ({
             failed,
             downloadRanAfterUpload,
             downloadCompleted,
+            fullDownloadRan: false,
+            selectiveRefreshRan: true,
           };
         }
       } catch (error) {
@@ -187,6 +193,8 @@ export const useSyncStore = create<SyncState>((set) => ({
       failed,
       downloadRanAfterUpload,
       downloadCompleted,
+      fullDownloadRan: true,
+      selectiveRefreshRan: false,
     };
   },
 

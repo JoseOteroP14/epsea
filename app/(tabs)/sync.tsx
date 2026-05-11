@@ -75,10 +75,14 @@ export default function SyncScreen() {
         );
       }
       if (r.downloadCompleted) {
-        if (r.downloadRanAfterUpload) {
-          parts.push("La copia local se actualizó tras enviar los pendientes.");
-        } else {
+        if (r.fullDownloadRan) {
           parts.push("Se descargaron los datos más recientes del servidor.");
+        } else if (r.selectiveRefreshRan) {
+          parts.push(
+            "La copia local se alineó solo con lo que enviaste (sin volver a descargar proyectos ni el resto de productores).",
+          );
+        } else if (r.downloadRanAfterUpload) {
+          parts.push("La copia local se actualizó tras enviar los pendientes.");
         }
       }
       showAlert({

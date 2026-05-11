@@ -266,6 +266,155 @@ async function downloadExtensionistCachesForProducer(
   await Promise.all([settleVisit1, settleVisit2, settleBundle]);
 }
 
+export interface LocalUploadTouchAccumulator {
+  surveys: { producerId: number; projectId: number; methodId: number }[];
+  extensionistCaches: { producerId: number; projectId: number }[];
+}
+
+function createEmptyTouchAccumulator(): LocalUploadTouchAccumulator {
+  return { surveys: [], extensionistCaches: [] };
+}
+
+function surveyTouchKey(t: {
+  producerId: number;
+  projectId: number;
+  methodId: number;
+}): string {
+  return `${t.producerId}-${t.projectId}-${t.methodId}`;
+}
+
+function extensionistKey(t: {
+  producerId: number;
+  projectId: number;
+}): string {
+  return `${t.producerId}-${t.projectId}`;
+}
+
+function addSurveyTouch(
+  acc: LocalUploadTouchAccumulator,
+  producerId: number,
+  projectId: number,
+  methodId: number,
+): void {
+  if (
+    !Number.isFinite(producerId) ||
+    !Number.isFinite(projectId) ||
+    !Number.isFinite(methodId)
+  ) {
+    return;
+  }
+  acc.surveys.push({ producerId, projectId, methodId });
+}
+
+function addExtensionistTouch(
+  acc: LocalUploadTouchAccumulator,
+  producerId: number,
+  projectId: number,
+): void {
+  if (!Number.isFinite(producerId) || !Number.isFinite(projectId)) return;
+  acc.extensionistCaches.push({ producerId, projectId });
+}
+
+/**
+ * Tras subir cambios offline, alinea SQLite con el servidor solo en los productores/métodos afectados
+ * (sin repetir proyectos, listado completo de productores ni encuestas de quien no cambió).
+ */
+export async function refreshTouchedDataAfterLocalUpload(
+  userId: number,
+  acc: LocalUploadTouchAccumulator,
+  onProgress?: (progress: SyncProgress) => void,
+): Promise<void> {
+  const seenSurvey = new Set<string>();
+  const uniqueSurveys = acc.surveys.filter((t) => {
+    const k = surveyTouchKey(t);
+    if (seenSurvey.has(k)) return false;
+    seenSurvey.add(k);
+    return true;
+  });
+  const seenExt = new Set<string>();
+  const uniqueExt = acc.extensionistCaches.filter((t) => {
+    const k = extensionistKey(t);
+    if (seenExt.has(k)) return false;
+    seenExt.add(k);
+    return true;
+  });
+
+  const totalSteps = uniqueSurveys.length + uniqueExt.length;
+  let step = 0;
+
+  const report = (stage: string) => {
+    const pct =
+      totalSteps > 0
+        ? Math.round((step / totalSteps) * 100)
+        : 100;
+    onProgress?.({ stage, current: pct, total: 100 });
+  };
+
+  for (const t of uniqueSurveys) {
+    report(`Actualizando respuestas (productor ${t.producerId})…`);
+    try {
+      const response = await apiFetch<any>(
+        `/surveys/${t.projectId}/producer/${t.producerId}/intervention_method/${t.methodId}`,
+        { method: "GET" },
+      );
+      const rawData = Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(response)
+          ? response
+          : [];
+      if (rawData.length > 0) {
+        const flatResults = flattenInterventionMethodSurveyPayloadToRows(
+          rawData,
+          t.methodId,
+          t.producerId,
+          t.projectId,
+        );
+        if (flatResults.length > 0) {
+          await upsertSurveyResults(flatResults);
+          await markInterventionMethodApplied(
+            t.producerId,
+            t.projectId,
+            t.methodId,
+            userId,
+          );
+        }
+      }
+    } catch {
+      // Igual que en descarga global: productor sin resultados o endpoint vacío
+    }
+    step++;
+  }
+
+  const objectiveLineIds = new Set<number>();
+
+  for (const p of uniqueExt) {
+    report(`Actualizando visitas y líneas (productor ${p.producerId})…`);
+    await downloadExtensionistCachesForProducer(userId, p.projectId, p.producerId);
+    try {
+      const rawProducer = await getProducerRawJsonRow(p.producerId, p.projectId);
+      const lineId = readProductionLineId(rawProducer);
+      if (lineId != null) objectiveLineIds.add(lineId);
+    } catch {
+      // ignore
+    }
+    step++;
+  }
+
+  for (const lineId of objectiveLineIds) {
+    try {
+      await refreshVisitObjectivesCacheForLine(lineId);
+    } catch {
+      // ignore
+    }
+  }
+
+  onProgress?.({
+    stage: "Actualización selectiva completada",
+    current: 100,
+    total: 100,
+  });
+}
+
 export async function downloadAllData(
   onProgress?: (progress: SyncProgress) => void,
 ): Promise<void> {
@@ -791,6 +940,7 @@ export async function uploadPendingAnswers(
 
   let uploaded = 0;
   let failed = 0;
+  const touches = createEmptyTouchAccumulator();
 
   // 1. Upload answer updates (PUT operations for edited answers)
   const answerUpdates = await getPendingAnswerUpdates(user.user_id);
@@ -835,6 +985,12 @@ export async function uploadPendingAnswers(
         body: JSON.stringify(body),
       });
       await deleteAnswerUpdate(update.answer_id);
+      addSurveyTouch(
+        touches,
+        update.producer_id,
+        update.project_id,
+        update.intervention_method_id,
+      );
       uploaded++;
     } catch (error) {
       failed++;
@@ -864,6 +1020,19 @@ export async function uploadPendingAnswers(
           method: "POST",
           body: JSON.stringify(pl.body),
         });
+        const lines = (pl.body as { lines?: unknown }).lines;
+        const first = Array.isArray(lines) ? (lines[0] as Record<string, unknown>) : undefined;
+        const pid = Number(first?.producer_id);
+        const projId = Number(first?.project_id);
+        if (Number.isFinite(pid) && Number.isFinite(projId)) {
+          addExtensionistTouch(touches, pid, projId);
+          addSurveyTouch(
+            touches,
+            pid,
+            projId,
+            PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
+          );
+        }
         await deleteSyncQueueRow(item.id);
         uploaded++;
         continue;
@@ -888,12 +1057,22 @@ export async function uploadPendingAnswers(
         }
         // Mark intervention method as applied after successful upload
         try {
-          const parsedPayload = JSON.parse(item.payload);
+          const parsedPayload = JSON.parse(item.payload) as {
+            producer_id?: unknown;
+            project_id?: unknown;
+            intervention_method_id?: unknown;
+          };
           await markInterventionMethodApplied(
-            parsedPayload.producer_id,
-            parsedPayload.project_id,
-            parsedPayload.intervention_method_id,
+            Number(parsedPayload.producer_id),
+            Number(parsedPayload.project_id),
+            Number(parsedPayload.intervention_method_id),
             user.user_id,
+          );
+          addSurveyTouch(
+            touches,
+            Number(parsedPayload.producer_id),
+            Number(parsedPayload.project_id),
+            Number(parsedPayload.intervention_method_id),
           );
         } catch (e) {
           console.error("Failed to mark intervention method applied:", e);
@@ -927,13 +1106,27 @@ export async function uploadPendingAnswers(
       await deleteVisit1QueueRow(item.id!);
       // Mark VISIT method as applied after successful upload
       try {
-        const visitPayload = JSON.parse(item.payload);
+        const visitPayload = JSON.parse(item.payload) as {
+          producer_id?: unknown;
+          project_id?: unknown;
+        };
+        const vPid = Number(visitPayload.producer_id);
+        const vProj = Number(visitPayload.project_id);
         await markInterventionMethodApplied(
-          visitPayload.producer_id,
-          visitPayload.project_id,
-          5, // VISIT_INTERVENTION_METHOD_ID
+          vPid,
+          vProj,
+          VISIT_INTERVENTION_METHOD_ID,
           user.user_id,
         );
+        if (Number.isFinite(vPid) && Number.isFinite(vProj)) {
+          addExtensionistTouch(touches, vPid, vProj);
+          addSurveyTouch(
+            touches,
+            vPid,
+            vProj,
+            VISIT_INTERVENTION_METHOD_ID,
+          );
+        }
       } catch (e) {
         console.error("Failed to mark visit method applied:", e);
       }
@@ -971,6 +1164,17 @@ export async function uploadPendingAnswers(
           VISIT2_INTERVENTION_METHOD_ID,
           user.user_id,
         );
+        const v2Pid = Number(visitPayload.producer_id);
+        const v2Proj = Number(visitPayload.project_id);
+        if (Number.isFinite(v2Pid) && Number.isFinite(v2Proj)) {
+          addExtensionistTouch(touches, v2Pid, v2Proj);
+          addSurveyTouch(
+            touches,
+            v2Pid,
+            v2Proj,
+            VISIT2_INTERVENTION_METHOD_ID,
+          );
+        }
       } catch (e) {
         console.error("Failed to mark visit2 intervention method applied:", e);
       }
@@ -987,20 +1191,14 @@ export async function uploadPendingAnswers(
   const shouldRefreshLocal = failed === 0 && uploaded > 0;
   if (shouldRefreshLocal) {
     onProgress?.({
-      stage: "Respuestas enviadas. Actualizando datos en el dispositivo…",
+      stage: "Respuestas enviadas. Actualizando solo lo tocado en el dispositivo…",
       current: 0,
       total: 100,
     });
     try {
-      await downloadAllData((p) =>
-        onProgress?.({
-          stage: `Actualizando: ${p.stage}`,
-          current: p.current,
-          total: p.total,
-        }),
-      );
+      await refreshTouchedDataAfterLocalUpload(user.user_id, touches, onProgress);
     } catch (e) {
-      console.error("Falló la actualización local tras la subida:", e);
+      console.error("Falló la actualización selectiva tras la subida:", e);
     }
   }
 
