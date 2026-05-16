@@ -1,4 +1,11 @@
-const { withAndroidManifest, withInfoPlist } = require("expo/config-plugins");
+const {
+  withAndroidManifest,
+  withInfoPlist,
+  withProjectBuildGradle,
+} = require("expo/config-plugins");
+
+const NOTIFEE_MAVEN_REPO =
+  'maven { url "$rootDir/../node_modules/@notifee/react-native/android/libs" }';
 
 // Notifee foreground service (see @notifee/react-native Android manifest merge).
 const SERVICE_CLASS = "app.notifee.core.ForegroundService";
@@ -64,9 +71,22 @@ function withIosBackgroundSync(config) {
   });
 }
 
+function withNotifeeMavenRepo(config) {
+  return withProjectBuildGradle(config, (cfg) => {
+    if (!cfg.modResults.contents.includes("@notifee/react-native/android/libs")) {
+      cfg.modResults.contents = cfg.modResults.contents.replace(
+        /maven\s*\{\s*url\s*['"]https:\/\/www\.jitpack\.io['"]\s*\}/,
+        (match) => `${match}\n    ${NOTIFEE_MAVEN_REPO}`,
+      );
+    }
+    return cfg;
+  });
+}
+
 /** @type {import('expo/config-plugins').ConfigPlugin} */
 module.exports = function withBackgroundSyncService(config) {
   config = withAndroidBackgroundSync(config);
+  config = withNotifeeMavenRepo(config);
   config = withIosBackgroundSync(config);
   return config;
 };
