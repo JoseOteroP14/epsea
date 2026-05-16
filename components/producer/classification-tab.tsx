@@ -856,11 +856,6 @@ export function ClassificationTab({
       setPendingQuestionIds((prev) => new Set([...prev, editingQuestion.id]));
       setShowSheet(false);
       setEditingQuestion(null);
-      showAlert({
-        title: "Sin internet",
-        message: "La edición se guardó localmente y se enviará al sincronizar.",
-        type: "warning",
-      });
     }
   }, [
     editingQuestion,

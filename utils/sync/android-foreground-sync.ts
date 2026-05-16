@@ -1,9 +1,6 @@
-import notifee, {
-  AndroidForegroundServiceType,
-  AndroidImportance,
-} from "@notifee/react-native";
 import type { SyncProgress } from "@/utils/sync/sync-service";
 import { Platform } from "react-native";
+import { isNotifeeNativeAvailable, loadNotifeeModule } from "./notifee-loader";
 
 const CHANNEL_ID = "epsea-sync";
 const NOTIFICATION_ID = "epsea-sync";
@@ -14,7 +11,12 @@ let pendingForegroundWork: (() => Promise<void>) | null = null;
 
 export function registerAndroidForegroundSyncService(): void {
   if (Platform.OS !== "android" || registered) return;
+
+  const notifeePkg = loadNotifeeModule();
+  if (!notifeePkg) return;
+
   registered = true;
+  const notifee = notifeePkg.default;
 
   notifee.registerForegroundService(() => {
     return (async () => {
@@ -37,10 +39,13 @@ export function isAndroidForegroundSyncActive(): boolean {
 }
 
 async function ensureChannel(): Promise<void> {
-  await notifee.createChannel({
+  const notifeePkg = loadNotifeeModule();
+  if (!notifeePkg) return;
+
+  await notifeePkg.default.createChannel({
     id: CHANNEL_ID,
     name: "Sincronización",
-    importance: AndroidImportance.LOW,
+    importance: notifeePkg.AndroidImportance.LOW,
   });
 }
 
@@ -49,7 +54,10 @@ async function showForegroundNotification(
   percent: number,
   indeterminate: boolean,
 ): Promise<void> {
-  await notifee.displayNotification({
+  const notifeePkg = loadNotifeeModule();
+  if (!notifeePkg) return;
+
+  await notifeePkg.default.displayNotification({
     id: NOTIFICATION_ID,
     title: "EPSEA",
     body,
@@ -57,7 +65,8 @@ async function showForegroundNotification(
       channelId: CHANNEL_ID,
       asForegroundService: true,
       foregroundServiceTypes: [
-        AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+        notifeePkg.AndroidForegroundServiceType
+          .FOREGROUND_SERVICE_TYPE_DATA_SYNC,
       ],
       ongoing: true,
       onlyAlertOnce: true,
@@ -74,11 +83,12 @@ async function showForegroundNotification(
 /**
  * Runs sync inside the Notifee foreground-service task so Android keeps the
  * process eligible for background network + JS while the user switches apps.
+ * Falls back to running work directly in Expo Go (no native Notifee).
  */
 export async function runAndroidForegroundSync(
   work: () => Promise<void>,
 ): Promise<void> {
-  if (Platform.OS !== "android") {
+  if (Platform.OS !== "android" || !isNotifeeNativeAvailable()) {
     await work();
     return;
   }
@@ -94,13 +104,15 @@ export async function runAndroidForegroundSync(
         reject(error);
         throw error;
       } finally {
+        const notifeePkg = loadNotifeeModule();
+        if (!notifeePkg) return;
         try {
-          await notifee.stopForegroundService();
+          await notifeePkg.default.stopForegroundService();
         } catch {
           // ignore
         }
         try {
-          await notifee.cancelNotification(NOTIFICATION_ID);
+          await notifeePkg.default.cancelNotification(NOTIFICATION_ID);
         } catch {
           // ignore
         }
@@ -119,7 +131,9 @@ export async function runAndroidForegroundSync(
 export async function updateAndroidForegroundSync(
   progress: SyncProgress,
 ): Promise<void> {
-  if (Platform.OS !== "android" || !active) return;
+  if (Platform.OS !== "android" || !active || !isNotifeeNativeAvailable()) {
+    return;
+  }
 
   const percent =
     progress.total > 0
@@ -139,7 +153,7 @@ export async function updateAndroidForegroundSync(
 
 /** @deprecated Use runAndroidForegroundSync; kept for compatibility. */
 export async function startAndroidForegroundSync(): Promise<void> {
-  if (Platform.OS !== "android") return;
+  if (Platform.OS !== "android" || !isNotifeeNativeAvailable()) return;
   await ensureChannel();
   active = true;
   await showForegroundNotification("Sincronizando datos…", 0, true);
@@ -150,13 +164,17 @@ export async function stopAndroidForegroundSync(): Promise<void> {
   if (Platform.OS !== "android" || !active) return;
   active = false;
   pendingForegroundWork = null;
+
+  const notifeePkg = loadNotifeeModule();
+  if (!notifeePkg) return;
+
   try {
-    await notifee.stopForegroundService();
+    await notifeePkg.default.stopForegroundService();
   } catch {
     // ignore
   }
   try {
-    await notifee.cancelNotification(NOTIFICATION_ID);
+    await notifeePkg.default.cancelNotification(NOTIFICATION_ID);
   } catch {
     // ignore
   }

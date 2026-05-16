@@ -1053,11 +1053,6 @@ export function PersonalInfoTab({
       useSyncStore.getState().refreshStatus();
       setShowSheet(false);
       setEditingQuestion(null);
-      showAlert({
-        title: "Sin internet",
-        message: "La edición se guardó localmente y se enviará al sincronizar.",
-        type: "warning",
-      });
     }
   }, [
     editingQuestion,

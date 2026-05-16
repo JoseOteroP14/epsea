@@ -1,38 +1,39 @@
-import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useSyncStore } from "@/store/useSyncStore";
 import { apiFetch } from "@/utils/api";
 import {
-  heightPercent,
+  moderateScale,
   responsiveFont,
-  verticalScale,
-  widthScale,
+  SCREEN_HEIGHT,
+  SCREEN_WIDTH,
 } from "@/utils/responsive";
-import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { LinearGradient } from "expo-linear-gradient";
+import {
+  ArrowRight,
+  Eye,
+  EyeOff,
+  Lock,
+  User,
+} from "lucide-react-native";
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
   Keyboard,
   KeyboardAvoidingView,
+  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   TextInput,
-  TouchableOpacity,
   TouchableWithoutFeedback,
+  useWindowDimensions,
   View,
 } from "react-native";
-import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSpring,
-  withTiming,
-} from "react-native-reanimated";
+import Svg, { Path } from "react-native-svg";
 
 function normalizeName(value?: string | null): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -40,50 +41,48 @@ function normalizeName(value?: string | null): string | undefined {
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
+function clamp(min: number, value: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+type FocusedField = "" | "user" | "pass";
+
 export default function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [focusedField, setFocusedField] = useState<FocusedField>("");
   const [loading, setLoading] = useState(false);
+
   const router = useRouter();
   const { login } = useAuthStore();
   const { showAlert } = useAlert();
   const passwordRef = useRef<TextInput>(null);
 
-  // Animaciones
-  const scale = useSharedValue(1);
-  const rotation = useSharedValue(0);
-  const pulse = useSharedValue(1);
+  const { width, height } = useWindowDimensions();
+  const isCompact = width <= 820;
+  const isPhone = width <= 480;
+  const isTablet = width <= 1024 && !isCompact;
+  const isMedium = width <= 1200 && !isTablet && !isCompact;
 
-  useEffect(() => {
-    rotation.value = withRepeat(
-      withTiming(360, { duration: 30000, easing: Easing.linear }),
-      -1,
-      false,
-    );
-
-    pulse.value = withRepeat(
-      withTiming(1.2, { duration: 4000, easing: Easing.inOut(Easing.ease) }),
-      -1,
-      true,
-    );
-  }, []);
-
-  const animatedLogoStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${rotation.value}deg` }, { scale: pulse.value }],
-    opacity: withTiming(loading ? 0.4 : 0.8),
-  }));
-
-  const animatedSplash2Style = useAnimatedStyle(() => ({
-    transform: [{ scale: pulse.value * 1.1 }],
-    opacity: withTiming(loading ? 0.3 : 0.7),
-  }));
+  const formWidthPercent = isTablet ? 0.46 : isMedium ? 0.44 : 0.42;
+  const centerLogoLeft = isMedium ? 0.24 : 0.26;
+  const topWhiteHeight = isPhone ? height * 0.42 : height * 0.48;
+  const centerLogoSize = isCompact
+    ? clamp(170, width * 0.42, 290)
+    : clamp(215, width * 0.32, 430);
+  const centerLogoTop = isCompact
+    ? (isPhone ? height * 0.21 : height * 0.24)
+    : height * 0.5;
+  const epseaLogoHeight = isCompact ? 116 : 160;
+  const unicorLogoHeight = isCompact ? 38 : 50;
+  const formMarginTop = isPhone ? height * 0.42 : height * 0.48;
 
   const handleLogin = async () => {
     if (!username || !password) {
       showAlert({
-        title: "Error",
-        message: "Por favor ingresa usuario y contraseña",
+        title: "Campos requeridos",
+        message: "Por favor ingresa tu usuario y contraseña",
         type: "error",
       });
       return;
@@ -91,7 +90,6 @@ export default function LoginScreen() {
 
     Keyboard.dismiss();
     setLoading(true);
-    scale.value = withSpring(0.95);
 
     try {
       const formData = new FormData();
@@ -126,26 +124,24 @@ export default function LoginScreen() {
 
       if (response.code === "SUCCESS" && response.data) {
         const userData = response.data.user;
-        const dataAny = response.data as any;
+        const dataAny = response.data as Record<string, unknown>;
         const mappedUser = {
           ...userData,
           first_name:
             normalizeName(userData.first_name) ??
             normalizeName(userData.firstName) ??
-            normalizeName(dataAny?.first_name) ??
-            normalizeName(dataAny?.firstName),
+            normalizeName(dataAny?.first_name as string) ??
+            normalizeName(dataAny?.firstName as string),
           last_name:
             normalizeName(userData.last_name) ??
             normalizeName(userData.lastName) ??
-            normalizeName(dataAny?.last_name) ??
-            normalizeName(dataAny?.lastName),
+            normalizeName(dataAny?.last_name as string) ??
+            normalizeName(dataAny?.lastName as string),
         };
 
         await login(mappedUser, response.data.access_token);
         setLoading(false);
-        scale.value = withSpring(1);
 
-        // Ask if user wants to sync before entering the app
         showAlert({
           title: "Sincronizar datos",
           message:
@@ -169,291 +165,467 @@ export default function LoginScreen() {
           ],
         });
         return;
-      } else {
-        showAlert({
-          title: "Error",
-          message: response.message || "Credenciales inválidas",
-          type: "error",
-        });
-        setLoading(false);
-        scale.value = withSpring(1);
       }
-    } catch (error: any) {
+
       showAlert({
         title: "Error",
-        message: error.message || "No se pudo conectar con el servidor",
+        message: response.message || "Credenciales inválidas",
         type: "error",
       });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "No se pudo conectar con el servidor";
+      showAlert({
+        title: "Error",
+        message,
+        type: "error",
+      });
+    } finally {
       setLoading(false);
-      scale.value = withSpring(1);
     }
   };
 
-  const buttonAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
+  const iconColor =
+    focusedField === "user" || focusedField === "pass"
+      ? "rgba(255, 255, 255, 0.85)"
+      : "rgba(255, 255, 255, 0.4)";
 
   return (
-    <LinearGradient
-      colors={["#ffffff", "#d5f5e3", "#a9dfbf", "#d5f5e3", "#ffffff"]}
-      locations={[0, 0.25, 0.5, 0.75, 1]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.container}
-    >
-      <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoid}>
+    <View style={styles.root}>
+      <LinearGradient
+        colors={
+          isCompact
+            ? ["#7CB586", "#073610"]
+            : ["#7CB586", "#107823", "#0C5A1A", "#073610"]
+        }
+        locations={isCompact ? [0, 1] : [0, 0.3, 0.6, 1]}
+        start={isCompact ? { x: 0.5, y: 0 } : { x: 0, y: 0.5 }}
+        end={isCompact ? { x: 0.5, y: 1 } : { x: 1, y: 0.5 }}
+        style={StyleSheet.absoluteFill}
+      />
+
+      {!isCompact && (
+        <Svg
+          width={width}
+          height={height}
+          viewBox="0 0 1000 1000"
+          preserveAspectRatio="none"
+          style={styles.organicSvg}
+          pointerEvents="none"
+        >
+          <Path
+            d="M 0,0 L 560,0 C 580,250 580,750 560,1000 L 0,1000 Z"
+            fill="white"
+          />
+        </Svg>
+      )}
+
+      {isCompact && (
+        <View
+          style={[
+            styles.mobileWhiteCard,
+            {
+              height: Math.max(topWhiteHeight, isPhone ? 220 : 260),
+              borderBottomLeftRadius: width * 0.6,
+              borderBottomRightRadius: width * 0.6,
+            },
+          ]}
+          pointerEvents="none"
+        />
+      )}
+
+      <View
+        pointerEvents="none"
+        style={[
+          styles.lottieZone,
+          {
+            top: centerLogoTop,
+            left: isCompact ? width / 2 : width * centerLogoLeft,
+            width: centerLogoSize,
+            height: centerLogoSize,
+            transform: [
+              { translateX: -centerLogoSize / 2 },
+              { translateY: -centerLogoSize / 2 },
+            ],
+          },
+        ]}
+      >
+        <Image
+          source={require("@/assets/images/Epsea.png")}
+          style={styles.logoCenterEpsea}
+          resizeMode="contain"
+        />
+      </View>
+
+      <View
+        pointerEvents="none"
+        style={[
+          styles.corner,
+          styles.cornerTl,
+          { left: isCompact ? 16 : 22 },
+        ]}
+      >
+        <Image
+          source={require("@/assets/images/OIP.jpg")}
+          style={[styles.logoEpsea, { height: epseaLogoHeight }]}
+          resizeMode="contain"
+        />
+      </View>
+
+      <View
+        pointerEvents="none"
+        style={[
+          styles.corner,
+          styles.cornerTrWhite,
+          isCompact
+            ? { top: 20, right: 16 }
+            : { top: 24, right: width * 0.44 },
+        ]}
+      >
+        <View
+          style={[
+            styles.logosBottom,
+            isCompact && styles.logosBottomCompact,
+          ]}
+        >
+          <Image
+            source={require("@/assets/images/logo.png")}
+            style={[styles.logoUnicor, { height: unicorLogoHeight }]}
+            resizeMode="contain"
+          />
+        </View>
+      </View>
+
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={[
+          styles.formSide,
+          isCompact
+            ? {
+                position: "relative",
+                width: "100%",
+                marginTop: formMarginTop,
+                paddingHorizontal: isPhone ? 20 : 24,
+                paddingTop: isPhone ? 24 : 28,
+                paddingBottom: isPhone ? 40 : 48,
+              }
+            : {
+                width: width * formWidthPercent,
+                paddingHorizontal: isTablet ? 28 : isMedium ? 32 : 48,
+                paddingVertical: 40,
+              },
+        ]}
+      >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
-            contentContainerStyle={styles.scrollContent}
+            contentContainerStyle={[
+              styles.formScroll,
+              !isCompact && styles.formScrollWide,
+            ]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-            bounces={false}
+            bounces={isCompact}
           >
-            {/* Decorative elements */}
-            <Animated.View
-              style={[styles.inkSplash, styles.inkSplash1, animatedLogoStyle]}
-            >
-              <LinearGradient
-                colors={[
-                  "rgba(26, 122, 58, 0.45)",
-                  "rgba(39, 174, 96, 0.1)",
-                  "transparent",
-                ]}
-                style={styles.inkGradient}
-              />
-            </Animated.View>
-            <Animated.View
+            <View
               style={[
-                styles.inkSplash,
-                styles.inkSplash2,
-                animatedSplash2Style,
+                styles.formBox,
+                isCompact && { maxWidth: "100%" },
               ]}
             >
-              <LinearGradient
-                colors={[
-                  "rgba(26, 122, 58, 0.35)",
-                  "rgba(209, 250, 229, 0.15)",
-                  "transparent",
+              <Text
+                style={[
+                  styles.formTitle,
+                  isTablet && { fontSize: responsiveFont(28.8) },
+                  isPhone && { fontSize: responsiveFont(26.4) },
                 ]}
-                style={styles.inkGradient}
-              />
-            </Animated.View>
+              >
+                Iniciar Sesión
+              </Text>
+              <Text style={styles.formSub}>
+                Ingresa tus credenciales para acceder al sistema
+              </Text>
 
-            {/* Logo/Title Section */}
-            <View style={styles.logoSection}>
-              <Image
-                source={require("@/assets/images/Epsea.png")}
-                style={styles.logoImage}
-                resizeMode="contain"
-              />
-            </View>
-
-            {/* Login Card — glassmorphism via View */}
-            <View style={styles.glassCard}>
-              <ThemedText style={styles.welcomeText}>Bienvenido</ThemedText>
-              <ThemedText style={styles.instructionText}>
-                Ingresa tus credenciales para continuar
-              </ThemedText>
-
-              <View style={styles.inputContainer}>
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Usuario"
-                    placeholderTextColor="rgba(0,0,0,0.35)"
-                    value={username}
-                    onChangeText={setUsername}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="next"
-                    onSubmitEditing={() => passwordRef.current?.focus()}
-                    blurOnSubmit={false}
-                  />
-                </View>
-
-                <View style={styles.inputWrapper}>
-                  <View style={styles.passwordRow}>
+              <View style={styles.fields}>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Usuario</Text>
+                  <View style={styles.inputRow}>
+                    <User
+                      size={17}
+                      color={
+                        focusedField === "user"
+                          ? "rgba(255, 255, 255, 0.85)"
+                          : iconColor
+                      }
+                      style={styles.fieldIcon}
+                    />
                     <TextInput
-                      ref={passwordRef}
-                      style={[styles.input, styles.passwordField]}
-                      placeholder="Contraseña"
-                      placeholderTextColor="rgba(0,0,0,0.35)"
-                      value={password}
-                      onChangeText={setPassword}
-                      secureTextEntry={!passwordVisible}
-                      returnKeyType="done"
-                      onSubmitEditing={handleLogin}
+                      style={[
+                        styles.fieldInput,
+                        focusedField === "user" && styles.fieldInputFocused,
+                      ]}
+                      placeholder="Ingresa tu usuario"
+                      placeholderTextColor="rgba(255, 255, 255, 0.32)"
+                      value={username}
+                      onChangeText={setUsername}
                       autoCapitalize="none"
                       autoCorrect={false}
+                      returnKeyType="next"
+                      onFocus={() => setFocusedField("user")}
+                      onBlur={() => setFocusedField("")}
+                      onSubmitEditing={() => passwordRef.current?.focus()}
+                      blurOnSubmit={false}
                     />
-                    <TouchableOpacity
-                      style={styles.passwordToggle}
-                      onPress={() => setPasswordVisible((v) => !v)}
-                      activeOpacity={0.6}
+                  </View>
+                </View>
+
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Contraseña</Text>
+                  <View style={styles.inputRow}>
+                    <Lock
+                      size={17}
+                      color={
+                        focusedField === "pass"
+                          ? "rgba(255, 255, 255, 0.85)"
+                          : iconColor
+                      }
+                      style={styles.fieldIcon}
+                    />
+                    <TextInput
+                      ref={passwordRef}
+                      style={[
+                        styles.fieldInput,
+                        styles.fieldInputPw,
+                        focusedField === "pass" && styles.fieldInputFocused,
+                      ]}
+                      placeholder="Ingresa tu contraseña"
+                      placeholderTextColor="rgba(255, 255, 255, 0.32)"
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry={!showPassword}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      returnKeyType="done"
+                      onFocus={() => setFocusedField("pass")}
+                      onBlur={() => setFocusedField("")}
+                      onSubmitEditing={handleLogin}
+                    />
+                    <Pressable
+                      style={styles.eyeBtn}
+                      onPress={() => setShowPassword((v) => !v)}
+                      hitSlop={8}
                       accessibilityRole="button"
                       accessibilityLabel={
-                        passwordVisible
+                        showPassword
                           ? "Ocultar contraseña"
                           : "Mostrar contraseña"
                       }
-                      hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
                     >
-                      <MaterialIcons
-                        name={passwordVisible ? "visibility-off" : "visibility"}
-                        size={22}
-                        color="rgba(0,0,0,0.45)"
-                      />
-                    </TouchableOpacity>
+                      {showPassword ? (
+                        <EyeOff size={17} color="rgba(255, 255, 255, 0.4)" />
+                      ) : (
+                        <Eye size={17} color="rgba(255, 255, 255, 0.4)" />
+                      )}
+                    </Pressable>
                   </View>
                 </View>
-              </View>
 
-              <Animated.View style={buttonAnimatedStyle}>
-                <TouchableOpacity
-                  style={[
-                    styles.loginButton,
-                    loading && styles.loginButtonDisabled,
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.submitBtn,
+                    loading && styles.submitBtnDisabled,
+                    pressed && !loading && styles.submitBtnPressed,
                   ]}
                   onPress={handleLogin}
                   disabled={loading}
-                  activeOpacity={0.8}
                 >
-                  <LinearGradient
-                    colors={["#1a7a3a", "#156b33"]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={styles.buttonGradient}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <ThemedText style={styles.buttonText}>
-                        Iniciar Sesión
-                      </ThemedText>
-                    )}
-                  </LinearGradient>
-                </TouchableOpacity>
-              </Animated.View>
+                  {loading ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <View style={styles.btnContent}>
+                      <Text style={styles.submitBtnText}>Ingresar</Text>
+                      <ArrowRight size={18} color="#ffffff" />
+                    </View>
+                  )}
+                </Pressable>
+              </View>
             </View>
           </ScrollView>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-  },
-  keyboardAvoid: {
-    flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    justifyContent: "center",
-    paddingHorizontal: widthScale(24),
-    paddingVertical: verticalScale(20),
-  },
-  inkSplash: {
-    position: "absolute",
-    borderRadius: 999,
+    width: SCREEN_WIDTH,
+    minHeight: SCREEN_HEIGHT,
     overflow: "hidden",
+    backgroundColor: "#073610",
   },
-  inkSplash1: {
-    width: widthScale(300),
-    height: widthScale(300),
-    top: -heightPercent(10),
-    right: -widthScale(20),
+  organicSvg: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1,
   },
-  inkSplash2: {
-    width: widthScale(250),
-    height: widthScale(250),
-    bottom: -heightPercent(15),
-    left: -widthScale(15),
+  mobileWhiteCard: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "#ffffff",
+    zIndex: 1,
   },
-  inkGradient: {
+  lottieZone: {
+    position: "absolute",
+    zIndex: 3,
+  },
+  logoCenterEpsea: {
     width: "100%",
     height: "100%",
-    borderRadius: 999,
   },
-  logoSection: {
-    alignItems: "center",
-    marginBottom: verticalScale(40),
+  corner: {
+    position: "absolute",
+    zIndex: 4,
   },
-  logoImage: {
-    width: widthScale(260),
-    height: widthScale(140),
-    marginBottom: verticalScale(16),
+  cornerTl: {
+    top: 16,
+    alignItems: "flex-start",
   },
-  glassCard: {
-    borderRadius: 24,
-    padding: widthScale(24),
-    backgroundColor: "rgba(255,255,255,0.45)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.8)",
+  cornerTrWhite: {
+    alignItems: "flex-end",
   },
-  welcomeText: {
-    fontSize: responsiveFont(24),
-    fontWeight: "bold",
-    color: "#1a3a20",
-    textAlign: "center",
-    marginBottom: verticalScale(8),
+  logoEpsea: {
+    width: undefined,
+    aspectRatio: 1.2,
+    marginTop: -14,
   },
-  instructionText: {
-    fontSize: responsiveFont(17),
-    color: "rgba(0,0,0,0.5)",
-    textAlign: "center",
-    marginBottom: verticalScale(24),
-  },
-  inputContainer: {
-    gap: verticalScale(16),
-    marginBottom: verticalScale(24),
-  },
-  inputWrapper: {
-    backgroundColor: "rgba(255,255,255,0.55)",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.8)",
-  },
-  input: {
-    paddingHorizontal: widthScale(16),
-    paddingVertical: verticalScale(14),
-    fontSize: responsiveFont(17),
-    color: "#11181C",
-  },
-  passwordRow: {
+  logosBottom: {
     flexDirection: "row",
     alignItems: "center",
-  },
-  passwordField: {
-    flex: 1,
-    paddingRight: widthScale(6),
-  },
-  passwordToggle: {
-    paddingRight: widthScale(12),
-    paddingVertical: verticalScale(12),
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  loginButton: {
+    gap: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.92)",
     borderRadius: 12,
-    overflow: "hidden",
-    shadowColor: "#1a7a3a",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
-  loginButtonDisabled: {},
-  buttonGradient: {
-    paddingVertical: verticalScale(16),
+  logoUnicor: {
+    width: undefined,
+    marginTop: 25,
+    aspectRatio: 2.5,
+  },
+  formSide: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    height: "100%",
+    zIndex: 4,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  formScroll: {
+    flexGrow: 1,
+    justifyContent: "flex-start",
+    width: "100%",
+  },
+  formScrollWide: {
+    justifyContent: "center",
+  },
+  formBox: {
+    width: "100%",
+    maxWidth: 370,
+  },
+  formTitle: {
+    fontSize: responsiveFont(33.6),
+    fontWeight: "800",
+    color: "#ffffff",
+    letterSpacing: -0.5,
+    marginBottom: 6,
+  },
+  formSub: {
+    fontSize: responsiveFont(13.9),
+    color: "rgba(255, 255, 255, 0.58)",
+    marginBottom: 34,
+    lineHeight: moderateScale(20),
+  },
+  fields: {
+    gap: 18,
+  },
+  field: {
+    gap: 6,
+  },
+  fieldLabel: {
+    fontSize: responsiveFont(13.1),
+    fontWeight: "600",
+    color: "rgba(255, 255, 255, 0.82)",
+    marginLeft: 2,
+  },
+  inputRow: {
+    position: "relative",
+    justifyContent: "center",
+  },
+  fieldIcon: {
+    position: "absolute",
+    left: 13,
+    zIndex: 1,
+  },
+  fieldInput: {
+    height: 46,
+    paddingLeft: 42,
+    paddingRight: 14,
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255, 255, 255, 0.18)",
+    borderRadius: 12,
+    fontSize: responsiveFont(14.9),
+    color: "#ffffff",
+  },
+  fieldInputFocused: {
+    backgroundColor: "rgba(255, 255, 255, 0.16)",
+    borderColor: "rgba(255, 255, 255, 0.48)",
+  },
+  fieldInputPw: {
+    paddingRight: 44,
+  },
+  logosBottomCompact: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 8,
+  },
+  eyeBtn: {
+    position: "absolute",
+    right: 12,
+    padding: 4,
+    zIndex: 1,
+  },
+  submitBtn: {
+    height: 48,
+    marginTop: 6,
+    backgroundColor: "rgba(255, 255, 255, 0.18)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255, 255, 255, 0.32)",
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
-  buttonText: {
-    fontSize: responsiveFont(17),
-    fontWeight: "bold",
-    color: "#fff",
+  submitBtnPressed: {
+    backgroundColor: "rgba(255, 255, 255, 0.28)",
+    borderColor: "rgba(255, 255, 255, 0.52)",
+  },
+  submitBtnDisabled: {
+    opacity: 0.55,
+  },
+  btnContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  submitBtnText: {
+    color: "#ffffff",
+    fontWeight: "700",
+    fontSize: responsiveFont(16),
   },
 });

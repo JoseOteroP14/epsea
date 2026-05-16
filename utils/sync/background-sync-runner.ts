@@ -5,6 +5,7 @@ import {
   runAndroidForegroundSync,
   updateAndroidForegroundSync,
 } from "./android-foreground-sync";
+import { isNotifeeNativeAvailable } from "./notifee-loader";
 import {
   startSyncKeepAlive,
   stopSyncKeepAlive,
@@ -16,7 +17,7 @@ export function isBackgroundSyncServiceRunning(): boolean {
 }
 
 export function isBackgroundSyncServiceAvailable(): boolean {
-  return Platform.OS === "android";
+  return isNotifeeNativeAvailable();
 }
 
 export async function runWithBackgroundSyncService(

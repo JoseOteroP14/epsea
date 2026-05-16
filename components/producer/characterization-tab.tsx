@@ -1045,11 +1045,6 @@ export function CharacterizationTab({
       setShowSheet(false);
       setEditingQuestion(null);
       setEditQuestions([]);
-      showAlert({
-        title: "Sin internet",
-        message: "La edición se guardó localmente y se enviará al sincronizar.",
-        type: "warning",
-      });
     }
   }, [
     editingQuestion,
