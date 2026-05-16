@@ -16,6 +16,10 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
 import { DatabaseProvider } from "@/components/database-provider";
+import { SyncBackgroundCoordinator } from "@/components/sync-background-coordinator";
+import { registerAndroidForegroundSyncService } from "@/utils/sync/android-foreground-sync";
+
+registerAndroidForegroundSyncService();
 import { AlertProvider } from "@/components/ui/custom-alert";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -61,6 +65,7 @@ export default function RootLayout() {
         <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
           <BottomSheetModalProvider>
             <AlertProvider>
+            <SyncBackgroundCoordinator />
             <Stack screenOptions={{ animation: "fade", animationDuration: 250 }}>
               <Stack.Screen name="login" options={{ headerShown: false }} />
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

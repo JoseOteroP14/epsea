@@ -11,6 +11,7 @@ import {
 import { getPendingVisit1Count } from "@/utils/database/repositories/visit1-repository";
 import { getPendingVisit2Count } from "@/utils/database/repositories/visit2-repository";
 import { getPendingAnswerUpdateCount } from "@/utils/database/repositories/answer-update-repository";
+import { runWithBackgroundSyncService } from "@/utils/sync/background-sync-runner";
 import { useAuthStore } from "./useAuthStore";
 
 export interface FullSyncResult {
@@ -45,13 +46,17 @@ interface SyncState {
   error: string | null;
 
   startDownload: (externalProgressCallback?: (p: SyncProgress) => void) => Promise<void>;
+  /** Descarga sin bloquear al llamador; útil tras login o al salir de la pantalla de sync. */
+  startDownloadDetached: () => boolean;
   startUpload: () => Promise<{ uploaded: number; failed: number }>;
   /** Sube pendientes primero (si hay); luego descarga. Evita descargar antes y pisar trabajo offline. */
   startFullSync: () => Promise<FullSyncResult>;
+  /** Igual que startFullSync pero no bloquea al llamador. */
+  startFullSyncDetached: () => boolean;
   refreshStatus: () => Promise<void>;
 }
 
-export const useSyncStore = create<SyncState>((set) => ({
+export const useSyncStore = create<SyncState>((set, get) => ({
   isDownloading: false,
   isUploading: false,
   progress: null,
@@ -63,9 +68,12 @@ export const useSyncStore = create<SyncState>((set) => ({
   startDownload: async (externalProgressCallback) => {
     set({ isDownloading: true, error: null, progress: null });
     try {
-      await downloadAllData((progress) => {
-        set({ progress });
-        externalProgressCallback?.(progress);
+      await runWithBackgroundSyncService(async (reportProgress) => {
+        await downloadAllData((progress) => {
+          set({ progress });
+          externalProgressCallback?.(progress);
+          reportProgress(progress);
+        });
       });
       const lastDownload = await getMetadata("last_full_download");
       set({ isDownloading: false, lastDownload });
@@ -76,6 +84,13 @@ export const useSyncStore = create<SyncState>((set) => ({
       });
       throw error;
     }
+  },
+
+  startDownloadDetached: () => {
+    const { isDownloading, isUploading, startDownload } = get();
+    if (isDownloading || isUploading) return false;
+    void startDownload().catch(() => {});
+    return true;
   },
 
   startUpload: async () => {
@@ -122,69 +137,66 @@ export const useSyncStore = create<SyncState>((set) => ({
     let failed = 0;
     let downloadRanAfterUpload = false;
     let downloadCompleted = false;
+    let fullDownloadRan = false;
+    let selectiveRefreshRan = false;
 
-    if (pending > 0) {
-      set({ isUploading: true, progress: null });
-      try {
-        const result = await uploadPendingAnswers((progress) =>
-          set({ progress }),
-        );
-        uploaded = result.uploaded;
-        failed = result.failed;
-        const newPending = await countPendingUploads(userId);
-        const lastUpload = await getMetadata("last_upload");
-        set({
-          isUploading: false,
-          pendingUploads: newPending,
-          lastUpload,
+    try {
+      await runWithBackgroundSyncService(async (reportProgress) => {
+        if (pending > 0) {
+          set({ isUploading: true, progress: null });
+          const result = await uploadPendingAnswers((progress) => {
+            set({ progress });
+            reportProgress(progress);
+          });
+          uploaded = result.uploaded;
+          failed = result.failed;
+          const newPending = await countPendingUploads(userId);
+          const lastUpload = await getMetadata("last_upload");
+          set({
+            isUploading: false,
+            pendingUploads: newPending,
+            lastUpload,
+          });
+
+          if (failed > 0) {
+            const msg = `${failed} envío(s) con error. No se ejecutó la descarga para no sobrescribir datos locales que siguen pendientes.`;
+            set({ error: msg });
+            throw new Error(msg);
+          }
+
+          if (uploaded > 0) {
+            downloadRanAfterUpload = true;
+            downloadCompleted = true;
+            selectiveRefreshRan = true;
+            const lastDownload = await getMetadata("last_full_download");
+            set({ lastDownload });
+            return;
+          }
+        }
+
+        set({ isDownloading: true, progress: null });
+        await downloadAllData((progress) => {
+          set({ progress });
+          reportProgress(progress);
         });
-
-        if (failed > 0) {
-          const msg = `${failed} envío(s) con error. No se ejecutó la descarga para no sobrescribir datos locales que siguen pendientes.`;
-          set({ error: msg });
-          throw new Error(msg);
-        }
-
-        if (uploaded > 0) {
-          downloadRanAfterUpload = true;
-          downloadCompleted = true;
-          const lastDownload = await getMetadata("last_full_download");
-          set({ lastDownload });
-          return {
-            uploaded,
-            failed,
-            downloadRanAfterUpload,
-            downloadCompleted,
-            fullDownloadRan: false,
-            selectiveRefreshRan: true,
-          };
-        }
-      } catch (error) {
-        set({ isUploading: false });
+        const lastDownload = await getMetadata("last_full_download");
+        const newPending = await countPendingUploads(userId);
+        set({
+          isDownloading: false,
+          lastDownload,
+          pendingUploads: newPending,
+        });
+        downloadCompleted = true;
+        fullDownloadRan = true;
+      });
+    } catch (error) {
+      set({ isUploading: false, isDownloading: false });
+      if (!get().error) {
         set({
           error:
-            error instanceof Error ? error.message : "Error durante la subida",
+            error instanceof Error ? error.message : "Error de sincronización",
         });
-        throw error;
       }
-    }
-
-    set({ isDownloading: true, progress: null });
-    try {
-      await downloadAllData((progress) => set({ progress }));
-      const lastDownload = await getMetadata("last_full_download");
-      const newPending = await countPendingUploads(userId);
-      set({
-        isDownloading: false,
-        lastDownload,
-        pendingUploads: newPending,
-      });
-      downloadCompleted = true;
-    } catch (error) {
-      set({
-        isDownloading: false,
-        error: error instanceof Error ? error.message : "Error de descarga",
-      });
       throw error;
     }
 
@@ -193,9 +205,16 @@ export const useSyncStore = create<SyncState>((set) => ({
       failed,
       downloadRanAfterUpload,
       downloadCompleted,
-      fullDownloadRan: true,
-      selectiveRefreshRan: false,
+      fullDownloadRan,
+      selectiveRefreshRan,
     };
+  },
+
+  startFullSyncDetached: () => {
+    const { isDownloading, isUploading, startFullSync } = get();
+    if (isDownloading || isUploading) return false;
+    void startFullSync().catch(() => {});
+    return true;
   },
 
   refreshStatus: async () => {

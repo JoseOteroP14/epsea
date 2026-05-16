@@ -56,7 +56,15 @@
             "minSdkVersion": 24
           }
         }
-      ]
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/Epsea.png",
+          "color": "#1a7a3a"
+        }
+      ],
+      "./plugins/with-background-sync-service.js"
     ],
     "experiments": {
       "typedRoutes": true

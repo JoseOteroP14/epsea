@@ -18,7 +18,6 @@ import {
   Image,
   Keyboard,
   KeyboardAvoidingView,
-  Modal,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -46,8 +45,6 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [syncStage, setSyncStage] = useState("");
   const router = useRouter();
   const { login } = useAuthStore();
   const { showAlert } = useAlert();
@@ -152,7 +149,7 @@ export default function LoginScreen() {
         showAlert({
           title: "Sincronizar datos",
           message:
-            "¿Desea sincronizar los datos con el servidor? Esto descargará sus proyectos y encuestas más recientes.",
+            "¿Desea descargar sus proyectos y encuestas más recientes? La sincronización continuará en segundo plano (verá una notificación en Android). Puede usar otras apps y le avisaremos al terminar.",
           type: "info",
           cancelable: false,
           buttons: [
@@ -164,19 +161,9 @@ export default function LoginScreen() {
             {
               text: "Sí, sincronizar",
               style: "default",
-              onPress: async () => {
-                setSyncing(true);
-                setSyncStage("Iniciando sincronización...");
-                try {
-                  await useSyncStore.getState().startDownload((progress) => {
-                    setSyncStage(progress.stage);
-                  });
-                } catch (e) {
-                  // Continue to app even if sync fails
-                } finally {
-                  setSyncing(false);
-                  router.replace("/(tabs)");
-                }
+              onPress: () => {
+                router.replace("/(tabs)");
+                useSyncStore.getState().startDownloadDetached();
               },
             },
           ],
@@ -214,20 +201,6 @@ export default function LoginScreen() {
       end={{ x: 1, y: 1 }}
       style={styles.container}
     >
-      {/* Sync progress overlay — blocks all interaction during download */}
-      <Modal visible={syncing} transparent animationType="fade">
-        <View style={styles.syncOverlay}>
-          <View style={styles.syncCard}>
-            <ActivityIndicator
-              size="large"
-              color="#1a7a3a"
-              style={{ marginBottom: verticalScale(16) }}
-            />
-            <ThemedText style={styles.syncTitle}>Sincronizando...</ThemedText>
-            <ThemedText style={styles.syncStage}>{syncStage}</ThemedText>
-          </View>
-        </View>
-      </Modal>
       <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoid}>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
@@ -482,36 +455,5 @@ const styles = StyleSheet.create({
     fontSize: responsiveFont(17),
     fontWeight: "bold",
     color: "#fff",
-  },
-  syncOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: widthScale(24),
-  },
-  syncCard: {
-    backgroundColor: "#fff",
-    borderRadius: widthScale(16),
-    padding: widthScale(28),
-    alignItems: "center",
-    width: "100%",
-    maxWidth: widthScale(340),
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  syncTitle: {
-    fontSize: responsiveFont(19),
-    fontWeight: "700",
-    color: "#1a3a20",
-    marginBottom: verticalScale(8),
-  },
-  syncStage: {
-    fontSize: responsiveFont(15),
-    color: "rgba(0,0,0,0.5)",
-    textAlign: "center",
   },
 });

@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start",
+    "fix:bin": "node ./scripts/fix-node-modules-bin.js",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "android:dev": "expo run:android",
@@ -11,11 +12,12 @@
     "ios:dev": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "postinstall": "node ./scripts/patch-metro-config.js"
+    "postinstall": "node ./scripts/patch-metro-config.js && node ./scripts/fix-node-modules-bin.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
     "@gorhom/bottom-sheet": "^5.2.8",
+    "@notifee/react-native": "^9.1.8",
     "@react-native-community/datetimepicker": "8.4.4",
     "@tanstack/react-query": "^5.90.21",
     "expo": "~54.0.34",
@@ -32,6 +34,7 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.12",
     "expo-network": "^8.0.8",
+    "expo-notifications": "~0.32.17",
     "expo-print": "~15.0.8",
     "expo-router": "~6.0.23",
     "expo-secure-store": "^15.0.8",

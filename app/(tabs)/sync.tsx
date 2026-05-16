@@ -43,7 +43,7 @@ export default function SyncScreen() {
     lastDownload,
     lastUpload,
     error,
-    startFullSync,
+    startFullSyncDetached,
     refreshStatus,
   } = useSyncStore();
 
@@ -57,7 +57,7 @@ export default function SyncScreen() {
     }, [refreshStatus]),
   );
 
-  const handleSync = useCallback(async () => {
+  const handleSync = useCallback(() => {
     if (!isConnected) {
       showAlert({
         title: "Sin conexión",
@@ -66,41 +66,25 @@ export default function SyncScreen() {
       });
       return;
     }
-    try {
-      const r = await startFullSync();
-      const parts: string[] = [];
-      if (r.uploaded > 0 || r.failed > 0) {
-        parts.push(
-          `${r.uploaded} elemento(s) enviado(s) al servidor${r.failed ? `, ${r.failed} con error` : ""}.`,
-        );
-      }
-      if (r.downloadCompleted) {
-        if (r.fullDownloadRan) {
-          parts.push("Se descargaron los datos más recientes del servidor.");
-        } else if (r.selectiveRefreshRan) {
-          parts.push(
-            "La copia local se alineó solo con lo que enviaste (sin volver a descargar proyectos ni el resto de productores).",
-          );
-        } else if (r.downloadRanAfterUpload) {
-          parts.push("La copia local se actualizó tras enviar los pendientes.");
-        }
-      }
+    if (isBusy) return;
+
+    const started = startFullSyncDetached();
+    if (!started) {
       showAlert({
-        title: "Sincronización completada",
-        message:
-          parts.length > 0
-            ? parts.join(" ")
-            : "No hubo envíos ni descarga en esta ejecución.",
-        type: "success",
+        title: "Sincronización en curso",
+        message: "Ya hay una sincronización activa.",
+        type: "info",
       });
-    } catch (e) {
-      showAlert({
-        title: "Error",
-        message: e instanceof Error ? e.message : "Error durante la sincronización",
-        type: "error",
-      });
+      return;
     }
-  }, [isConnected, startFullSync, showAlert]);
+
+    showAlert({
+      title: "Sincronización iniciada",
+      message:
+        "Puede seguir usando la app o cambiar a otra aplicación. Le notificaremos cuando termine.",
+      type: "info",
+    });
+  }, [isConnected, isBusy, startFullSyncDetached, showAlert]);
 
   return (
     <StandardView

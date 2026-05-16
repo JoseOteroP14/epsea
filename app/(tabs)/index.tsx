@@ -162,6 +162,9 @@ function SyncProgressCard() {
             : ""}
         </ThemedText>
       )}
+      <ThemedText style={syncStyles.hintText}>
+        Puede cambiar de aplicación: en Android la descarga continúa con la notificación activa; al terminar le avisamos.
+      </ThemedText>
     </ThemedView>
   );
 }
@@ -205,6 +208,11 @@ const syncStyles = StyleSheet.create({
   stageText: {
     fontSize: responsiveFont(12),
     color: "rgba(0,0,0,0.45)",
+  },
+  hintText: {
+    fontSize: responsiveFont(11),
+    color: "rgba(0,0,0,0.4)",
+    fontStyle: "italic",
   },
   subtitle: {
     fontSize: responsiveFont(12),
