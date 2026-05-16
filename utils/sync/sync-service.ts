@@ -64,6 +64,14 @@ import {
     readProductionLineId,
     refreshVisitObjectivesCacheForLine,
 } from "@/utils/agro-objectives";
+import {
+  clearDownloadResultsCheckpoint,
+  isDownloadSessionStale,
+  loadDownloadResultsCheckpoint,
+  saveDownloadResultsCheckpoint,
+  yieldToEventLoop,
+  type ProducerQueueItem,
+} from "@/utils/sync/sync-download-session";
 
 export interface SyncProgress {
   stage: string;
@@ -415,11 +423,119 @@ export async function refreshTouchedDataAfterLocalUpload(
   });
 }
 
+export interface DownloadAllDataOptions {
+  /** Invalidates in-flight loops when a stalled session is recovered. */
+  generation?: number;
+  /** Skips catalog/projects/producers and continues the results queue from SQLite. */
+  resumeResultsOnly?: boolean;
+}
+
+async function downloadProducerResults(
+  userId: number,
+  allProducerIds: ProducerQueueItem[],
+  startIndex: number,
+  generation: number | undefined,
+  reportPhase: (
+    stage: string,
+    phase: { start: number; weight: number },
+    current: number,
+    total: number,
+  ) => void,
+): Promise<void> {
+  const INTERVENTION_METHOD_IDS = [1, 2, 3, 5, 6, 7, 8];
+  const totalProducers = allProducerIds.length;
+  const objectiveLineIds = new Set<number>();
+
+  await saveDownloadResultsCheckpoint(startIndex, allProducerIds);
+
+  for (let i = startIndex; i < totalProducers; i++) {
+    if (generation != null && isDownloadSessionStale(generation)) {
+      return;
+    }
+
+    const { producerId, projectId } = allProducerIds[i]!;
+
+    for (const methodId of INTERVENTION_METHOD_IDS) {
+      if (generation != null && isDownloadSessionStale(generation)) {
+        return;
+      }
+      try {
+        const response = await apiFetch<any>(
+          `/surveys/${projectId}/producer/${producerId}/intervention_method/${methodId}`,
+          { method: "GET" },
+        );
+        const rawData = Array.isArray(response?.data)
+          ? response.data
+          : Array.isArray(response)
+            ? response
+            : [];
+
+        if (rawData.length > 0) {
+          const flatResults = flattenInterventionMethodSurveyPayloadToRows(
+            rawData,
+            methodId,
+            producerId,
+            projectId,
+          );
+          if (flatResults.length > 0) {
+            await upsertSurveyResults(flatResults);
+            await markInterventionMethodApplied(
+              producerId,
+              projectId,
+              methodId,
+              userId,
+            );
+          }
+        }
+      } catch {
+        // Skip silently — endpoint may not exist or producer has no results
+      }
+    }
+
+    await downloadExtensionistCachesForProducer(userId, projectId, producerId);
+
+    const rawProducer = await getProducerRawJsonRow(producerId, projectId);
+    const lineId = readProductionLineId(rawProducer);
+    if (lineId != null) objectiveLineIds.add(lineId);
+
+    await saveDownloadResultsCheckpoint(i + 1, allProducerIds);
+
+    reportPhase(
+      `Resultados ${i + 1} de ${totalProducers}`,
+      DOWNLOAD_PHASES.results,
+      i + 1,
+      totalProducers,
+    );
+
+    await yieldToEventLoop();
+  }
+
+  if (objectiveLineIds.size > 0) {
+    reportPhase(
+      "Precargando objetivos de visitas (por línea productiva)",
+      DOWNLOAD_PHASES.results,
+      totalProducers,
+      totalProducers,
+    );
+    for (const lineId of objectiveLineIds) {
+      if (generation != null && isDownloadSessionStale(generation)) {
+        return;
+      }
+      await refreshVisitObjectivesCacheForLine(lineId);
+    }
+  }
+
+  reportPhase("Resultados descargados", DOWNLOAD_PHASES.results, 1, 1);
+}
+
 export async function downloadAllData(
   onProgress?: (progress: SyncProgress) => void,
+  options?: DownloadAllDataOptions,
 ): Promise<void> {
   const { user } = useAuthStore.getState();
   if (!user) throw new Error("No authenticated user");
+
+  const generation = options?.generation;
 
   const reportPhase = (
     stage: string,
@@ -431,6 +547,33 @@ export async function downloadAllData(
     onProgress?.({ stage, current: percent, total: 100 });
   };
 
+  if (options?.resumeResultsOnly) {
+    const { index, queue } = await loadDownloadResultsCheckpoint();
+    if (queue.length === 0) {
+      throw new Error("No hay progreso de descarga para reanudar");
+    }
+
+    reportPhase("Reanudando descarga", DOWNLOAD_PHASES.results, index, queue.length);
+    await downloadProducerResults(
+      user.user_id,
+      queue,
+      index,
+      generation,
+      reportPhase,
+    );
+
+    if (generation != null && isDownloadSessionStale(generation)) {
+      return;
+    }
+
+    reportPhase("Finalizando descarga", DOWNLOAD_PHASES.finalize, 0, 1);
+    await setMetadata("last_full_download", new Date().toISOString());
+    await clearDownloadResultsCheckpoint();
+    reportPhase("Descarga completa", DOWNLOAD_PHASES.finalize, 1, 1);
+    return;
+  }
+
+  await clearDownloadResultsCheckpoint();
   await downloadSurveyQuestionsCatalog();
 
   // 1. Projects
@@ -530,85 +673,28 @@ export async function downloadAllData(
     reportPhase("Usuarios descargados", DOWNLOAD_PHASES.producers, 1, 1);
   }
 
-  // 4. Download survey results for all producers across all intervention methods
-  const INTERVENTION_METHOD_IDS = [1, 2, 3, 5, 6, 7, 8];
-  const totalProducers = allProducerIds.length;
+  if (generation != null && isDownloadSessionStale(generation)) {
+    return;
+  }
 
+  const totalProducers = allProducerIds.length;
   reportPhase("Descargando resultados", DOWNLOAD_PHASES.results, 0, totalProducers || 1);
 
-  const objectiveLineIds = new Set<number>();
+  await downloadProducerResults(
+    user.user_id,
+    allProducerIds,
+    0,
+    generation,
+    reportPhase,
+  );
 
-  for (let i = 0; i < totalProducers; i++) {
-    const { producerId, projectId } = allProducerIds[i]!;
-
-    for (const methodId of INTERVENTION_METHOD_IDS) {
-      try {
-        const response = await apiFetch<any>(
-          `/surveys/${projectId}/producer/${producerId}/intervention_method/${methodId}`,
-          { method: "GET" },
-        );
-        const rawData = Array.isArray(response?.data)
-          ? response.data
-          : Array.isArray(response)
-            ? response
-            : [];
-
-        if (rawData.length > 0) {
-          const flatResults = flattenInterventionMethodSurveyPayloadToRows(
-            rawData,
-            methodId,
-            producerId,
-            projectId,
-          );
-          if (flatResults.length > 0) {
-            await upsertSurveyResults(flatResults);
-            await markInterventionMethodApplied(producerId, projectId, methodId, user.user_id);
-          }
-        }
-      } catch {
-        // Skip silently — endpoint may not exist or producer has no results
-      }
-    }
-
-    await downloadExtensionistCachesForProducer(
-      user.user_id,
-      projectId,
-      producerId,
-    );
-
-    const rawProducer = await getProducerRawJsonRow(producerId, projectId);
-    const lineId = readProductionLineId(rawProducer);
-    if (lineId != null) objectiveLineIds.add(lineId);
-
-    // Report once per producer (not per method) to avoid visual jumps
-    reportPhase(
-      `Resultados ${i + 1} de ${totalProducers}`,
-      DOWNLOAD_PHASES.results,
-      i + 1,
-      totalProducers,
-    );
+  if (generation != null && isDownloadSessionStale(generation)) {
+    return;
   }
 
-  if (objectiveLineIds.size > 0) {
-    reportPhase(
-      "Precargando objetivos de visitas (por línea productiva)",
-      DOWNLOAD_PHASES.results,
-      totalProducers,
-      totalProducers,
-    );
-    for (const lineId of objectiveLineIds) {
-      await refreshVisitObjectivesCacheForLine(lineId);
-    }
-  }
-
-  reportPhase("Resultados descargados", DOWNLOAD_PHASES.results, 1, 1);
-
-  // Note: Producer details endpoint (/producers/:id) is not available for extensionists.
-  // Components, questions, question types, and innova fields are pre-seeded in the DB.
-
-  // Mark last download time
   reportPhase("Finalizando descarga", DOWNLOAD_PHASES.finalize, 0, 1);
   await setMetadata("last_full_download", new Date().toISOString());
+  await clearDownloadResultsCheckpoint();
   reportPhase("Descarga completa", DOWNLOAD_PHASES.finalize, 1, 1);
 }
 

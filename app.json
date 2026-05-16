@@ -64,7 +64,8 @@
           "color": "#1a7a3a"
         }
       ],
-      "./plugins/with-background-sync-service.js"
+      "./plugins/with-background-sync-service.js",
+      "./plugins/with-android-windows-paths.js"
     ],
     "experiments": {
       "typedRoutes": true

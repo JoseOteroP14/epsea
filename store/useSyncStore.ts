@@ -12,7 +12,15 @@ import { getPendingVisit1Count } from "@/utils/database/repositories/visit1-repo
 import { getPendingVisit2Count } from "@/utils/database/repositories/visit2-repository";
 import { getPendingAnswerUpdateCount } from "@/utils/database/repositories/answer-update-repository";
 import { runWithBackgroundSyncService } from "@/utils/sync/background-sync-runner";
+import {
+  abortActiveDownloadSession,
+  beginDownloadSession,
+  loadDownloadResultsCheckpoint,
+} from "@/utils/sync/sync-download-session";
 import { useAuthStore } from "./useAuthStore";
+
+let syncRecoverInFlight = false;
+let lastSyncRecoverAt = 0;
 
 export interface FullSyncResult {
   uploaded: number;
@@ -40,6 +48,7 @@ interface SyncState {
   isDownloading: boolean;
   isUploading: boolean;
   progress: SyncProgress | null;
+  lastProgressAt: number | null;
   pendingUploads: number;
   lastDownload: string | null;
   lastUpload: string | null;
@@ -48,6 +57,8 @@ interface SyncState {
   startDownload: (externalProgressCallback?: (p: SyncProgress) => void) => Promise<void>;
   /** Descarga sin bloquear al llamador; útil tras login o al salir de la pantalla de sync. */
   startDownloadDetached: () => boolean;
+  /** Reanuda la cola de productores si Android pausó el hilo JS en segundo plano. */
+  recoverStalledDownload: () => Promise<boolean>;
   startUpload: () => Promise<{ uploaded: number; failed: number }>;
   /** Sube pendientes primero (si hay); luego descarga. Evita descargar antes y pisar trabajo offline. */
   startFullSync: () => Promise<FullSyncResult>;
@@ -56,34 +67,122 @@ interface SyncState {
   refreshStatus: () => Promise<void>;
 }
 
+function applySyncProgress(
+  set: (partial: Partial<SyncState>) => void,
+  progress: SyncProgress,
+  external?: (p: SyncProgress) => void,
+): void {
+  set({ progress, lastProgressAt: Date.now() });
+  external?.(progress);
+}
+
 export const useSyncStore = create<SyncState>((set, get) => ({
   isDownloading: false,
   isUploading: false,
   progress: null,
+  lastProgressAt: null,
   pendingUploads: 0,
   lastDownload: null,
   lastUpload: null,
   error: null,
 
   startDownload: async (externalProgressCallback) => {
-    set({ isDownloading: true, error: null, progress: null });
+    const generation = beginDownloadSession();
+    set({
+      isDownloading: true,
+      error: null,
+      progress: null,
+      lastProgressAt: Date.now(),
+    });
     try {
-      await runWithBackgroundSyncService(async (reportProgress) => {
-        await downloadAllData((progress) => {
-          set({ progress });
-          externalProgressCallback?.(progress);
-          reportProgress(progress);
-        });
-      });
+      await runWithBackgroundSyncService(
+        async (reportProgress) => {
+          await downloadAllData(
+            (progress) => {
+              applySyncProgress(set, progress, externalProgressCallback);
+              reportProgress(progress);
+            },
+            { generation },
+          );
+        },
+        { onStallRecover: () => void get().recoverStalledDownload() },
+      );
       const lastDownload = await getMetadata("last_full_download");
-      set({ isDownloading: false, lastDownload });
+      set({ isDownloading: false, lastDownload, lastProgressAt: null });
     } catch (error) {
       set({
         isDownloading: false,
+        lastProgressAt: null,
         error: error instanceof Error ? error.message : "Error de descarga",
       });
       throw error;
     }
+  },
+
+  recoverStalledDownload: async () => {
+    const { isDownloading, isUploading } = get();
+    if (!isDownloading || isUploading || syncRecoverInFlight) {
+      return false;
+    }
+
+    const now = Date.now();
+    if (now - lastSyncRecoverAt < 8_000) {
+      return false;
+    }
+
+    const { index, queue } = await loadDownloadResultsCheckpoint();
+    if (queue.length === 0 || index >= queue.length) {
+      return false;
+    }
+
+    const lastProgressAt = get().lastProgressAt;
+    if (lastProgressAt != null && now - lastProgressAt < 15_000) {
+      return false;
+    }
+
+    lastSyncRecoverAt = now;
+    syncRecoverInFlight = true;
+    const generation = abortActiveDownloadSession();
+
+    set({
+      error: null,
+      progress: {
+        stage: `Reanudando descarga (${index + 1} de ${queue.length})…`,
+        current: Math.round((index / queue.length) * 100),
+        total: 100,
+      },
+      lastProgressAt: now,
+    });
+
+    void (async () => {
+      try {
+        await runWithBackgroundSyncService(async (reportProgress) => {
+          await downloadAllData(
+            (progress) => {
+              applySyncProgress(set, progress);
+              reportProgress(progress);
+            },
+            { generation, resumeResultsOnly: true },
+          );
+        });
+
+        const lastDownload = await getMetadata("last_full_download");
+        set({ isDownloading: false, lastDownload, lastProgressAt: null });
+      } catch (error) {
+        set({
+          isDownloading: false,
+          lastProgressAt: null,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Error al reanudar la descarga",
+        });
+      } finally {
+        syncRecoverInFlight = false;
+      }
+    })();
+
+    return true;
   },
 
   startDownloadDetached: () => {
@@ -140,12 +239,15 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     let fullDownloadRan = false;
     let selectiveRefreshRan = false;
 
+    const generation = beginDownloadSession();
+
     try {
-      await runWithBackgroundSyncService(async (reportProgress) => {
+      await runWithBackgroundSyncService(
+        async (reportProgress) => {
         if (pending > 0) {
-          set({ isUploading: true, progress: null });
+          set({ isUploading: true, progress: null, lastProgressAt: Date.now() });
           const result = await uploadPendingAnswers((progress) => {
-            set({ progress });
+            applySyncProgress(set, progress);
             reportProgress(progress);
           });
           uploaded = result.uploaded;
@@ -174,23 +276,29 @@ export const useSyncStore = create<SyncState>((set, get) => ({
           }
         }
 
-        set({ isDownloading: true, progress: null });
-        await downloadAllData((progress) => {
-          set({ progress });
-          reportProgress(progress);
-        });
+        set({ isDownloading: true, progress: null, lastProgressAt: Date.now() });
+        await downloadAllData(
+          (progress) => {
+            applySyncProgress(set, progress);
+            reportProgress(progress);
+          },
+          { generation },
+        );
         const lastDownload = await getMetadata("last_full_download");
         const newPending = await countPendingUploads(userId);
         set({
           isDownloading: false,
           lastDownload,
           pendingUploads: newPending,
+          lastProgressAt: null,
         });
         downloadCompleted = true;
         fullDownloadRan = true;
-      });
+      },
+      { onStallRecover: () => void get().recoverStalledDownload() },
+      );
     } catch (error) {
-      set({ isUploading: false, isDownloading: false });
+      set({ isUploading: false, isDownloading: false, lastProgressAt: null });
       if (!get().error) {
         set({
           error:
