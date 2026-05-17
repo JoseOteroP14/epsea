@@ -22,17 +22,14 @@ import {
   ActivityIndicator,
   Image,
   Keyboard,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  TouchableWithoutFeedback,
   useWindowDimensions,
   View,
 } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import Svg, { Path } from "react-native-svg";
 
 function normalizeName(value?: string | null): string | undefined {
@@ -298,18 +295,14 @@ export default function LoginScreen() {
         </View>
       </View>
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      <KeyboardAwareScrollView
         style={[
           styles.formSide,
           isCompact
             ? {
-                position: "relative",
+                flex: 1,
                 width: "100%",
-                marginTop: formMarginTop,
                 paddingHorizontal: isPhone ? 20 : 24,
-                paddingTop: isPhone ? 24 : 28,
-                paddingBottom: isPhone ? 40 : 48,
               }
             : {
                 width: width * formWidthPercent,
@@ -317,17 +310,22 @@ export default function LoginScreen() {
                 paddingVertical: 40,
               },
         ]}
+        contentContainerStyle={[
+          styles.formScroll,
+          isCompact && {
+            flexGrow: 1,
+            paddingTop: formMarginTop + (isPhone ? 24 : 28),
+            paddingBottom: isPhone ? 48 : 56,
+          },
+          !isCompact && [styles.formScrollWide, { minHeight: height }],
+        ]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        bottomOffset={isPhone ? 36 : 28}
+        extraKeyboardSpace={16}
+        bounces={isCompact}
       >
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <ScrollView
-            contentContainerStyle={[
-              styles.formScroll,
-              !isCompact && styles.formScrollWide,
-            ]}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            bounces={isCompact}
-          >
             <View
               style={[
                 styles.formBox,
@@ -451,9 +449,7 @@ export default function LoginScreen() {
                 </Pressable>
               </View>
             </View>
-          </ScrollView>
-        </TouchableWithoutFeedback>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
     </View>
   );
 }

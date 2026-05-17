@@ -13,6 +13,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import "react-native-reanimated";
 
 import { DatabaseProvider } from "@/components/database-provider";
@@ -62,6 +63,7 @@ export default function RootLayout() {
   return (
     <DatabaseProvider>
       <GestureHandlerRootView style={{ flex: 1 }}>
+        <KeyboardProvider>
         <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
           <BottomSheetModalProvider>
             <AlertProvider>
@@ -79,6 +81,7 @@ export default function RootLayout() {
             </AlertProvider>
           </BottomSheetModalProvider>
         </ThemeProvider>
+        </KeyboardProvider>
       </GestureHandlerRootView>
     </DatabaseProvider>
   );

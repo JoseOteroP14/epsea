@@ -3,15 +3,14 @@ const {
   withGradleProperties,
 } = require("expo/config-plugins");
 
-const CMAKE_BLOCK = `
-        externalNativeBuild {
-            cmake {
-                def cmakeDir = "\${android.sdkDirectory}/cmake/3.31.6/bin"
-                def ninjaExecutable = org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_WINDOWS) ? "ninja.exe" : "ninja"
-                def ninjaPath = "\${cmakeDir}/\${ninjaExecutable}".replace("\\\\", "/")
-
-                arguments "-DCMAKE_MAKE_PROGRAM=\${ninjaPath}",
-                    "-DCMAKE_OBJECT_PATH_MAX=1024"
+// Long native paths on Windows only; do not pin CMAKE_MAKE_PROGRAM — EAS/cloud
+// images ship a different CMake version than a local Android SDK install.
+const CMAKE_WINDOWS_BLOCK = `
+        if (org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_WINDOWS)) {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_OBJECT_PATH_MAX=1024"
+                }
             }
         }
 `;
@@ -20,9 +19,15 @@ const CMAKE_BLOCK = `
 module.exports = function withAndroidWindowsPaths(config) {
   config = withGradleProperties(config, (cfg) => {
     const props = cfg.modResults;
-    const existing = props.find((p) => p.type === "property" && p.key === "android.enableLongPaths");
+    const existing = props.find(
+      (p) => p.type === "property" && p.key === "android.enableLongPaths",
+    );
     if (!existing) {
-      props.push({ type: "property", key: "android.enableLongPaths", value: "true" });
+      props.push({
+        type: "property",
+        key: "android.enableLongPaths",
+        value: "true",
+      });
     }
     return cfg;
   });
@@ -34,7 +39,11 @@ module.exports = function withAndroidWindowsPaths(config) {
 
     let contents = cfg.modResults.contents;
     if (!contents.includes("CMAKE_OBJECT_PATH_MAX")) {
-      if (!contents.includes("import org.apache.tools.ant.taskdefs.condition.Os")) {
+      if (
+        !contents.includes(
+          "import org.apache.tools.ant.taskdefs.condition.Os",
+        )
+      ) {
         contents = contents.replace(
           /apply plugin: "com\.facebook\.react"\n/,
           'apply plugin: "com.facebook.react"\n\nimport org.apache.tools.ant.taskdefs.condition.Os\n',
@@ -42,7 +51,7 @@ module.exports = function withAndroidWindowsPaths(config) {
       }
       contents = contents.replace(
         /versionName\s+"[^"]+"/,
-        (match) => `${match}\n${CMAKE_BLOCK}`,
+        (match) => `${match}\n${CMAKE_WINDOWS_BLOCK}`,
       );
     }
     cfg.modResults.contents = contents;
