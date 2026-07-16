@@ -1429,6 +1429,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
       const answerRows = answerEntries.map(([questionId, value]) => ({
         producer_id: pid, project_id: projId, component_id: productiveLinesComponent.id,
         question_id: Number(questionId), user_id: userId,
+        intervention_method_id: PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
         value: Array.isArray(value) ? JSON.stringify(value) : typeof value === "object" && value !== null ? JSON.stringify(value) : String(value),
       }));
       const syncAnswers: ({ question_id: number; answer_value: string } | { question_id: number; answers: { answer_value: string }[] })[] = [];

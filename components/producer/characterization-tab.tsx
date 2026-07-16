@@ -551,6 +551,7 @@ export function CharacterizationTab({
         component_id: compId,
         question_id: Number(qId),
         user_id: userId,
+        intervention_method_id: CHARACTERIZATION_INTERVENTION_METHOD_ID,
         value: Array.isArray(value)
           ? JSON.stringify(value)
           : value != null

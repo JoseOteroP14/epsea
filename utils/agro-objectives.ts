@@ -9,6 +9,7 @@ import {
 export const VISIT_OBJECTIVE_EVENT_IDS = {
     visit1: 4,
     visit2: 5,
+    visit3: 6,
 } as const;
 
 export interface ObjectiveApiItem {
@@ -78,9 +79,13 @@ export async function getObjectivesForEventAndLine(
     }
 }
 
-/** Precarga caché local para una línea (Visita 1 y 2). Llamar desde sincronización con red. */
+/** Precarga caché local para una línea (Visita 1, 2 y 3). Llamar desde sincronización con red. */
 export async function refreshVisitObjectivesCacheForLine(lineId: number): Promise<void> {
-    for (const eventId of [VISIT_OBJECTIVE_EVENT_IDS.visit1, VISIT_OBJECTIVE_EVENT_IDS.visit2]) {
+    for (const eventId of [
+        VISIT_OBJECTIVE_EVENT_IDS.visit1,
+        VISIT_OBJECTIVE_EVENT_IDS.visit2,
+        VISIT_OBJECTIVE_EVENT_IDS.visit3,
+    ]) {
         try {
             const res = await apiFetch<{ code?: string; data?: ObjectiveApiItem[] }>(
                 `/objetives/event/${eventId}/line/${lineId}`,

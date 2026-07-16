@@ -10,6 +10,7 @@ import {
 } from "@/utils/database/repositories/sync-repository";
 import { getPendingVisit1Count } from "@/utils/database/repositories/visit1-repository";
 import { getPendingVisit2Count } from "@/utils/database/repositories/visit2-repository";
+import { getPendingVisit3Count } from "@/utils/database/repositories/visit3-repository";
 import { getPendingAnswerUpdateCount } from "@/utils/database/repositories/answer-update-repository";
 import { runWithBackgroundSyncService } from "@/utils/sync/background-sync-runner";
 import {
@@ -40,8 +41,15 @@ async function countPendingUploads(userId: number | undefined): Promise<number> 
   const pendingSurvey = await getPendingCount(userId);
   const pendingVisit1 = await getPendingVisit1Count(userId);
   const pendingVisit2 = await getPendingVisit2Count(userId);
+  const pendingVisit3 = await getPendingVisit3Count(userId);
   const pendingAnswerUpdates = await getPendingAnswerUpdateCount(userId);
-  return pendingSurvey + pendingVisit1 + pendingVisit2 + pendingAnswerUpdates;
+  return (
+    pendingSurvey +
+    pendingVisit1 +
+    pendingVisit2 +
+    pendingVisit3 +
+    pendingAnswerUpdates
+  );
 }
 
 interface SyncState {
@@ -202,12 +210,17 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       const pendingSurvey = await getPendingCount(userId);
       const pendingVisit1 = await getPendingVisit1Count(userId);
       const pendingVisit2 = await getPendingVisit2Count(userId);
+      const pendingVisit3 = await getPendingVisit3Count(userId);
       const pendingAnswerUpdates = await getPendingAnswerUpdateCount(userId);
       const lastUpload = await getMetadata("last_upload");
       set({
         isUploading: false,
         pendingUploads:
-          pendingSurvey + pendingVisit1 + pendingVisit2 + pendingAnswerUpdates,
+          pendingSurvey +
+          pendingVisit1 +
+          pendingVisit2 +
+          pendingVisit3 +
+          pendingAnswerUpdates,
         lastUpload,
       });
       return result;
@@ -331,12 +344,17 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       const pendingSurvey = await getPendingCount(userId);
       const pendingVisit1 = await getPendingVisit1Count(userId);
       const pendingVisit2 = await getPendingVisit2Count(userId);
+      const pendingVisit3 = await getPendingVisit3Count(userId);
       const pendingAnswerUpdates = await getPendingAnswerUpdateCount(userId);
       const lastDownload = await getMetadata("last_full_download");
       const lastUpload = await getMetadata("last_upload");
       set({
         pendingUploads:
-          pendingSurvey + pendingVisit1 + pendingVisit2 + pendingAnswerUpdates,
+          pendingSurvey +
+          pendingVisit1 +
+          pendingVisit2 +
+          pendingVisit3 +
+          pendingAnswerUpdates,
         lastDownload,
         lastUpload,
       });

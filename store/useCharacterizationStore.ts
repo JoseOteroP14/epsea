@@ -55,6 +55,10 @@ export const PROPERTY_INFO_INTERVENTION_METHOD_ID = 7;
 export const VISIT_INTERVENTION_METHOD_ID = 5;
 export const VISIT2_INTERVENTION_METHOD_ID = 6;
 export const PRODUCTIVE_LINES_INTERVENTION_METHOD_ID = 8;
+/** Método REST del registro de Visita 3 (`/visit-3`). */
+export const VISIT3_REGISTRATION_INTERVENTION_METHOD_ID = 11;
+/** Método REST de las respuestas de clasificación aplicadas dentro de Visita 3. */
+export const VISIT3_CLASSIFICATION_INTERVENTION_METHOD_ID = 9;
 
 type QuestionDetail =
   | QuestionTextDetail

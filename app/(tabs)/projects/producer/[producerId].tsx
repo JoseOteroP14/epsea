@@ -6,6 +6,7 @@ import { ProductiveLinesTab } from "@/components/producer/productive-lines-tab";
 import { PropertyInfoTab } from "@/components/producer/property-info-tab";
 import { VisitTab } from "@/components/producer/visit-tab";
 import { Visit2Tab } from "@/components/producer/visit2-tab";
+import { Visit3Tab } from "@/components/producer/visit3-tab";
 import StandardView from "@/components/standard-view";
 import { ThemedText } from "@/components/themed-text";
 import { useProducerStore } from "@/store/useProducerStore";
@@ -43,7 +44,8 @@ type SubTab =
   | "actividad_productiva"
   | "clasificacion"
   | "visita"
-  | "visita_2";
+  | "visita_2"
+  | "visita_3";
 
 const SUB_TABS: { key: SubTab; label: string; icon: typeof ClipboardList }[] = [
   { key: "info_personal", label: "Info. Personal", icon: User },
@@ -53,6 +55,7 @@ const SUB_TABS: { key: SubTab; label: string; icon: typeof ClipboardList }[] = [
   { key: "clasificacion", label: "Clasificación", icon: ClipboardCheck },
   { key: "visita", label: "Visita 1", icon: CalendarCheck },
   { key: "visita_2", label: "Visita 2", icon: CalendarCheck },
+  { key: "visita_3", label: "Visita 3", icon: CalendarCheck },
 ];
 
 export default function ProducerDetailScreen() {
@@ -231,6 +234,9 @@ export default function ProducerDetailScreen() {
               )}
               {activeSubTab === "visita_2" && (
                 <Visit2Tab producerId={producerId} projectId={projectId} />
+              )}
+              {activeSubTab === "visita_3" && (
+                <Visit3Tab producerId={producerId} projectId={projectId} />
               )}
             </View>
 

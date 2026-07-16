@@ -566,6 +566,7 @@ export function PropertyInfoTab({
         component_id: compId,
         question_id: Number(qId),
         user_id: userId,
+        intervention_method_id: PROPERTY_INFO_INTERVENTION_METHOD_ID,
         value: Array.isArray(value)
           ? JSON.stringify(value)
           : typeof value === "object" && value !== null

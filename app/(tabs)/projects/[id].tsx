@@ -36,6 +36,7 @@ interface ExtensionistProjectReport {
   total_assigned: number;
   total_surveyed_classification: number;
   total_surveyed_visit_1: number;
+  total_surveyed_visit_3: number;
   total_surveyed_general_information: number;
   total_surveyed_characterization: number;
   total_surveyed_property_information: number;
@@ -145,6 +146,8 @@ export default function ProjectDetailScreen() {
         total_assigned: Number(data?.total_assigned ?? 0),
         total_surveyed_classification: Number(data?.total_surveyed_classification ?? 0),
         total_surveyed_visit_1: Number(data?.total_surveyed_visit_1 ?? 0),
+        // El backend puede o no exponer aún `total_surveyed_visit_3`; usar 0 como fallback.
+        total_surveyed_visit_3: Number(data?.total_surveyed_visit_3 ?? 0),
         total_surveyed_general_information: Number(
           data?.total_surveyed_general_information ?? 0,
         ),
@@ -221,6 +224,11 @@ export default function ProjectDetailScreen() {
         key: "visit1",
         label: "Visita 1",
         value: projectReport?.total_surveyed_visit_1 ?? 0,
+      },
+      {
+        key: "visit3",
+        label: "Visita 3",
+        value: projectReport?.total_surveyed_visit_3 ?? 0,
       },
     ];
 

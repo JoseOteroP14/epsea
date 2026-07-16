@@ -1,6 +1,6 @@
 import { getDb } from "../client";
 
-export type VisitServerCacheKind = "visit1" | "visit2";
+export type VisitServerCacheKind = "visit1" | "visit2" | "visit3";
 
 export async function upsertVisitServerCache(params: {
   userId: number;

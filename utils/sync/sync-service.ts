@@ -9,6 +9,8 @@ import {
   PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
   PROPERTY_INFO_COMPONENT_ID,
   VISIT2_INTERVENTION_METHOD_ID,
+  VISIT3_CLASSIFICATION_INTERVENTION_METHOD_ID,
+  VISIT3_REGISTRATION_INTERVENTION_METHOD_ID,
   VISIT_INTERVENTION_METHOD_ID,
 } from "@/store/useCharacterizationStore";
 import { apiFetch } from "@/utils/api";
@@ -50,6 +52,17 @@ import {
     type Visit2QueueExtras,
     type Visit2QueueItem,
 } from "@/utils/database/repositories/visit2-repository";
+import {
+    deleteVisit3QueueRow,
+    getPendingVisit3Items,
+    markVisit3Failed,
+    type Visit3QueueExtras,
+    type Visit3QueueItem,
+} from "@/utils/database/repositories/visit3-repository";
+import type {
+    Visit3CreatePayload,
+    Visit3UpdatePayload,
+} from "@/schemas/visit3";
 import {
     getPendingAnswerUpdates,
     deleteAnswerUpdate,
@@ -214,6 +227,29 @@ async function downloadExtensionistCachesForProducer(
     })
     .catch(() => {});
 
+  const settleVisit3 = apiFetch<{ data?: unknown }>(
+    `/visit-3/project/${projectId}/producer/${producerId}`,
+  )
+    .then(async (res) => {
+      const data = res?.data;
+      if (isRecordWithId(data)) {
+        await upsertVisitServerCache({
+          userId,
+          producerId,
+          projectId,
+          kind: "visit3",
+          jsonPayload: JSON.stringify(data),
+        });
+        await markInterventionMethodApplied(
+          producerId,
+          projectId,
+          VISIT3_REGISTRATION_INTERVENTION_METHOD_ID,
+          userId,
+        );
+      }
+    })
+    .catch(() => {});
+
   const settleBundle = Promise.all([
     apiFetch<{ data?: unknown[] }>(
       `/agricultural-lines/producer/${producerId}/project/${projectId}`,
@@ -271,7 +307,7 @@ async function downloadExtensionistCachesForProducer(
     })
     .catch(() => {});
 
-  await Promise.all([settleVisit1, settleVisit2, settleBundle]);
+  await Promise.all([settleVisit1, settleVisit2, settleVisit3, settleBundle]);
 }
 
 export interface LocalUploadTouchAccumulator {
@@ -442,7 +478,9 @@ async function downloadProducerResults(
     total: number,
   ) => void,
 ): Promise<void> {
-  const INTERVENTION_METHOD_IDS = [1, 2, 3, 5, 6, 7, 8];
+  // Incluye 9 = clasificación de Visita 3. El registro Visita 3 (método 11)
+  // no genera respuestas de encuesta, así que no se lista aquí.
+  const INTERVENTION_METHOD_IDS = [1, 2, 3, 5, 6, 7, 8, 9];
   const totalProducers = allProducerIds.length;
   const objectiveLineIds = new Set<number>();
 
@@ -1018,6 +1056,325 @@ async function uploadVisit2Item(item: Visit2QueueItem): Promise<void> {
   });
 }
 
+// ─── Visit 3 upload ─────────────────────────────────────────────────────
+
+async function uploadVisit3Item(item: Visit3QueueItem): Promise<void> {
+  const token = await getStoredToken();
+  const payload = JSON.parse(item.payload) as
+    | Visit3CreatePayload
+    | Visit3UpdatePayload;
+  let extras: Visit3QueueExtras;
+  try {
+    extras = JSON.parse(item.photos ?? "{}");
+  } catch {
+    extras = {
+      photos: [],
+      keepRemoteImages: [],
+      pendingImageDeletions: [],
+      pendingCommitmentDeletions: [],
+      trackings: [],
+    };
+  }
+
+  const photos = extras.photos ?? [];
+  const remoteId = extras.remote_visit_3_id ?? null;
+  const trackings = extras.trackings ?? [];
+  const pendingImageDeletions = extras.pendingImageDeletions ?? [];
+  const pendingCommitmentDeletions = extras.pendingCommitmentDeletions ?? [];
+
+  const authHeaders: Record<string, string> = {
+    Accept: "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
+  const mapCommitmentApi = (t: {
+    activity: string;
+    percentage_compliance: number;
+    appropriation_in_field: string;
+  }) => ({
+    activity: (t.activity ?? "").trim(),
+    percentage_compliance: t.percentage_compliance ?? 0,
+    appropriation_in_field: (t.appropriation_in_field ?? "").trim(),
+  });
+
+  // ── PUT (existing remote visit) ────────────────────────────────────────
+  if (remoteId != null && Number.isFinite(remoteId)) {
+    const updateBody =
+      (extras.update_payload as Visit3UpdatePayload | undefined) ?? {
+        project_id: (payload as Visit3UpdatePayload).project_id,
+        producer_id: (payload as Visit3UpdatePayload).producer_id,
+        registration_date: (payload as Visit3UpdatePayload).registration_date,
+        origin: (payload as Visit3UpdatePayload).origin ?? "app",
+        attendance_id: (payload as Visit3UpdatePayload).attendance_id,
+        attendance_identification:
+          (payload as Visit3UpdatePayload).attendance_identification ?? null,
+        attendance_name:
+          (payload as Visit3UpdatePayload).attendance_name ?? null,
+        general_objective: (payload as Visit3UpdatePayload).general_objective,
+        specific_objectives:
+          (payload as Visit3UpdatePayload).specific_objectives,
+        technical_recommendations:
+          (payload as Visit3UpdatePayload).technical_recommendations,
+        observations: (payload as Visit3UpdatePayload).observations,
+        aspect_1_justification:
+          (payload as Visit3UpdatePayload).aspect_1_justification,
+        aspect_2_justification:
+          (payload as Visit3UpdatePayload).aspect_2_justification,
+        aspect_3_justification:
+          (payload as Visit3UpdatePayload).aspect_3_justification,
+        aspect_4_justification:
+          (payload as Visit3UpdatePayload).aspect_4_justification,
+        aspect_5_justification:
+          (payload as Visit3UpdatePayload).aspect_5_justification,
+      };
+
+    const putRes = await fetch(`${BASE_URL}/visit-3/${remoteId}`, {
+      method: "PUT",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(updateBody),
+    });
+    if (!putRes.ok) {
+      const err = await putRes.json().catch(() => ({}));
+      throw new Error(
+        typeof err?.message === "string"
+          ? err.message
+          : `Error ${putRes.status}`,
+      );
+    }
+
+    // Delete pending images
+    for (const imgId of pendingImageDeletions) {
+      try {
+        await fetch(`${BASE_URL}/visit-3/images/${imgId}`, {
+          method: "DELETE",
+          headers: authHeaders,
+        });
+      } catch {
+        // ignore
+      }
+    }
+    // Delete pending commitments
+    for (const cid of pendingCommitmentDeletions) {
+      try {
+        await fetch(`${BASE_URL}/visit-3/monitoring-commitments/${cid}`, {
+          method: "DELETE",
+          headers: authHeaders,
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    // Trackings: create new, update existing
+    for (const t of trackings) {
+      if (t.id != null) {
+        const mc = await fetch(
+          `${BASE_URL}/visit-3/monitoring-commitments/${t.id}`,
+          {
+            method: "PUT",
+            headers: { ...authHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify(mapCommitmentApi(t)),
+          },
+        );
+        if (!mc.ok) {
+          const err = await mc.json().catch(() => ({}));
+          throw new Error(
+            typeof err?.message === "string"
+              ? err.message
+              : `Seguimiento ${mc.status}`,
+          );
+        }
+      } else if ((t.activity ?? "").trim()) {
+        const mc = await fetch(`${BASE_URL}/visit-3/monitoring-commitments`, {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            visit_3_id: remoteId,
+            ...mapCommitmentApi(t),
+          }),
+        });
+        if (!mc.ok) {
+          const err = await mc.json().catch(() => ({}));
+          throw new Error(
+            typeof err?.message === "string"
+              ? err.message
+              : `Seguimiento ${mc.status}`,
+          );
+        }
+      }
+    }
+
+    // Upload new photos
+    if (photos.length > 0) {
+      const formData = new FormData();
+      for (const photo of photos) {
+        formData.append(
+          "images",
+          {
+            uri: photo.uri,
+            name: photo.fileName,
+            type: photo.type,
+          } as any,
+        );
+      }
+      const imgRes = await fetch(`${BASE_URL}/visit-3/${remoteId}/images`, {
+        method: "POST",
+        headers: authHeaders,
+        body: formData,
+      });
+      if (!imgRes.ok) {
+        throw new Error("Error al subir imágenes visita 3");
+      }
+    }
+    return;
+  }
+
+  // ── POST (create new) ─────────────────────────────────────────────────
+  const createPayload = payload as Visit3CreatePayload;
+  const formData = new FormData();
+  formData.append("project_id", String(createPayload.project_id));
+  formData.append("producer_id", String(createPayload.producer_id));
+  formData.append("registration_date", createPayload.registration_date);
+  formData.append("origin", createPayload.origin ?? "app");
+  formData.append("attendance_id", String(createPayload.attendance_id));
+  formData.append(
+    "attendance_name",
+    createPayload.attendance_name ?? "",
+  );
+  formData.append(
+    "attendance_identification",
+    createPayload.attendance_identification ?? "",
+  );
+  formData.append("general_objective", createPayload.general_objective);
+  formData.append("specific_objectives", createPayload.specific_objectives);
+  formData.append(
+    "technical_recommendations",
+    createPayload.technical_recommendations,
+  );
+  formData.append("observations", createPayload.observations);
+  formData.append(
+    "aspect_1_justification",
+    createPayload.aspect_1_justification,
+  );
+  formData.append(
+    "aspect_2_justification",
+    createPayload.aspect_2_justification,
+  );
+  formData.append(
+    "aspect_3_justification",
+    createPayload.aspect_3_justification,
+  );
+  formData.append(
+    "aspect_4_justification",
+    createPayload.aspect_4_justification,
+  );
+  formData.append(
+    "aspect_5_justification",
+    createPayload.aspect_5_justification,
+  );
+  formData.append(
+    "monitoring_commitments",
+    JSON.stringify(
+      (trackings ?? []).map(mapCommitmentApi).filter((t) => t.activity),
+    ),
+  );
+  for (const photo of photos) {
+    formData.append(
+      "images",
+      {
+        uri: photo.uri,
+        name: photo.fileName,
+        type: photo.type,
+      } as any,
+    );
+  }
+
+  const res = await fetch(`${BASE_URL}/visit-3`, {
+    method: "POST",
+    headers: authHeaders,
+    body: formData,
+  });
+
+  if (res.status === 409) {
+    // Conflicto → resolvemos con GET+PUT.
+    const existing = await apiFetch<{ data?: unknown }>(
+      `/visit-3/project/${createPayload.project_id}/producer/${createPayload.producer_id}`,
+    ).catch(() => null);
+    const existingId = isRecordWithId(existing?.data)
+      ? Number((existing?.data as { id: unknown }).id)
+      : null;
+    if (existingId == null || !Number.isFinite(existingId)) {
+      throw new Error("Conflicto 409 sin visita existente que reconciliar.");
+    }
+    const updatePayload: Visit3UpdatePayload = {
+      project_id: createPayload.project_id,
+      producer_id: createPayload.producer_id,
+      registration_date: createPayload.registration_date,
+      origin: createPayload.origin,
+      attendance_id: createPayload.attendance_id,
+      attendance_identification: createPayload.attendance_identification,
+      attendance_name: createPayload.attendance_name,
+      general_objective: createPayload.general_objective,
+      specific_objectives: createPayload.specific_objectives,
+      technical_recommendations: createPayload.technical_recommendations,
+      observations: createPayload.observations,
+      aspect_1_justification: createPayload.aspect_1_justification,
+      aspect_2_justification: createPayload.aspect_2_justification,
+      aspect_3_justification: createPayload.aspect_3_justification,
+      aspect_4_justification: createPayload.aspect_4_justification,
+      aspect_5_justification: createPayload.aspect_5_justification,
+    };
+    const putRes = await fetch(`${BASE_URL}/visit-3/${existingId}`, {
+      method: "PUT",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(updatePayload),
+    });
+    if (!putRes.ok) {
+      const err = await putRes.json().catch(() => ({}));
+      throw new Error(
+        typeof err?.message === "string"
+          ? err.message
+          : `Error ${putRes.status}`,
+      );
+    }
+    for (const t of trackings ?? []) {
+      if ((t.activity ?? "").trim()) {
+        await fetch(`${BASE_URL}/visit-3/monitoring-commitments`, {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            visit_3_id: existingId,
+            ...mapCommitmentApi(t),
+          }),
+        }).catch(() => {});
+      }
+    }
+    if (photos.length > 0) {
+      const imgForm = new FormData();
+      for (const photo of photos) {
+        imgForm.append("images", {
+          uri: photo.uri,
+          name: photo.fileName,
+          type: photo.type,
+        } as any);
+      }
+      await fetch(`${BASE_URL}/visit-3/${existingId}/images`, {
+        method: "POST",
+        headers: authHeaders,
+        body: imgForm,
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      typeof err?.message === "string" ? err.message : `Error ${res.status}`,
+    );
+  }
+}
+
 export async function uploadPendingAnswers(
   onProgress?: (progress: SyncProgress) => void,
 ): Promise<{ uploaded: number; failed: number }> {
@@ -1133,10 +1490,13 @@ export async function uploadPendingAnswers(
 
       if (item.entity_type === "survey_answers") {
         const parts = item.entity_key.split("-").map((n) => Number(n));
-        if (parts.length === 4 && parts.every((n) => Number.isFinite(n))) {
-          const [pid, projId, compId, uId] = parts;
+        if (
+          (parts.length === 4 || parts.length === 5) &&
+          parts.every((n) => Number.isFinite(n))
+        ) {
+          const [pid, projId, compId, uId, methodId] = parts;
           try {
-            await deleteAnswers(pid, projId, compId, uId);
+            await deleteAnswers(pid, projId, compId, uId, methodId ?? undefined);
           } catch (e) {
             console.error("Failed to clean local answers after upload:", e);
           }
@@ -1268,6 +1628,62 @@ export async function uploadPendingAnswers(
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await markVisit2Failed(item.id, errorMsg);
+      failed++;
+    }
+  }
+
+  // 5. Upload visit3 entries (create/update + fotos + seguimiento + eliminaciones)
+  const visit3Pending = await getPendingVisit3Items(user.user_id);
+  for (let i = 0; i < visit3Pending.length; i++) {
+    const item = visit3Pending[i]!;
+    onProgress?.({
+      stage: "Subiendo visitas 3",
+      current: i,
+      total: visit3Pending.length,
+    });
+
+    const retryDelay = getRetryDelay(item.attempts ?? 0);
+    await new Promise((r) => setTimeout(r, retryDelay));
+
+    if (item.id == null) continue;
+
+    try {
+      await uploadVisit3Item(item);
+      await deleteVisit3QueueRow(item.id);
+      try {
+        const visitPayload = JSON.parse(item.payload) as
+          | Visit3CreatePayload
+          | Visit3UpdatePayload;
+        const vPid = Number(visitPayload.producer_id);
+        const vProj = Number(visitPayload.project_id);
+        await markInterventionMethodApplied(
+          vPid,
+          vProj,
+          VISIT3_REGISTRATION_INTERVENTION_METHOD_ID,
+          user.user_id,
+        );
+        await markInterventionMethodApplied(
+          vPid,
+          vProj,
+          VISIT3_CLASSIFICATION_INTERVENTION_METHOD_ID,
+          user.user_id,
+        );
+        if (Number.isFinite(vPid) && Number.isFinite(vProj)) {
+          addExtensionistTouch(touches, vPid, vProj);
+          addSurveyTouch(
+            touches,
+            vPid,
+            vProj,
+            VISIT3_CLASSIFICATION_INTERVENTION_METHOD_ID,
+          );
+        }
+      } catch (e) {
+        console.error("Failed to mark visit3 intervention method applied:", e);
+      }
+      uploaded++;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await markVisit3Failed(item.id, errorMsg);
       failed++;
     }
   }

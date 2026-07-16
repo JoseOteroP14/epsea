@@ -49,9 +49,27 @@ import {
     View,
 } from "react-native";
 
-interface ClassificationTabProps {
+export interface ClassificationTabProps {
   producerId: string;
   projectId?: string;
+  /**
+   * Método de intervención al que se asocian las respuestas. Se usa para
+   * reutilizar el wizard tanto en la clasificación inicial (`3`) como en la
+   * clasificación de Visita 3 (`9`).
+   * @default CLASSIFICATION_INTERVENTION_METHOD_ID (3)
+   */
+  interventionMethodId?: number;
+  /**
+   * Se dispara cuando el usuario guarda respuestas (creación o edición). Útil
+   * para orquestar refrescos externos, p. ej. desbloquear el registro de Visita 3.
+   */
+  onSaved?: () => void;
+  /** Copy visible en el botón principal cuando aún no existe encuesta. */
+  applyButtonLabel?: string;
+  /** Copy del botón principal cuando ya se aplicó el método. */
+  applyButtonLabelApplied?: string;
+  /** Título del bottom sheet en modo aplicar. Por defecto usa el nombre del componente. */
+  sheetTitle?: string;
 }
 
 interface DisplayAnswer {
@@ -217,6 +235,11 @@ function computeGeometricMean(values: number[]): number | null {
 export function ClassificationTab({
   producerId,
   projectId,
+  interventionMethodId = CLASSIFICATION_INTERVENTION_METHOD_ID,
+  onSaved,
+  applyButtonLabel,
+  applyButtonLabelApplied,
+  sheetTitle,
 }: ClassificationTabProps) {
   const {
     components,
@@ -324,7 +347,7 @@ export function ClassificationTab({
       const iNames: Record<number, string | string[] | null> = {};
       let foundRemote = false;
 
-      const baselineScopeKey = `${pid}-${projId}-${CLASSIFICATION_INTERVENTION_METHOD_ID}`;
+      const baselineScopeKey = `${pid}-${projId}-${interventionMethodId}`;
       if (baselineDataScopeRef.current !== baselineScopeKey) {
         baselineDataScopeRef.current = baselineScopeKey;
         baselineAnswersRef.current = {};
@@ -338,7 +361,7 @@ export function ClassificationTab({
         const remote = await fetchSurveyResults(
           projId,
           pid,
-          CLASSIFICATION_INTERVENTION_METHOD_ID,
+          interventionMethodId,
         );
         remoteSurveyRowCount = remote.length;
         for (const item of remote) {
@@ -392,6 +415,7 @@ export function ClassificationTab({
           projId,
           classificationComponent.id,
           currentUserId,
+          interventionMethodId,
         );
         for (const a of local) {
           // Restore JSON array stored for multi-select
@@ -422,7 +446,7 @@ export function ClassificationTab({
           pid,
           projId,
           currentUserId,
-          CLASSIFICATION_INTERVENTION_METHOD_ID,
+          interventionMethodId,
         );
         for (const upd of updates) {
           let usedParsed = false;
@@ -460,6 +484,7 @@ export function ClassificationTab({
     currentUserId,
     fetchSurveyResults,
     refreshKey,
+    interventionMethodId,
   ]);
 
   // Check if method already applied (for apply/re-apply guard)
@@ -471,11 +496,17 @@ export function ClassificationTab({
       const applied = await hasInterventionMethodApplied(
         pid,
         projId,
-        CLASSIFICATION_INTERVENTION_METHOD_ID,
+        interventionMethodId,
       );
       setMethodAlreadyApplied(applied);
     })();
-  }, [producerId, projectId, currentUserId, hasInterventionMethodApplied]);
+  }, [
+    producerId,
+    projectId,
+    currentUserId,
+    hasInterventionMethodApplied,
+    interventionMethodId,
+  ]);
 
   // Pre-fetch question details
   useEffect(() => {
@@ -614,6 +645,7 @@ export function ClassificationTab({
         component_id: compId,
         question_id: Number(qId),
         user_id: userId,
+        intervention_method_id: interventionMethodId,
         value: Array.isArray(value)
           ? JSON.stringify(value)
           : value != null
@@ -645,7 +677,7 @@ export function ClassificationTab({
 
       const payload = {
         project_id: projId,
-        intervention_method_id: CLASSIFICATION_INTERVENTION_METHOD_ID,
+        intervention_method_id: interventionMethodId,
         producer_id: pid,
         created_at: new Date().toISOString().split("T")[0],
         answers: syncAnswers,
@@ -661,7 +693,7 @@ export function ClassificationTab({
         await markInterventionMethodApplied(
           pid,
           projId,
-          CLASSIFICATION_INTERVENTION_METHOD_ID,
+          interventionMethodId,
           userId,
         );
         showAlert({
@@ -673,14 +705,14 @@ export function ClassificationTab({
         await saveAnswersBatch(answerRows);
         await enqueue(
           "survey_answers",
-          `${pid}-${projId}-${compId}-${userId}`,
+          `${pid}-${projId}-${compId}-${userId}-${interventionMethodId}`,
           payload,
           userId,
         );
         await markInterventionMethodApplied(
           pid,
           projId,
-          CLASSIFICATION_INTERVENTION_METHOD_ID,
+          interventionMethodId,
           userId,
         );
         showAlert({
@@ -697,6 +729,7 @@ export function ClassificationTab({
       setShowSheet(false);
       setHasSurvey(true);
       setRefreshKey((k) => k + 1);
+      onSaved?.();
     } catch (error) {
       console.error("Failed to save answers:", error);
       showAlert({
@@ -712,6 +745,8 @@ export function ClassificationTab({
     projectId,
     currentUserId,
     showAlert,
+    interventionMethodId,
+    onSaved,
   ]);
 
   // Edit single answer
@@ -759,6 +794,7 @@ export function ClassificationTab({
         setPendingQuestionIds((prev) => { const next = new Set(prev); next.delete(editingQuestion.id); return next; });
         setShowSheet(false);
         setEditingQuestion(null);
+        onSaved?.();
         showAlert({
           title: "Actualizado",
           message: "La respuesta se actualizó correctamente.",
@@ -844,7 +880,7 @@ export function ClassificationTab({
         component_id: compId,
         question_id: qid,
         user_id: userId,
-        intervention_method_id: CLASSIFICATION_INTERVENTION_METHOD_ID,
+        intervention_method_id: interventionMethodId,
       });
       useSyncStore.getState().refreshStatus();
       setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
@@ -856,6 +892,12 @@ export function ClassificationTab({
       setPendingQuestionIds((prev) => new Set([...prev, editingQuestion.id]));
       setShowSheet(false);
       setEditingQuestion(null);
+      onSaved?.();
+      showAlert({
+        title: "Sin internet",
+        message: "La edición se guardó localmente y se enviará al sincronizar.",
+        type: "warning",
+      });
     }
   }, [
     editingQuestion,
@@ -867,6 +909,8 @@ export function ClassificationTab({
     projectId,
     currentUserId,
     showAlert,
+    interventionMethodId,
+    onSaved,
   ]);
 
   if (loadingComponents) {
@@ -925,8 +969,8 @@ export function ClassificationTab({
               style={styles.applyButtonText}
             >
               {methodAlreadyApplied
-                ? "Ver / Editar Respuestas"
-                : "Aplicar Clasificación"}
+                ? applyButtonLabelApplied ?? "Ver / Editar Respuestas"
+                : applyButtonLabel ?? "Aplicar Clasificación"}
             </ThemedText>
           </TouchableOpacity>
         ) : null}
@@ -1020,7 +1064,7 @@ export function ClassificationTab({
         <SurveyBottomSheet
           visible={showSheet}
           onClose={handleCloseSheet}
-          title={classificationComponent.name}
+          title={sheetTitle ?? classificationComponent.name}
           questions={
             localQuestions.length > 0 ? localQuestions : storeQuestions
           }

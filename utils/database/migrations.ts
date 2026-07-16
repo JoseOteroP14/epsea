@@ -763,6 +763,93 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    /**
+     * Visita 3 usa dos métodos de intervención distintos (9 para clasificación y
+     * 11 para el registro), y el mismo componente 4 usado por la clasificación
+     * inicial (método 3). Se incorpora `intervention_method_id` al esquema de
+     * `survey_answers` y a su clave única para evitar colisiones cuando el mismo
+     * productor tiene respuestas 3 y 9. También se crea `visit3_queue` para
+     * encolar registros de Visita 3 offline.
+     */
+    version: 20,
+    up: async (db) => {
+      const cols = await db.getAllAsync<{ name: string }>(
+        "PRAGMA table_info(survey_answers);",
+      );
+      const hasMethod = cols.some((c) => c.name === "intervention_method_id");
+      if (!hasMethod) {
+        // Componente → método de intervención principal usado hasta v19.
+        // NOTA: Component 4 (Clasificación) siempre pertenecía al método 3
+        // porque Visita 3 no existía; migramos con esa suposición histórica.
+        await db.execAsync(`
+          ALTER TABLE survey_answers
+          ADD COLUMN intervention_method_id INTEGER NOT NULL DEFAULT 0;
+        `);
+        await db.execAsync(`
+          UPDATE survey_answers
+          SET intervention_method_id = CASE component_id
+            WHEN 1 THEN 1
+            WHEN 2 THEN 7
+            WHEN 3 THEN 8
+            WHEN 4 THEN 3
+            WHEN 5 THEN 2
+            ELSE 0
+          END
+          WHERE intervention_method_id = 0;
+        `);
+      }
+
+      // SQLite no permite modificar constraints in-place; recrear la tabla y su
+      // índice único con la nueva clave que incorpora `intervention_method_id`.
+      await db.execAsync(`
+        CREATE TABLE survey_answers_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          producer_id INTEGER NOT NULL,
+          project_id INTEGER NOT NULL,
+          component_id INTEGER NOT NULL,
+          question_id INTEGER NOT NULL,
+          user_id INTEGER NOT NULL,
+          intervention_method_id INTEGER NOT NULL DEFAULT 0,
+          value TEXT,
+          answered_at TEXT NOT NULL DEFAULT (datetime('now')),
+          local_modified_at TEXT,
+          UNIQUE(producer_id, project_id, component_id, question_id, user_id, intervention_method_id)
+        );
+
+        INSERT INTO survey_answers_new
+          (id, producer_id, project_id, component_id, question_id, user_id, intervention_method_id, value, answered_at, local_modified_at)
+        SELECT id, producer_id, project_id, component_id, question_id, user_id,
+          COALESCE(intervention_method_id, 0), value, answered_at, local_modified_at
+        FROM survey_answers;
+
+        DROP TABLE survey_answers;
+        ALTER TABLE survey_answers_new RENAME TO survey_answers;
+
+        CREATE INDEX IF NOT EXISTS idx_survey_answers_producer ON survey_answers(producer_id, project_id);
+        CREATE INDEX IF NOT EXISTS idx_survey_answers_user ON survey_answers(user_id);
+        CREATE INDEX IF NOT EXISTS idx_survey_answers_method ON survey_answers(intervention_method_id);
+      `);
+
+      // Cola offline de Visita 3 (payload + fotos + seguimientos + eliminaciones pendientes).
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS visit3_queue (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          visit_uuid TEXT NOT NULL UNIQUE,
+          payload TEXT NOT NULL,
+          photos TEXT NOT NULL DEFAULT '{}',
+          user_id INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_visit3_queue_status ON visit3_queue(status);
+        CREATE INDEX IF NOT EXISTS idx_visit3_queue_user ON visit3_queue(user_id);
+      `);
+    },
+  },
 ];
 
 /**
@@ -954,6 +1041,21 @@ async function ensureCoreSchema(db: SQLiteDatabase): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_visit_objectives_line
       ON visit_objectives_cache(production_line_id);
+
+    CREATE TABLE IF NOT EXISTS visit3_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      visit_uuid TEXT NOT NULL UNIQUE,
+      payload TEXT NOT NULL,
+      photos TEXT NOT NULL DEFAULT '{}',
+      user_id INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_visit3_queue_status ON visit3_queue(status);
+    CREATE INDEX IF NOT EXISTS idx_visit3_queue_user ON visit3_queue(user_id);
   `);
 }
 
