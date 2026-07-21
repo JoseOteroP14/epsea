@@ -1,7 +1,8 @@
 import { useAuthStore } from "@/store/useAuthStore";
+import { API_BASE_URL } from "@/utils/api-config";
 import { getStoredToken } from "@/utils/secure-storage";
 
-const BASE_URL = "https://playmusic.com.co/agro/api/v1";
+const BASE_URL = API_BASE_URL;
 
 // Prevent cascading 401 logouts when multiple requests fail simultaneously
 let isLoggingOut = false;

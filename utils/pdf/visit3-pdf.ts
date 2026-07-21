@@ -16,6 +16,7 @@ import {
   writeAsStringAsync,
 } from "expo-file-system/legacy";
 import * as Print from "expo-print";
+import { API_BASE_URL } from "@/utils/api-config";
 
 // @ts-expect-error — pdfmake build files have no type declarations
 import pdfMake from "pdfmake/build/pdfmake";
@@ -24,6 +25,8 @@ import pdfMake from "pdfmake/build/pdfmake";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 require("pdfmake/build/vfs_fonts");
 pdfMake.vfs = (globalThis as any).pdfMake.vfs;
+
+const BASE_URL = API_BASE_URL;
 
 // ─── Palette ────────────────────────────────────────────────────────────
 const HEADER_GREEN = "#4A7A3D";
@@ -219,8 +222,6 @@ async function loadAssetBase64(module: number): Promise<string> {
   const mime = ext === "jpeg" || ext === "jpg" ? "image/jpeg" : "image/png";
   return `data:${mime};base64,${base64}`;
 }
-
-const BASE_URL = "https://playmusic.com.co/agro/api/v1";
 
 export async function convertVisit3PhotosToBase64(
   localPhotos: ({ uri: string } | null)[],

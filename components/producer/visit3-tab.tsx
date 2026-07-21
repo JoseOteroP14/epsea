@@ -637,6 +637,14 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
 
   // ── Photo handling ────────────────────────────────────────────────────
 
+  const clearExistingImageSlot = useCallback((index: number) => {
+    setExistingImages((prev) => {
+      const n = [...prev];
+      n[index] = null;
+      return n;
+    });
+  }, []);
+
   const pickImage = useCallback(
     async (index: number) => {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -670,13 +678,25 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
         fileName: asset.fileName || `visit3_${Date.now()}_${index}.jpg`,
         type: asset.mimeType || "image/jpeg",
       };
+      if (existingImages[index]) {
+        try {
+          await apiDeleteVisit3Image(existingImages[index]!.id);
+        } catch {
+          /* se reemplaza en UI; si falla el DELETE se reintenta al sincronizar */
+          setPendingImageDeletions((prev) => {
+            const id = existingImages[index]!.id;
+            return prev.includes(id) ? prev : [...prev, id];
+          });
+        }
+        clearExistingImageSlot(index);
+      }
       setLocalPhotos((prev) => {
         const n = [...prev];
         n[index] = photo;
         return n;
       });
     },
-    [showAlert],
+    [clearExistingImageSlot, existingImages, showAlert],
   );
 
   const takePhoto = useCallback(
@@ -709,20 +729,31 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
         fileName: asset.fileName || `visit3_${Date.now()}_${index}.jpg`,
         type: asset.mimeType || "image/jpeg",
       };
+      if (existingImages[index]) {
+        try {
+          await apiDeleteVisit3Image(existingImages[index]!.id);
+        } catch {
+          setPendingImageDeletions((prev) => {
+            const id = existingImages[index]!.id;
+            return prev.includes(id) ? prev : [...prev, id];
+          });
+        }
+        clearExistingImageSlot(index);
+      }
       setLocalPhotos((prev) => {
         const n = [...prev];
         n[index] = photo;
         return n;
       });
     },
-    [showAlert],
+    [clearExistingImageSlot, existingImages, showAlert],
   );
 
   const showPhotoOptions = useCallback(
     (index: number) => {
       showAlert({
         title: "Agregar imagen",
-        message: `Seleccione una opción para la ${VISIT3_PHOTO_LABELS[index]?.toLowerCase() ?? "foto"}`,
+        message: "Seleccione una opción",
         type: "info",
         buttons: [
           { text: "Cámara", onPress: () => takePhoto(index) },
@@ -745,23 +776,18 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
           } catch {
             showAlert({
               title: "Error",
-              message: "No se pudo eliminar la imagen. Se intentará al sincronizar.",
-              type: "warning",
+              message: "No se pudo eliminar la imagen",
+              type: "error",
             });
-            setPendingImageDeletions((prev) =>
-              prev.includes(existing.id) ? prev : [...prev, existing.id],
-            );
+            setDeletingPhotoIndex(null);
+            return;
           }
         } else {
           setPendingImageDeletions((prev) =>
             prev.includes(existing.id) ? prev : [...prev, existing.id],
           );
         }
-        setExistingImages((prev) => {
-          const n = [...prev];
-          n[index] = null;
-          return n;
-        });
+        clearExistingImageSlot(index);
         setDeletingPhotoIndex(null);
       }
       setLocalPhotos((prev) => {
@@ -770,7 +796,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
         return n;
       });
     },
-    [existingImages, showAlert],
+    [clearExistingImageSlot, existingImages, showAlert],
   );
 
   // ── Form mutation helpers ─────────────────────────────────────────────
@@ -957,7 +983,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
         });
       } else if (isOnline && existingVisitId) {
         const updatePayload = mapFormToUpdatePayload(form, meta);
-        const updated = await apiUpdateVisit3(existingVisitId, updatePayload);
+        await apiUpdateVisit3(existingVisitId, updatePayload);
         for (const imgId of pendingImageDeletions) {
           try {
             await apiDeleteVisit3Image(imgId);
@@ -996,14 +1022,31 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
           VISIT3_REGISTRATION_INTERVENTION_METHOD_ID,
           userId,
         );
-        if (updated) {
+        // Refetch after deletes/uploads so cache and slots match the server
+        let fresh: Visit3Response | null = null;
+        try {
+          fresh = await apiGetVisit3(projId, pid);
+        } catch {
+          fresh = null;
+        }
+        if (fresh) {
+          setForm(mapResponseToForm(fresh));
+          setExistingVisitId(fresh.id);
+          const imgs = (fresh.images ?? []).slice(0, VISIT3_MAX_PHOTOS);
+          const nextImgs: (typeof existingImages)[number][] = [null, null, null];
+          imgs.forEach((img, i) => {
+            nextImgs[i] = { id: img.id, filename: img.filename };
+          });
+          setExistingImages(nextImgs);
           await upsertVisitServerCache({
             userId,
             producerId: pid,
             projectId: projId,
             kind: "visit3",
-            jsonPayload: JSON.stringify(updated),
+            jsonPayload: JSON.stringify(fresh),
           });
+        } else {
+          setExistingImages([null, null, null]);
         }
         setPendingImageDeletions([]);
         setPendingCommitmentDeletions([]);
@@ -1297,34 +1340,40 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
       const local = localPhotos[index];
       const existing = existingImages[index];
       const isDeleting = deletingPhotoIndex === index;
+      const hasPhoto = local !== null || existing !== null;
 
-      const uri = local?.uri ?? (existing ? getVisit3ImageUrl(existing.id) : null);
-      const source = uri
-        ? {
-            uri,
-            headers: token && !local ? { Authorization: `Bearer ${token}` } : undefined,
-          }
-        : null;
-
-      if (source) {
+      if (hasPhoto) {
+        const uri = local?.uri ?? (existing ? getVisit3ImageUrl(existing.id) : "");
         return (
           <View key={index} style={styles.photoSlot}>
-            <ExpoImage source={source} style={styles.photoImage} contentFit="cover" />
+            <ExpoImage
+              source={{
+                uri,
+                ...(existing && token && !local
+                  ? { headers: { Authorization: `Bearer ${token}` } }
+                  : {}),
+              }}
+              style={styles.photoImage}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              pointerEvents="none"
+            />
             <TouchableOpacity
               style={styles.photoRemoveBtn}
               onPress={() => removePhoto(index)}
               activeOpacity={0.7}
               disabled={isDeleting}
+              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
             >
               {isDeleting ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <Trash2 size={responsiveFont(14)} color="#fff" />
+                <X size={responsiveFont(14)} color="#fff" />
               )}
             </TouchableOpacity>
-            <View style={styles.photoLabel}>
-              <ThemedText style={styles.photoLabelText}>
-                {VISIT3_PHOTO_LABELS[index]}
+            <View style={styles.photoLabel} pointerEvents="none">
+              <ThemedText style={styles.photoLabelText} numberOfLines={1}>
+                {local?.fileName ?? `Foto ${index + 1}`}
               </ThemedText>
             </View>
           </View>
@@ -1337,9 +1386,9 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
           onPress={() => showPhotoOptions(index)}
           activeOpacity={0.7}
         >
-          <ImagePlus size={responsiveFont(22)} color="#1a7a3a" />
+          <ImagePlus size={responsiveFont(24)} color="rgba(0,0,0,0.2)" />
           <ThemedText style={styles.photoSlotEmptyText}>
-            {VISIT3_PHOTO_LABELS[index]}
+            Imagen {index + 1}
           </ThemedText>
         </TouchableOpacity>
       );
@@ -1617,7 +1666,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
               <View style={styles.sectionContent}>
                 <View style={styles.fieldRow}>
                   <View style={styles.fieldHalf}>
-                    <ThemedText style={styles.fieldLabel}>Fecha</ThemedText>
+                    <ThemedText style={styles.fieldLabel}>Fecha de registro</ThemedText>
                     <TextInput
                       style={styles.textInput}
                       value={form.registration_date}
@@ -1625,14 +1674,17 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
                       placeholder="AAAA-MM-DD"
                       placeholderTextColor="#aaa"
                     />
+                    <ThemedText style={styles.fieldHintSmall}>
+                      Mostrada también como: {formatDisplayDate(form.registration_date)}
+                    </ThemedText>
                   </View>
                   <View style={styles.fieldHalf}>
-                    <ThemedText style={styles.fieldLabel}>Hora</ThemedText>
+                    <ThemedText style={styles.fieldLabel}>Hora de registro</ThemedText>
                     <TextInput
                       style={styles.textInput}
                       value={form.registration_time}
                       onChangeText={(v) => setField("registration_time", v)}
-                      placeholder="HH:MM:SS"
+                      placeholder="09:00:00"
                       placeholderTextColor="#aaa"
                     />
                   </View>
@@ -1828,7 +1880,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
                         keyboardType="number-pad"
                       />
                       <ThemedText
-                        style={[styles.fieldLabel, { marginTop: verticalScale(8) }]}
+                        style={[styles.fieldLabel, { marginTop: verticalScale(10) }]}
                       >
                         Apropiación en campo
                       </ThemedText>
@@ -1842,7 +1894,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
                         placeholderTextColor="#aaa"
                         multiline
                         textAlignVertical="top"
-                        numberOfLines={3}
+                        numberOfLines={4}
                       />
                     </View>
                   ))
@@ -1889,8 +1941,12 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
             {expandedSections.has("photos") && (
               <View style={styles.sectionContent}>
                 <ThemedText style={styles.sectionHint}>
-                  Adjunte hasta {VISIT3_MAX_PHOTOS} fotografías con marca de agua
-                  (fecha, hora, ASNM, georreferenciación).
+                  Arrastre o seleccione hasta {VISIT3_MAX_PHOTOS} fotografías de la visita.
+                </ThemedText>
+                <ThemedText style={[styles.sectionHint, styles.photoHintItalic]}>
+                  Tomar mínimo {VISIT3_MAX_PHOTOS} fotos con su respectiva marca de agua
+                  (lugar, georreferenciación, ASNM, fecha, hora).{" "}
+                  {VISIT3_PHOTO_LABELS.join(". ")}.
                 </ThemedText>
                 <View style={styles.photosGrid}>
                   {[0, 1, 2].map(renderPhotoSlot)}
@@ -1928,7 +1984,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
                       placeholderTextColor="#aaa"
                       multiline
                       textAlignVertical="top"
-                      numberOfLines={3}
+                      numberOfLines={4}
                     />
                   </View>
                 ))}
@@ -2253,12 +2309,17 @@ const styles = StyleSheet.create({
   },
   fieldHalf: { flex: 1 },
   fieldLabel: {
-    fontSize: responsiveFont(12),
+    fontSize: responsiveFont(13),
     fontWeight: "700",
     color: "#666",
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: verticalScale(4),
+  },
+  fieldHintSmall: {
+    fontSize: responsiveFont(12),
+    color: "#999",
+    marginTop: verticalScale(4),
   },
   textInput: {
     backgroundColor: "#f8f9fa",
@@ -2267,7 +2328,7 @@ const styles = StyleSheet.create({
     borderRadius: widthScale(8),
     paddingHorizontal: widthScale(12),
     paddingVertical: verticalScale(8),
-    fontSize: responsiveFont(15),
+    fontSize: responsiveFont(16),
     color: "#333",
   },
   textArea: {
@@ -2277,10 +2338,10 @@ const styles = StyleSheet.create({
     borderRadius: widthScale(8),
     paddingHorizontal: widthScale(12),
     paddingVertical: verticalScale(10),
-    fontSize: responsiveFont(15),
-    minHeight: verticalScale(96),
+    fontSize: responsiveFont(16),
+    minHeight: verticalScale(110),
     color: "#333",
-    lineHeight: responsiveFont(21),
+    lineHeight: responsiveFont(22),
   },
   readonlyField: {
     flexDirection: "row",
@@ -2418,7 +2479,7 @@ const styles = StyleSheet.create({
     paddingVertical: verticalScale(10),
   },
   trackingCard: {
-    backgroundColor: "#f8f9fa",
+    backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.08)",
     borderRadius: widthScale(10),
@@ -2464,6 +2525,10 @@ const styles = StyleSheet.create({
   },
 
   // Photos
+  photoHintItalic: {
+    fontStyle: "italic",
+    marginTop: verticalScale(4),
+  },
   photosGrid: { flexDirection: "row", gap: widthScale(10) },
   photoSlot: {
     flex: 1,
@@ -2479,12 +2544,14 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: widthScale(4),
     right: widthScale(4),
-    width: widthScale(24),
-    height: widthScale(24),
-    borderRadius: widthScale(12),
-    backgroundColor: "rgba(220,38,38,0.85)",
+    width: widthScale(26),
+    height: widthScale(26),
+    borderRadius: widthScale(13),
+    backgroundColor: "rgba(220,38,38,0.9)",
     justifyContent: "center",
     alignItems: "center",
+    zIndex: 2,
+    elevation: 3,
   },
   photoLabel: {
     position: "absolute",
@@ -2494,6 +2561,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.5)",
     paddingHorizontal: widthScale(6),
     paddingVertical: verticalScale(2),
+    zIndex: 1,
   },
   photoLabelText: {
     fontSize: responsiveFont(9),
@@ -2514,16 +2582,14 @@ const styles = StyleSheet.create({
   },
   photoSlotEmptyText: {
     fontSize: responsiveFont(10),
-    color: "rgba(0,0,0,0.4)",
-    textAlign: "center",
-    paddingHorizontal: widthScale(6),
+    color: "rgba(0,0,0,0.3)",
   },
 
   // Aspects
   aspectCard: {
-    backgroundColor: "#f8f9fa",
+    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
+    borderColor: "rgba(0,0,0,0.08)",
     borderRadius: widthScale(10),
     padding: widthScale(12),
     marginBottom: verticalScale(10),

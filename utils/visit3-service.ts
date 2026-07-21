@@ -1,4 +1,5 @@
 import { apiFetch, NetworkError } from "@/utils/api";
+import { API_BASE_URL } from "@/utils/api-config";
 import { getStoredToken } from "@/utils/secure-storage";
 import {
   unwrapVisit3Payload,
@@ -8,7 +9,7 @@ import {
   type Visit3UpdatePayload,
 } from "@/schemas/visit3";
 
-const BASE_URL = "https://playmusic.com.co/agro/api/v1";
+const BASE_URL = API_BASE_URL;
 
 export interface Visit3LocalPhoto {
   uri: string;

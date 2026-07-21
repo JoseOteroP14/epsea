@@ -14,6 +14,7 @@ import {
   VISIT_INTERVENTION_METHOD_ID,
 } from "@/store/useCharacterizationStore";
 import { apiFetch } from "@/utils/api";
+import { API_BASE_URL } from "@/utils/api-config";
 import { upsertQuestions } from "@/utils/database/repositories/characterization-repository";
 import {
     deleteProducersNotIn,
@@ -736,7 +737,7 @@ export async function downloadAllData(
   reportPhase("Descarga completa", DOWNLOAD_PHASES.finalize, 1, 1);
 }
 
-const BASE_URL = "https://playmusic.com.co/agro/api/v1";
+const BASE_URL = API_BASE_URL;
 
 function isRateLimited(error: unknown): boolean {
   if (error instanceof Error) {

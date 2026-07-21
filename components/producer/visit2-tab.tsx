@@ -8,6 +8,7 @@ import {
 } from "@/store/useCharacterizationStore";
 import { useProducerStore } from "@/store/useProducerStore";
 import { apiFetch } from "@/utils/api";
+import { API_BASE_URL } from "@/utils/api-config";
 import {
     getObjectivesForEventAndLine,
     objectiveItemsToFormStrings,
@@ -311,7 +312,7 @@ async function createVisit2WithImages(
         } as any);
     }
 
-    const response = await fetch("https://playmusic.com.co/agro/api/v1/visit-2", {
+    const response = await fetch(`${API_BASE_URL}/visit-2`, {
         method: "POST",
         headers: {
             Accept: "application/json",
@@ -355,7 +356,7 @@ async function uploadVisit2Images(
     }
 
     const response = await fetch(
-        `https://playmusic.com.co/agro/api/v1/visit-2/${visitId}/images`,
+        `${API_BASE_URL}/visit-2/${visitId}/images`,
         {
             method: "POST",
             headers: {
@@ -376,7 +377,7 @@ async function deleteVisit2Image(imageId: number): Promise<void> {
 }
 
 function getVisit2ImageUrl(imageId: number): string {
-    return `https://playmusic.com.co/agro/api/v1/visit-2/images/${imageId}`;
+    return `${API_BASE_URL}/visit-2/images/${imageId}`;
 }
 
 async function createMonitoringCommitment(

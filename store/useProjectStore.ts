@@ -1,4 +1,4 @@
-import { apiFetch } from "@/utils/api";
+import { apiFetch, NetworkError } from "@/utils/api";
 import { checkConnectivity } from "@/hooks/use-network";
 import {
     getAllProjects,
@@ -280,7 +280,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         },
       }));
     } catch (error) {
-      console.error(`Error fetching stats for project ${projectId}:`, error);
+      if (!(error instanceof NetworkError)) {
+        console.error(`Error fetching stats for project ${projectId}:`, error);
+      }
       // Fallback to local count
       try {
         const localCount = await getProducerCountByProject(projectId);

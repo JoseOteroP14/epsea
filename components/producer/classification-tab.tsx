@@ -9,7 +9,7 @@ import {
     useCharacterizationStore,
 } from "@/store/useCharacterizationStore";
 import { useSyncStore } from "@/store/useSyncStore";
-import { apiFetch } from "@/utils/api";
+import { apiFetch, NetworkError } from "@/utils/api";
 import {
     getAnswers,
     saveAnswersBatch,
@@ -684,24 +684,7 @@ export function ClassificationTab({
       };
 
       const isOnline = await checkConnectivity();
-
-      if (isOnline) {
-        await apiFetch("/surveys", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        await markInterventionMethodApplied(
-          pid,
-          projId,
-          interventionMethodId,
-          userId,
-        );
-        showAlert({
-          title: "Guardado",
-          message: "Las respuestas se guardaron correctamente.",
-          type: "success",
-        });
-      } else {
+      const saveLocally = async () => {
         await saveAnswersBatch(answerRows);
         await enqueue(
           "survey_answers",
@@ -716,11 +699,36 @@ export function ClassificationTab({
           userId,
         );
         showAlert({
-          title: "Sin internet",
+          title: "Sin conexión con el servidor",
           message:
             "Las respuestas se guardaron localmente y se enviarán al sincronizar.",
           type: "warning",
         });
+      };
+
+      if (isOnline) {
+        try {
+          await apiFetch("/surveys", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          await markInterventionMethodApplied(
+            pid,
+            projId,
+            interventionMethodId,
+            userId,
+          );
+          showAlert({
+            title: "Guardado",
+            message: "Las respuestas se guardaron correctamente.",
+            type: "success",
+          });
+        } catch (error) {
+          if (!(error instanceof NetworkError)) throw error;
+          await saveLocally();
+        }
+      } else {
+        await saveLocally();
       }
 
       // Sheet dismiss calls handleCloseSheet → restores snapshot; keep submitted answers

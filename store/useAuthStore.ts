@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "@/utils/api-config";
 import { getDb } from "@/utils/database/client";
 import {
     clearStoredToken,
@@ -7,7 +8,7 @@ import {
 import { create } from "zustand";
 import { User, USER_ROLES } from "../schemas/auth";
 
-const BASE_URL = "https://playmusic.com.co/agro/api/v1";
+const BASE_URL = API_BASE_URL;
 
 function normalizeName(value?: string | null): string | undefined {
   if (typeof value !== "string") return undefined;

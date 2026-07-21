@@ -518,12 +518,11 @@ const styles = StyleSheet.create({
     right: 0,
     height: "100%",
     zIndex: 4,
-    justifyContent: "center",
-    alignItems: "center",
   },
   formScroll: {
     flexGrow: 1,
     justifyContent: "flex-start",
+    alignItems: "center",
     width: "100%",
   },
   formScrollWide: {

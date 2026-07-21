@@ -9,6 +9,7 @@ import {
 } from "@/store/useCharacterizationStore";
 import { useProducerStore } from "@/store/useProducerStore";
 import { apiFetch } from "@/utils/api";
+import { API_BASE_URL } from "@/utils/api-config";
 import {
     getObjectivesForEventAndLine,
     mergeObjectivesForVisit1Field,
@@ -173,7 +174,7 @@ function isValidCoordinate(value: string): boolean {
 
 // ─── API Helpers ────────────────────────────────────────────────────────────
 
-const BASE_URL = "https://playmusic.com.co/agro/api/v1";
+const BASE_URL = API_BASE_URL;
 
 async function getVisit1(
   projectId: number,

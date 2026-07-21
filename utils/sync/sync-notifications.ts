@@ -1,9 +1,17 @@
-import * as Notifications from "expo-notifications";
+import { isRunningInExpoGo } from "expo";
 import { AppState, Platform } from "react-native";
 
 const SYNC_CHANNEL_ID = "epsea-sync";
 
 let inProgressNotificationId: string | null = null;
+type NotificationsModule = typeof import("expo-notifications");
+let notificationsPromise: Promise<NotificationsModule> | null = null;
+
+async function getNotifications(): Promise<NotificationsModule | null> {
+  if (isRunningInExpoGo()) return null;
+  notificationsPromise ??= import("expo-notifications");
+  return notificationsPromise;
+}
 
 export function isAppInBackground(): boolean {
   const state = AppState.currentState;
@@ -11,6 +19,9 @@ export function isAppInBackground(): boolean {
 }
 
 export async function configureSyncNotifications(): Promise<void> {
+  const Notifications = await getNotifications();
+  if (!Notifications) return;
+
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowBanner: true,
@@ -30,6 +41,9 @@ export async function configureSyncNotifications(): Promise<void> {
 }
 
 export async function ensureSyncNotificationPermissions(): Promise<boolean> {
+  const Notifications = await getNotifications();
+  if (!Notifications) return false;
+
   const { status: existing } = await Notifications.getPermissionsAsync();
   if (existing === "granted") return true;
 
@@ -38,6 +52,9 @@ export async function ensureSyncNotificationPermissions(): Promise<boolean> {
 }
 
 export async function showSyncInProgressNotification(): Promise<void> {
+  const Notifications = await getNotifications();
+  if (!Notifications) return;
+
   const allowed = await ensureSyncNotificationPermissions();
   if (!allowed) return;
 
@@ -57,6 +74,12 @@ export async function showSyncInProgressNotification(): Promise<void> {
 
 export async function clearSyncInProgressNotification(): Promise<void> {
   if (!inProgressNotificationId) return;
+  const Notifications = await getNotifications();
+  if (!Notifications) {
+    inProgressNotificationId = null;
+    return;
+  }
+
   try {
     await Notifications.dismissNotificationAsync(inProgressNotificationId);
   } catch {
@@ -69,6 +92,9 @@ async function scheduleSyncResultNotification(
   title: string,
   body: string,
 ): Promise<void> {
+  const Notifications = await getNotifications();
+  if (!Notifications) return;
+
   const allowed = await ensureSyncNotificationPermissions();
   if (!allowed) return;
 
