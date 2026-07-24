@@ -1,5 +1,6 @@
 import {
   copyAsync,
+  deleteAsync,
   documentDirectory,
   makeDirectoryAsync,
 } from "expo-file-system/legacy";
@@ -28,7 +29,7 @@ export function isPersistedOfflineVisitPhotoUri(uri: string): boolean {
   return uri.startsWith(root) && uri.includes(`/${OFFLINE_MEDIA_SEGMENT}/`);
 }
 
-export type VisitOfflinePhotoKind = "visit1" | "visit2";
+export type VisitOfflinePhotoKind = "visit1" | "visit2" | "visit3";
 
 /**
  * Copia cada foto nueva al almacenamiento persistente de la app (máx. 3 huecos).
@@ -76,4 +77,38 @@ export async function persistLocalVisitPhotoSlots(
   }
 
   return out;
+}
+
+/** Borra copias locales bajo `offline-visit-media` (tras sync exitoso). */
+export async function deletePersistedOfflineVisitPhotoUris(
+  uris: (string | null | undefined)[],
+): Promise<void> {
+  for (const uri of uris) {
+    if (!uri || !isPersistedOfflineVisitPhotoUri(uri)) continue;
+    try {
+      await deleteAsync(uri, { idempotent: true });
+    } catch (e) {
+      console.warn("[visit-offline-photos] deleteAsync failed", uri, e);
+    }
+  }
+}
+
+/**
+ * Elimina el directorio local de fotos offline de una visita (productor/proyecto).
+ * Seguro tras sync exitoso cuando ya no hay cola pendiente para esa visita.
+ */
+export async function clearOfflineVisitPhotoDir(meta: {
+  kind: VisitOfflinePhotoKind;
+  userId: number;
+  producerId: number;
+  projectId: number;
+}): Promise<void> {
+  if (!documentDirectory) return;
+  const { kind, userId, producerId, projectId } = meta;
+  const dir = `${documentDirectory}${OFFLINE_MEDIA_SEGMENT}/${kind}/${userId}-${projectId}-${producerId}/`;
+  try {
+    await deleteAsync(dir, { idempotent: true });
+  } catch (e) {
+    console.warn("[visit-offline-photos] clearOfflineVisitPhotoDir failed", dir, e);
+  }
 }

@@ -177,7 +177,7 @@ export default function SyncScreen() {
           <ThemedText style={styles.metadataLabel}>
             Ultima descarga:
           </ThemedText>
-          <ThemedText style={styles.metadataValue}>
+          <ThemedText style={styles.metadataValue} numberOfLines={2}>
             {formatDate(lastDownload)}
           </ThemedText>
         </View>
@@ -187,7 +187,7 @@ export default function SyncScreen() {
           <ThemedText style={styles.metadataLabel}>
             Ultima subida:
           </ThemedText>
-          <ThemedText style={styles.metadataValue}>
+          <ThemedText style={styles.metadataValue} numberOfLines={2}>
             {formatDate(lastUpload)}
           </ThemedText>
         </View>
@@ -293,8 +293,12 @@ const styles = StyleSheet.create({
   },
   metadataLabel: {
     fontSize: responsiveFont(17),
+    flexShrink: 0,
   },
   metadataValue: {
+    flex: 1,
+    flexShrink: 1,
     fontSize: responsiveFont(17),
+    textAlign: "right",
   },
 });

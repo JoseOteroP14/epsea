@@ -19,7 +19,7 @@ import { z } from "zod";
 /** Máximo de imágenes soportadas en el registro. */
 export const VISIT3_MAX_PHOTOS = 3;
 
-/** Tamaño máximo por imagen en bytes (~6 MB). */
+/** Tamaño máximo por imagen en bytes (~6 MB), tras optimización WebP. */
 export const VISIT3_MAX_PHOTO_BYTES = 6 * 1024 * 1024;
 
 /**

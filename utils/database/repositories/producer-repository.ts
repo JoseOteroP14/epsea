@@ -32,7 +32,12 @@ export async function getProducersByProject(
 ): Promise<Producer[]> {
   const db = getDb();
   const rows = await db.getAllAsync<{ raw_json: string }>(
-    "SELECT raw_json FROM producers WHERE project_id = ?",
+    `SELECT raw_json FROM producers
+     WHERE project_id = ?
+     ORDER BY first_surname COLLATE NOCASE,
+              first_name COLLATE NOCASE,
+              identification COLLATE NOCASE,
+              id`,
     Number(projectId),
   );
   return rows.map((r) => JSON.parse(r.raw_json) as Producer);

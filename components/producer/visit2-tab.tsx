@@ -1,6 +1,7 @@
 import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { checkConnectivity } from "@/hooks/use-network";
+import { useProducerFormDraft } from "@/hooks/use-producer-form-draft";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
     VISIT2_INTERVENTION_METHOD_ID,
@@ -33,6 +34,10 @@ import {
 } from "@/utils/database/repositories/visit2-repository";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { getStoredToken } from "@/utils/secure-storage";
+import {
+    ImageOptimizationError,
+    optimizeImageToWebp,
+} from "@/utils/optimize-image";
 import { persistLocalVisitPhotoSlots } from "@/utils/visit-offline-photos";
 import {
     BottomSheetBackdrop,
@@ -215,6 +220,22 @@ type SectionKey =
     | "photos"
     | "attendance"
     | "specific_objectives";
+
+interface Visit2FormDraft {
+    generalObjective: string;
+    specificObjectives: string;
+    diagnosis: string;
+    recommendations: string;
+    observations: string;
+    attendanceId: string;
+    attendanceName: string;
+    attendanceIdentification: string;
+    registrationDate: string;
+    commitments: Visit2MonitoringCommitment[];
+    localPhotos: (LocalPhoto | null)[];
+    expandedSections: SectionKey[];
+    recompBuckets: Record<RecompType, RecompBucketState>;
+}
 
 interface SectionConfig {
     key: SectionKey;
@@ -478,6 +499,14 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
     const [deletingPhotoIndex, setDeletingPhotoIndex] = useState<number | null>(null);
     const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
 
+    const { saveDraft, readDraft, clearDraft } = useProducerFormDraft<Visit2FormDraft>({
+        producerId,
+        projectId,
+        scope: "visit2",
+    });
+    const [draftHydrated, setDraftHydrated] = useState(false);
+    const skipNextPersistRef = useRef(false);
+
     const scrollRef = useRef<ScrollView>(null);
     const token = useAuthStore((s) => s.token);
     const authUser = useAuthStore((s) => s.user);
@@ -594,6 +623,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         if (!producerId || !projectId) return;
 
         let cancelled = false;
+        setDraftHydrated(false);
         (async () => {
             setLoading(true);
             try {
@@ -788,15 +818,90 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                         clearForm();
                     }
                 }
+
+                // Restore in-memory draft after API/queue hydrate (new + edit).
+                const draft = readDraft();
+                if (draft && !cancelled) {
+                    setGeneralObjective(draft.generalObjective);
+                    setSpecificObjectives(draft.specificObjectives);
+                    setDiagnosis(draft.diagnosis);
+                    setRecommendations(draft.recommendations);
+                    setObservations(draft.observations);
+                    setAttendanceId(draft.attendanceId);
+                    setAttendanceName(draft.attendanceName);
+                    setAttendanceIdentification(draft.attendanceIdentification);
+                    setRegistrationDate(draft.registrationDate);
+                    if (Array.isArray(draft.commitments)) {
+                        setCommitments(draft.commitments);
+                    }
+                    if (Array.isArray(draft.localPhotos)) {
+                        setLocalPhotos([
+                            draft.localPhotos[0] ?? null,
+                            draft.localPhotos[1] ?? null,
+                            draft.localPhotos[2] ?? null,
+                        ]);
+                    }
+                    if (Array.isArray(draft.expandedSections)) {
+                        setExpandedSections(new Set(draft.expandedSections));
+                    }
+                    if (draft.recompBuckets) {
+                        setRecompBuckets(draft.recompBuckets);
+                    }
+                }
             } catch (err) {
                 console.warn("No se pudo consultar visita 2 existente:", err);
             } finally {
-                if (!cancelled) setLoading(false);
+                if (!cancelled) {
+                    skipNextPersistRef.current = true;
+                    setDraftHydrated(true);
+                    setLoading(false);
+                }
             }
         })();
 
         return () => { cancelled = true; };
-    }, [producerId, projectId, authUser]);
+    }, [producerId, projectId, authUser, readDraft]);
+
+    // Persist in-memory draft on form / recomp edits (after load + hydrate).
+    useEffect(() => {
+        if (loading || !draftHydrated) return;
+        if (skipNextPersistRef.current) {
+            skipNextPersistRef.current = false;
+            return;
+        }
+        saveDraft({
+            generalObjective,
+            specificObjectives,
+            diagnosis,
+            recommendations,
+            observations,
+            attendanceId,
+            attendanceName,
+            attendanceIdentification,
+            registrationDate,
+            commitments,
+            localPhotos,
+            expandedSections: Array.from(expandedSections),
+            recompBuckets,
+        });
+    }, [
+        loading,
+        draftHydrated,
+        generalObjective,
+        specificObjectives,
+        diagnosis,
+        recommendations,
+        observations,
+        attendanceId,
+        attendanceName,
+        attendanceIdentification,
+        registrationDate,
+        commitments,
+        localPhotos,
+        expandedSections,
+        recompBuckets,
+        saveDraft,
+    ]);
 
     /** Objetivos GET …/event/5/line/:id (Visita 2). También en edición; no pisa general/específico ya guardados. */
     useEffect(() => {
@@ -887,18 +992,21 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         [visitRecoLines, visitCompLines, commitments],
     );
 
-    const hydrateRecompBucketsFromForm = useCallback(() => {
-        setRecompBuckets({
-            recomendaciones: buildBucketFromForm("recomendaciones"),
-            compromisos: buildBucketFromForm("compromisos"),
-        });
-    }, [buildBucketFromForm]);
-
     const openRecompSheet = useCallback(() => {
-        hydrateRecompBucketsFromForm();
+        // Keep mid-edit draft buckets if present; otherwise hydrate from commitments.
+        setRecompBuckets((prev) => {
+            const hasMidEdit =
+                prev.recomendaciones.selected.length > 0 ||
+                prev.compromisos.selected.length > 0;
+            if (hasMidEdit) return prev;
+            return {
+                recomendaciones: buildBucketFromForm("recomendaciones"),
+                compromisos: buildBucketFromForm("compromisos"),
+            };
+        });
         setRecompDialogType("recomendaciones");
         recompSheetRef.current?.present();
-    }, [hydrateRecompBucketsFromForm]);
+    }, [buildBucketFromForm]);
 
     const toggleRecompDialogItem = useCallback(
         (idx: number) => {
@@ -996,6 +1104,45 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
 
     // ── Photo handling ──────────────────────────────────────────────────────
 
+    const applyOptimizedPhoto = useCallback(async (
+        index: number,
+        asset: { uri: string; fileName?: string | null; width?: number; height?: number },
+    ) => {
+        try {
+            const optimized = await optimizeImageToWebp({
+                uri: asset.uri,
+                fileName: asset.fileName || `photo_${Date.now()}.jpg`,
+                width: asset.width,
+                height: asset.height,
+            });
+            const photo: LocalPhoto = {
+                uri: optimized.uri,
+                fileName: optimized.fileName,
+                type: optimized.type,
+            };
+
+            if (existingImages[index]) {
+                try { await deleteVisit2Image(existingImages[index]!.id); } catch {}
+                setExistingImages((prev) => { const n = [...prev]; n[index] = null; return n; });
+            }
+
+            setLocalPhotos((prev) => { const n = [...prev]; n[index] = photo; return n; });
+        } catch (e) {
+            const message =
+                e instanceof ImageOptimizationError
+                    ? e.message
+                    : "No se pudo optimizar la imagen. Intente con otro archivo.";
+            showAlert({
+                title:
+                    e instanceof ImageOptimizationError
+                        ? "Imagen demasiado grande"
+                        : "Error al optimizar",
+                message,
+                type: "warning",
+            });
+        }
+    }, [existingImages, showAlert]);
+
     const pickImage = useCallback(async (index: number) => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== "granted") {
@@ -1005,25 +1152,13 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
 
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ["images"],
-            quality: 0.8,
+            quality: 1,
         });
 
         if (result.canceled || !result.assets?.[0]) return;
 
-        const asset = result.assets[0];
-        const photo: LocalPhoto = {
-            uri: asset.uri,
-            fileName: asset.fileName || `photo_${Date.now()}.jpg`,
-            type: asset.mimeType || "image/jpeg",
-        };
-
-        if (existingImages[index]) {
-            try { await deleteVisit2Image(existingImages[index]!.id); } catch {}
-            setExistingImages((prev) => { const n = [...prev]; n[index] = null; return n; });
-        }
-
-        setLocalPhotos((prev) => { const n = [...prev]; n[index] = photo; return n; });
-    }, [existingImages]);
+        await applyOptimizedPhoto(index, result.assets[0]);
+    }, [applyOptimizedPhoto, showAlert]);
 
     const takePhoto = useCallback(async (index: number) => {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -1032,24 +1167,12 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             return;
         }
 
-        const result = await ImagePicker.launchCameraAsync({ quality: 0.8 });
+        const result = await ImagePicker.launchCameraAsync({ quality: 1 });
 
         if (result.canceled || !result.assets?.[0]) return;
 
-        const asset = result.assets[0];
-        const photo: LocalPhoto = {
-            uri: asset.uri,
-            fileName: asset.fileName || `photo_${Date.now()}.jpg`,
-            type: asset.mimeType || "image/jpeg",
-        };
-
-        if (existingImages[index]) {
-            try { await deleteVisit2Image(existingImages[index]!.id); } catch {}
-            setExistingImages((prev) => { const n = [...prev]; n[index] = null; return n; });
-        }
-
-        setLocalPhotos((prev) => { const n = [...prev]; n[index] = photo; return n; });
-    }, [existingImages]);
+        await applyOptimizedPhoto(index, result.assets[0]);
+    }, [applyOptimizedPhoto, showAlert]);
 
     const showPhotoOptions = useCallback((index: number) => {
         showAlert({
@@ -1242,6 +1365,8 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     type: "warning",
                 });
             }
+            skipNextPersistRef.current = true;
+            clearDraft();
         } catch (error) {
             console.error("Error al guardar visita 2:", error);
             showAlert({
@@ -1256,7 +1381,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         generalObjective, specificObjectives, diagnosis, recommendations, observations,
         attendanceId, attendanceName, attendanceIdentification, registrationDate,
         producerId, projectId, commitments, localPhotos, isEditMode, existingVisitId,
-        showAlert, authUser, isSection52Complete,
+        showAlert, authUser, isSection52Complete, clearDraft,
     ]);
 
     // ── Render: section header ───────────────────────────────────────────
@@ -1557,7 +1682,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                                 onChangeText={setAttendanceIdentification}
                                 placeholder="Ingrese el número de identificación..."
                                 placeholderTextColor="#aaa"
-                                keyboardType="numeric"
+                                keyboardType="number-pad"
                             />
                         </View>
                     </View>

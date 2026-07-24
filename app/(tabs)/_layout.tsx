@@ -1,5 +1,6 @@
 import { useAlert } from "@/components/ui/custom-alert";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useNetwork } from "@/hooks/use-network";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useSyncStore } from "@/store/useSyncStore";
 import { responsiveFont, widthScale } from "@/utils/responsive";
@@ -11,6 +12,7 @@ import { useEffect } from "react";
 import {
     Dimensions,
     StyleSheet,
+    Text,
     TouchableOpacity,
     View,
 } from "react-native";
@@ -34,14 +36,24 @@ const TAB_TITLES: Record<string, string> = {
 function TabBarIcon({
   Icon,
   color,
+  badgeCount,
 }: {
   Icon: any;
   color: string;
   focused?: boolean;
+  badgeCount?: number;
 }) {
+  const showBadge = typeof badgeCount === "number" && badgeCount > 0;
+  const badgeLabel = showBadge && badgeCount > 99 ? "99+" : String(badgeCount);
+
   return (
-    <View style={{ justifyContent: "center", alignItems: "center" }}>
+    <View style={styles.tabIconWrap}>
       <Icon size={24} color={color} strokeWidth={2} />
+      {showBadge ? (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{badgeLabel}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -87,16 +99,28 @@ function TabBar({ state, descriptors, navigation }: any) {
   const numTabs = state.routes.length;
   const tabWidth = TAB_BAR_WIDTH / numTabs;
   const isDownloading = useSyncStore((s) => s.isDownloading);
+  const pendingUploads = useSyncStore((s) => s.pendingUploads);
+  const refreshStatus = useSyncStore((s) => s.refreshStatus);
+  const { isConnected } = useNetwork();
+  const showPendingBadge = isConnected === false && pendingUploads > 0;
 
   const translateX = useSharedValue(state.index * tabWidth);
 
   useEffect(() => {
     translateX.value = withSpring(state.index * tabWidth, {
-      damping: 20,
-      stiffness: 200,
+      damping: 39,
+      stiffness: 768,
       overshootClamping: true,
     });
   }, [state.index, tabWidth]);
+
+  useEffect(() => {
+    void refreshStatus();
+    const interval = setInterval(() => {
+      void refreshStatus();
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, [refreshStatus]);
 
   const indicatorStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
@@ -155,6 +179,11 @@ function TabBar({ state, descriptors, navigation }: any) {
                 Icon={Icon}
                 color={isFocused ? activeColor : inactiveColor}
                 focused={isFocused}
+                badgeCount={
+                  route.name === "sync" && showPendingBadge
+                    ? pendingUploads
+                    : undefined
+                }
               />
               <Animated.Text
                 style={[
@@ -267,6 +296,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  tabIconWrap: {
+    width: 28,
+    height: 28,
+    justifyContent: "center",
+    alignItems: "center",
+  },
   indicator: {
     position: "absolute",
     height: "100%",
@@ -283,6 +318,26 @@ const styles = StyleSheet.create({
     fontSize: responsiveFont(17),
     fontWeight: "500",
     marginTop: 2,
+  },
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -8,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: "#e74c3c",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#ffffff",
+  },
+  badgeText: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "700",
+    lineHeight: 12,
   },
   logoutButton: {
     marginRight: widthScale(16),

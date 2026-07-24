@@ -49,6 +49,45 @@ const getProducerId = (producer: any): string => {
   return String(producer.producer_id ?? producer.id ?? "");
 };
 
+const normalizeSortKey = (value: string | null | undefined): string =>
+  (value ?? "").trim().toLocaleLowerCase("es");
+
+/** Orden estable compartido entre caché SQLite y API para evitar saltos al refrescar. */
+const sortProducers = (producers: Producer[]): Producer[] =>
+  [...producers].sort((a, b) => {
+    const bySurname = normalizeSortKey(a.first_surname).localeCompare(
+      normalizeSortKey(b.first_surname),
+      "es",
+    );
+    if (bySurname !== 0) return bySurname;
+
+    const byLastSurname = normalizeSortKey(a.last_surname).localeCompare(
+      normalizeSortKey(b.last_surname),
+      "es",
+    );
+    if (byLastSurname !== 0) return byLastSurname;
+
+    const byFirstName = normalizeSortKey(a.first_name).localeCompare(
+      normalizeSortKey(b.first_name),
+      "es",
+    );
+    if (byFirstName !== 0) return byFirstName;
+
+    const byMiddleName = normalizeSortKey(a.middle_name).localeCompare(
+      normalizeSortKey(b.middle_name),
+      "es",
+    );
+    if (byMiddleName !== 0) return byMiddleName;
+
+    const byIdentification = normalizeSortKey(a.identification).localeCompare(
+      normalizeSortKey(b.identification),
+      "es",
+    );
+    if (byIdentification !== 0) return byIdentification;
+
+    return getProducerId(a).localeCompare(getProducerId(b), "es");
+  });
+
 export const useProducerStore = create<ProducerState>((set, get) => ({
   producers: [],
   producerDetail: null,
@@ -63,7 +102,7 @@ export const useProducerStore = create<ProducerState>((set, get) => ({
 
     // 1. Load from SQLite first (instant offline data)
     try {
-      const cached = await getProducersByProject(projectId);
+      const cached = sortProducers(await getProducersByProject(projectId));
       if (cached.length > 0) {
         set({
           producers: cached,
@@ -124,6 +163,8 @@ export const useProducerStore = create<ProducerState>((set, get) => ({
         producersData = response;
         totalCount = producersData.length;
       }
+
+      producersData = sortProducers(producersData);
 
       // Write-through: persist to SQLite
       try {

@@ -2,14 +2,7 @@ import { ClassificationTab } from "@/components/producer/classification-tab";
 import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { checkConnectivity } from "@/hooks/use-network";
-import {
-  VISIT3_CLASSIFICATION_INTERVENTION_METHOD_ID,
-  VISIT3_REGISTRATION_INTERVENTION_METHOD_ID,
-  useCharacterizationStore,
-} from "@/store/useCharacterizationStore";
-import { useAuthStore } from "@/store/useAuthStore";
-import { useProducerStore } from "@/store/useProducerStore";
-import { useSyncStore } from "@/store/useSyncStore";
+import { useProducerFormDraft } from "@/hooks/use-producer-form-draft";
 import {
   createEmptyVisit3Form,
   mapFormToCreatePayload,
@@ -18,7 +11,6 @@ import {
   sectionAccompanimentComplete,
   sectionTechnicalFocusComplete,
   VISIT3_ASPECTS,
-  VISIT3_MAX_PHOTO_BYTES,
   VISIT3_MAX_PHOTOS,
   VISIT3_PHOTO_LABELS,
   type Visit3AspectId,
@@ -26,6 +18,14 @@ import {
   type Visit3Response,
   type Visit3TrackingRow,
 } from "@/schemas/visit3";
+import { useAuthStore } from "@/store/useAuthStore";
+import {
+  useCharacterizationStore,
+  VISIT3_CLASSIFICATION_INTERVENTION_METHOD_ID,
+  VISIT3_REGISTRATION_INTERVENTION_METHOD_ID,
+} from "@/store/useCharacterizationStore";
+import { useProducerStore } from "@/store/useProducerStore";
+import { useSyncStore } from "@/store/useSyncStore";
 import {
   getObjectivesForEventAndLine,
   objectiveItemsToFormStrings,
@@ -33,6 +33,7 @@ import {
   readProductionLineId,
   VISIT_OBJECTIVE_EVENT_IDS,
 } from "@/utils/agro-objectives";
+import { NetworkError } from "@/utils/api";
 import { markInterventionMethodApplied } from "@/utils/database/repositories/producer-intervention-repository";
 import {
   getVisitServerCacheRaw,
@@ -46,24 +47,23 @@ import {
   type Visit3QueueTracking,
 } from "@/utils/database/repositories/visit3-repository";
 import {
-  createMonitoringCommitment as apiCreateMonitoringCommitment,
-  createVisit3 as apiCreateVisit3,
-  deleteMonitoringCommitment as apiDeleteMonitoringCommitment,
-  deleteVisit3Image as apiDeleteVisit3Image,
-  getVisit3 as apiGetVisit3,
-  getVisit3ImageUrl,
-  updateMonitoringCommitment as apiUpdateMonitoringCommitment,
-  updateVisit3 as apiUpdateVisit3,
-  uploadVisit3Images as apiUploadVisit3Images,
-} from "@/utils/visit3-service";
-import {
   convertVisit3PhotosToBase64,
   generateAndPrintVisit3Pdf,
   type Visit3PdfAspectBlock,
   type Visit3PdfData,
 } from "@/utils/pdf/visit3-pdf";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
-import { NetworkError } from "@/utils/api";
+import {
+  createMonitoringCommitment as apiCreateMonitoringCommitment,
+  createVisit3 as apiCreateVisit3,
+  deleteMonitoringCommitment as apiDeleteMonitoringCommitment,
+  deleteVisit3Image as apiDeleteVisit3Image,
+  getVisit3 as apiGetVisit3,
+  updateMonitoringCommitment as apiUpdateMonitoringCommitment,
+  updateVisit3 as apiUpdateVisit3,
+  uploadVisit3Images as apiUploadVisit3Images,
+  getVisit3ImageUrl,
+} from "@/utils/visit3-service";
 import {
   BottomSheetBackdrop,
   BottomSheetModal,
@@ -72,7 +72,11 @@ import {
 } from "@gorhom/bottom-sheet";
 import { Image as ExpoImage } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { cacheDirectory, copyAsync, getInfoAsync } from "expo-file-system/legacy";
+import {
+  ImageOptimizationError,
+  optimizeImageToWebp,
+} from "@/utils/optimize-image";
+import { persistLocalVisitPhotoSlots } from "@/utils/visit-offline-photos";
 import {
   AlertTriangle,
   Camera,
@@ -157,6 +161,14 @@ const SECTIONS: SectionConfig[] = [
   { key: "extensionist", label: "Datos del Extensionista", shortLabel: "Extensionista", sectionNum: "7", icon: UserCheck, color: "#334155" },
 ];
 
+interface Visit3FormDraft {
+  form: Visit3FormValues;
+  localPhotos: (Visit3LocalPhoto | null)[];
+  expandedSections: SectionKey[];
+  pendingImageDeletions: number[];
+  pendingCommitmentDeletions: number[];
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 function todayString(): string {
@@ -179,18 +191,6 @@ function formatDisplayDate(dateStr: string): string {
   ];
   const monthName = months[Number(m) - 1] ?? m;
   return `${d} de ${monthName} de ${y}`;
-}
-
-async function persistLocalPhoto(uri: string, index: number): Promise<string> {
-  try {
-    const base = cacheDirectory ?? "";
-    const ext = uri.includes(".") ? uri.split(".").pop()!.split("?")[0] : "jpg";
-    const dest = `${base}visit3_${Date.now()}_${index}.${ext}`;
-    await copyAsync({ from: uri, to: dest });
-    return dest;
-  } catch {
-    return uri;
-  }
 }
 
 // ─── Component ─────────────────────────────────────────────────────────
@@ -249,6 +249,14 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
   );
   const [refreshKey, setRefreshKey] = useState(0);
   const prevUploadingRef = useRef(false);
+
+  const { saveDraft, readDraft, clearDraft } = useProducerFormDraft<Visit3FormDraft>({
+    producerId,
+    projectId,
+    scope: "visit3",
+  });
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const skipNextPersistRef = useRef(false);
 
   // Refresh when upload cycle finishes
   useEffect(() => {
@@ -330,6 +338,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
   useEffect(() => {
     if (!producerId || !projectId) return;
     let cancelled = false;
+    setDraftHydrated(false);
     (async () => {
       setLoading(true);
       try {
@@ -495,16 +504,67 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
           setPendingImageDeletions([]);
           setPendingCommitmentDeletions([]);
         }
+
+        // Restore in-memory draft after API/queue hydrate (new + edit).
+        const draft = readDraft();
+        if (draft && !cancelled) {
+          if (draft.form) setForm(draft.form);
+          if (Array.isArray(draft.localPhotos)) {
+            setLocalPhotos([
+              draft.localPhotos[0] ?? null,
+              draft.localPhotos[1] ?? null,
+              draft.localPhotos[2] ?? null,
+            ]);
+          }
+          if (Array.isArray(draft.expandedSections)) {
+            setExpandedSections(new Set(draft.expandedSections));
+          }
+          if (Array.isArray(draft.pendingImageDeletions)) {
+            setPendingImageDeletions(draft.pendingImageDeletions);
+          }
+          if (Array.isArray(draft.pendingCommitmentDeletions)) {
+            setPendingCommitmentDeletions(draft.pendingCommitmentDeletions);
+          }
+        }
       } catch (e) {
         console.warn("No se pudo consultar Visita 3 existente:", e);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          skipNextPersistRef.current = true;
+          setDraftHydrated(true);
+          setLoading(false);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [producerId, projectId, authUser?.user_id, refreshKey]);
+  }, [producerId, projectId, authUser?.user_id, refreshKey, readDraft]);
+
+  // Persist in-memory draft on form edits (after load + hydrate).
+  useEffect(() => {
+    if (loading || !draftHydrated) return;
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
+    }
+    saveDraft({
+      form,
+      localPhotos,
+      expandedSections: Array.from(expandedSections),
+      pendingImageDeletions,
+      pendingCommitmentDeletions,
+    });
+  }, [
+    loading,
+    draftHydrated,
+    form,
+    localPhotos,
+    expandedSections,
+    pendingImageDeletions,
+    pendingCommitmentDeletions,
+    saveDraft,
+  ]);
 
   // ── Load objectives for event 6 ────────────────────────────────────────
   useEffect(() => {
@@ -645,6 +705,58 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
     });
   }, []);
 
+  const applyOptimizedPhoto = useCallback(
+    async (
+      index: number,
+      asset: { uri: string; fileName?: string | null; width?: number; height?: number },
+    ) => {
+      try {
+        const optimized = await optimizeImageToWebp({
+          uri: asset.uri,
+          fileName: asset.fileName || `visit3_${Date.now()}_${index}.jpg`,
+          width: asset.width,
+          height: asset.height,
+        });
+        const photo: Visit3LocalPhoto = {
+          uri: optimized.uri,
+          fileName: optimized.fileName,
+          type: optimized.type,
+        };
+        if (existingImages[index]) {
+          try {
+            await apiDeleteVisit3Image(existingImages[index]!.id);
+          } catch {
+            /* se reemplaza en UI; si falla el DELETE se reintenta al sincronizar */
+            setPendingImageDeletions((prev) => {
+              const id = existingImages[index]!.id;
+              return prev.includes(id) ? prev : [...prev, id];
+            });
+          }
+          clearExistingImageSlot(index);
+        }
+        setLocalPhotos((prev) => {
+          const n = [...prev];
+          n[index] = photo;
+          return n;
+        });
+      } catch (e) {
+        const message =
+          e instanceof ImageOptimizationError
+            ? e.message
+            : "No se pudo optimizar la imagen. Intente con otro archivo.";
+        showAlert({
+          title:
+            e instanceof ImageOptimizationError
+              ? "Imagen demasiado grande"
+              : "Error al optimizar",
+          message,
+          type: "warning",
+        });
+      }
+    },
+    [clearExistingImageSlot, existingImages, showAlert],
+  );
+
   const pickImage = useCallback(
     async (index: number) => {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -658,45 +770,12 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
       }
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
-        quality: 0.8,
+        quality: 1,
       });
       if (result.canceled || !result.assets?.[0]) return;
-      const asset = result.assets[0];
-      const info = await getInfoAsync(asset.uri).catch(() => null);
-      const size = (info as any)?.size as number | undefined;
-      if (size != null && size > VISIT3_MAX_PHOTO_BYTES) {
-        showAlert({
-          title: "Imagen muy grande",
-          message: "Cada imagen debe pesar menos de 6 MB.",
-          type: "warning",
-        });
-        return;
-      }
-      const stableUri = await persistLocalPhoto(asset.uri, index);
-      const photo: Visit3LocalPhoto = {
-        uri: stableUri,
-        fileName: asset.fileName || `visit3_${Date.now()}_${index}.jpg`,
-        type: asset.mimeType || "image/jpeg",
-      };
-      if (existingImages[index]) {
-        try {
-          await apiDeleteVisit3Image(existingImages[index]!.id);
-        } catch {
-          /* se reemplaza en UI; si falla el DELETE se reintenta al sincronizar */
-          setPendingImageDeletions((prev) => {
-            const id = existingImages[index]!.id;
-            return prev.includes(id) ? prev : [...prev, id];
-          });
-        }
-        clearExistingImageSlot(index);
-      }
-      setLocalPhotos((prev) => {
-        const n = [...prev];
-        n[index] = photo;
-        return n;
-      });
+      await applyOptimizedPhoto(index, result.assets[0]);
     },
-    [clearExistingImageSlot, existingImages, showAlert],
+    [applyOptimizedPhoto, showAlert],
   );
 
   const takePhoto = useCallback(
@@ -710,43 +789,11 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
         });
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({ quality: 0.8 });
+      const result = await ImagePicker.launchCameraAsync({ quality: 1 });
       if (result.canceled || !result.assets?.[0]) return;
-      const asset = result.assets[0];
-      const info = await getInfoAsync(asset.uri).catch(() => null);
-      const size = (info as any)?.size as number | undefined;
-      if (size != null && size > VISIT3_MAX_PHOTO_BYTES) {
-        showAlert({
-          title: "Imagen muy grande",
-          message: "Cada imagen debe pesar menos de 6 MB.",
-          type: "warning",
-        });
-        return;
-      }
-      const stableUri = await persistLocalPhoto(asset.uri, index);
-      const photo: Visit3LocalPhoto = {
-        uri: stableUri,
-        fileName: asset.fileName || `visit3_${Date.now()}_${index}.jpg`,
-        type: asset.mimeType || "image/jpeg",
-      };
-      if (existingImages[index]) {
-        try {
-          await apiDeleteVisit3Image(existingImages[index]!.id);
-        } catch {
-          setPendingImageDeletions((prev) => {
-            const id = existingImages[index]!.id;
-            return prev.includes(id) ? prev : [...prev, id];
-          });
-        }
-        clearExistingImageSlot(index);
-      }
-      setLocalPhotos((prev) => {
-        const n = [...prev];
-        n[index] = photo;
-        return n;
-      });
+      await applyOptimizedPhoto(index, result.assets[0]);
     },
-    [clearExistingImageSlot, existingImages, showAlert],
+    [applyOptimizedPhoto, showAlert],
   );
 
   const showPhotoOptions = useCallback(
@@ -1058,8 +1105,17 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
         });
       } else {
         const visitUuid = `visit3-${pid}-${projId}-${userId}`;
+        const persistedSlots = await persistLocalVisitPhotoSlots(localPhotos, {
+          kind: "visit3",
+          userId,
+          producerId: pid,
+          projectId: projId,
+        });
+        const photosForQueue = persistedSlots.filter(
+          (p): p is Visit3LocalPhoto => p !== null && !!p.uri,
+        );
         const extras: Visit3QueueExtras = {
-          photos,
+          photos: photosForQueue,
           keepRemoteImages: existingImages
             .filter((i): i is { id: number } => i !== null)
             .map((i) => i.id),
@@ -1081,6 +1137,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
           VISIT3_REGISTRATION_INTERVENTION_METHOD_ID,
           userId,
         );
+        setLocalPhotos(persistedSlots);
         useSyncStore.getState().refreshStatus();
         showAlert({
           title: "Sin internet",
@@ -1089,6 +1146,8 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
           type: "warning",
         });
       }
+      skipNextPersistRef.current = true;
+      clearDraft();
       setRefreshKey((k) => k + 1);
       sheetRef.current?.dismiss();
     } catch (e) {
@@ -1114,6 +1173,8 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
     pendingCommitmentDeletions,
     collectPhotosForSave,
     collectTrackings,
+    localPhotos,
+    clearDraft,
   ]);
 
   // ── PDF ────────────────────────────────────────────────────────────────
@@ -1455,18 +1516,15 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
                 <ThemedText style={styles.stepBadgeText}>1</ThemedText>
               )}
             </View>
-            <View style={{ flex: 1 }}>
-              <ThemedText
-                type="defaultSemiBold"
-                style={[
-                  styles.stepLabel,
-                  activeStep === "clasificacion" && styles.stepLabelActive,
-                ]}
-              >
-                Clasificación
-              </ThemedText>
-              <ThemedText style={styles.stepHint}>Método 9 (Ley 1876)</ThemedText>
-            </View>
+            <ThemedText
+              type="defaultSemiBold"
+              style={[
+                styles.stepLabel,
+                activeStep === "clasificacion" && styles.stepLabelActive,
+              ]}
+            >
+              Clasificación
+            </ThemedText>
           </View>
         </TouchableOpacity>
 
@@ -1481,7 +1539,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
               showAlert({
                 title: "Complete primero la clasificación",
                 message:
-                  "Debe responder la clasificación (5 aspectos) antes de registrar la Visita 3.",
+                  "Debe responder la clasificación antes de registrar la Visita 3.",
                 type: "warning",
               });
               return;
@@ -1504,20 +1562,15 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
                 <ThemedText style={styles.stepBadgeText}>2</ThemedText>
               )}
             </View>
-            <View style={{ flex: 1 }}>
-              <ThemedText
-                type="defaultSemiBold"
-                style={[
-                  styles.stepLabel,
-                  activeStep === "registro" && styles.stepLabelActive,
-                ]}
-              >
-                Registro
-              </ThemedText>
-              <ThemedText style={styles.stepHint}>
-                {isEditMode ? "Ficha guardada" : "Ficha nueva"}
-              </ThemedText>
-            </View>
+            <ThemedText
+              type="defaultSemiBold"
+              style={[
+                styles.stepLabel,
+                activeStep === "registro" && styles.stepLabelActive,
+              ]}
+            >
+              Registro
+            </ThemedText>
           </View>
         </TouchableOpacity>
       </View>
@@ -2072,16 +2125,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: widthScale(8),
     paddingHorizontal: widthScale(4),
-    paddingVertical: verticalScale(10),
+    paddingVertical: verticalScale(6),
   },
   stepTab: {
     flex: 1,
-    paddingVertical: verticalScale(10),
-    paddingHorizontal: widthScale(12),
+    paddingVertical: verticalScale(6),
+    paddingHorizontal: widthScale(10),
     borderRadius: widthScale(10),
     backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.1)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   stepTabActive: {
     borderColor: "#1a7a3a",
@@ -2091,12 +2146,13 @@ const styles = StyleSheet.create({
   stepBadgeRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: widthScale(10),
+    justifyContent: "center",
+    gap: widthScale(8),
   },
   stepBadge: {
-    width: widthScale(24),
-    height: widthScale(24),
-    borderRadius: widthScale(12),
+    width: widthScale(22),
+    height: widthScale(22),
+    borderRadius: widthScale(11),
     backgroundColor: "#94a3b8",
     justifyContent: "center",
     alignItems: "center",
@@ -2104,13 +2160,12 @@ const styles = StyleSheet.create({
   stepBadgeDone: { backgroundColor: "#1a7a3a" },
   stepBadgeDisabled: { backgroundColor: "#cbd5e1" },
   stepBadgeText: {
-    fontSize: responsiveFont(12),
+    fontSize: responsiveFont(11),
     color: "#fff",
     fontWeight: "700",
   },
-  stepLabel: { fontSize: responsiveFont(14), color: "#334155" },
+  stepLabel: { fontSize: responsiveFont(13), color: "#334155" },
   stepLabelActive: { color: "#1a7a3a" },
-  stepHint: { fontSize: responsiveFont(11), color: "#94a3b8" },
 
   // Summary
   summaryCard: {

@@ -1,6 +1,7 @@
 import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { checkConnectivity } from "@/hooks/use-network";
+import { useProducerFormDraft } from "@/hooks/use-producer-form-draft";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
     PROPERTY_INFO_INTERVENTION_METHOD_ID,
@@ -38,6 +39,10 @@ import {
 } from "@/utils/pdf/visit1-pdf";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { getStoredToken } from "@/utils/secure-storage";
+import {
+  ImageOptimizationError,
+  optimizeImageToWebp,
+} from "@/utils/optimize-image";
 import { persistLocalVisitPhotoSlots } from "@/utils/visit-offline-photos";
 import {
     BottomSheetBackdrop,
@@ -160,6 +165,23 @@ const SECTIONS: SectionConfig[] = [
   { key: "photos", label: "Registro Fotográfico", shortLabel: "Fotos", sectionNum: "5.5", icon: Camera, color: "#059669" },
   { key: "attendance", label: "Datos del Acompañamiento", shortLabel: "Acompañ.", sectionNum: "6", icon: Users, color: "#d97706" },
 ];
+
+interface Visit1FormDraft {
+  lat: string;
+  lng: string;
+  masl: string;
+  diagnosis: string;
+  recommendations: string;
+  commitments: string;
+  observations: string;
+  attendanceId: string;
+  attendanceName: string;
+  attendanceIdentification: string;
+  registrationDate: string;
+  registrationTime: string;
+  localPhotos: (LocalPhoto | null)[];
+  expandedSections: SectionKey[];
+}
 
 /** Misma redacción que Visit1Dialog.vue (objetivo general fijo). */
 const VISIT1_GENERAL_OBJECTIVE_FIXED =
@@ -392,6 +414,14 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
   const [objectivesApiLoading, setObjectivesApiLoading] = useState(false);
 
+  const { saveDraft, readDraft, clearDraft } = useProducerFormDraft<Visit1FormDraft>({
+    producerId,
+    projectId,
+    scope: "visit1",
+  });
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const skipNextPersistRef = useRef(false);
+
   const scrollRef = useRef<ScrollView>(null);
   const token = useAuthStore((s) => s.token);
   const authUser = useAuthStore((s) => s.user);
@@ -499,6 +529,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
     if (!producerId || !projectId) return;
 
     let cancelled = false;
+    setDraftHydrated(false);
     (async () => {
       setLoading(true);
       setCatalogSpecificLines([]);
@@ -649,15 +680,89 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
             setExistingImages([null, null, null]);
           }
         }
+
+        // Restore in-memory draft after API/queue hydrate (new + edit).
+        const draft = readDraft();
+        if (draft && !cancelled) {
+          setLat(draft.lat);
+          setLng(draft.lng);
+          setMasl(draft.masl);
+          setDiagnosis(draft.diagnosis);
+          setRecommendations(draft.recommendations);
+          setCommitments(draft.commitments);
+          setObservations(draft.observations);
+          setAttendanceId(draft.attendanceId);
+          setAttendanceName(draft.attendanceName);
+          setAttendanceIdentification(draft.attendanceIdentification);
+          setRegistrationDate(draft.registrationDate);
+          setRegistrationTime(draft.registrationTime);
+          if (Array.isArray(draft.localPhotos)) {
+            setLocalPhotos([
+              draft.localPhotos[0] ?? null,
+              draft.localPhotos[1] ?? null,
+              draft.localPhotos[2] ?? null,
+            ]);
+          }
+          if (Array.isArray(draft.expandedSections)) {
+            setExpandedSections(new Set(draft.expandedSections));
+          }
+        }
       } catch (err) {
         console.warn("No se pudo consultar visita existente:", err);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          skipNextPersistRef.current = true;
+          setDraftHydrated(true);
+          setLoading(false);
+        }
       }
     })();
 
     return () => { cancelled = true; };
-  }, [producerId, projectId, authUser]);
+  }, [producerId, projectId, authUser, readDraft]);
+
+  // Persist in-memory draft on form edits (after load + hydrate).
+  useEffect(() => {
+    if (loading || !draftHydrated) return;
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
+    }
+    saveDraft({
+      lat,
+      lng,
+      masl,
+      diagnosis,
+      recommendations,
+      commitments,
+      observations,
+      attendanceId,
+      attendanceName,
+      attendanceIdentification,
+      registrationDate,
+      registrationTime,
+      localPhotos,
+      expandedSections: Array.from(expandedSections),
+    });
+  }, [
+    loading,
+    draftHydrated,
+    lat,
+    lng,
+    masl,
+    diagnosis,
+    recommendations,
+    commitments,
+    observations,
+    attendanceId,
+    attendanceName,
+    attendanceIdentification,
+    registrationDate,
+    registrationTime,
+    localPhotos,
+    expandedSections,
+    saveDraft,
+  ]);
 
   // Check if method already applied (for apply/re-apply guard)
   useEffect(() => {
@@ -722,6 +827,45 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
 
   // ── Photo handling ──────────────────────────────────────────────────────
 
+  const applyOptimizedPhoto = useCallback(async (
+    index: number,
+    asset: { uri: string; fileName?: string | null; width?: number; height?: number },
+  ) => {
+    try {
+      const optimized = await optimizeImageToWebp({
+        uri: asset.uri,
+        fileName: asset.fileName || `photo_${Date.now()}.jpg`,
+        width: asset.width,
+        height: asset.height,
+      });
+      const photo: LocalPhoto = {
+        uri: optimized.uri,
+        fileName: optimized.fileName,
+        type: optimized.type,
+      };
+
+      if (existingImages[index]) {
+        try { await deleteVisitImage(existingImages[index]!.id); } catch {}
+        setExistingImages((prev) => { const n = [...prev]; n[index] = null; return n; });
+      }
+
+      setLocalPhotos((prev) => { const n = [...prev]; n[index] = photo; return n; });
+    } catch (e) {
+      const message =
+        e instanceof ImageOptimizationError
+          ? e.message
+          : "No se pudo optimizar la imagen. Intente con otro archivo.";
+      showAlert({
+        title:
+          e instanceof ImageOptimizationError
+            ? "Imagen demasiado grande"
+            : "Error al optimizar",
+        message,
+        type: "warning",
+      });
+    }
+  }, [existingImages, showAlert]);
+
   const pickImage = useCallback(async (index: number) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
@@ -731,25 +875,13 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
-      quality: 0.8,
+      quality: 1,
     });
 
     if (result.canceled || !result.assets?.[0]) return;
 
-    const asset = result.assets[0];
-    const photo: LocalPhoto = {
-      uri: asset.uri,
-      fileName: asset.fileName || `photo_${Date.now()}.jpg`,
-      type: asset.mimeType || "image/jpeg",
-    };
-
-    if (existingImages[index]) {
-      try { await deleteVisitImage(existingImages[index]!.id); } catch {}
-      setExistingImages((prev) => { const n = [...prev]; n[index] = null; return n; });
-    }
-
-    setLocalPhotos((prev) => { const n = [...prev]; n[index] = photo; return n; });
-  }, [existingImages]);
+    await applyOptimizedPhoto(index, result.assets[0]);
+  }, [applyOptimizedPhoto, showAlert]);
 
   const takePhoto = useCallback(async (index: number) => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -758,24 +890,12 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
       return;
     }
 
-    const result = await ImagePicker.launchCameraAsync({ quality: 0.8 });
+    const result = await ImagePicker.launchCameraAsync({ quality: 1 });
 
     if (result.canceled || !result.assets?.[0]) return;
 
-    const asset = result.assets[0];
-    const photo: LocalPhoto = {
-      uri: asset.uri,
-      fileName: asset.fileName || `photo_${Date.now()}.jpg`,
-      type: asset.mimeType || "image/jpeg",
-    };
-
-    if (existingImages[index]) {
-      try { await deleteVisitImage(existingImages[index]!.id); } catch {}
-      setExistingImages((prev) => { const n = [...prev]; n[index] = null; return n; });
-    }
-
-    setLocalPhotos((prev) => { const n = [...prev]; n[index] = photo; return n; });
-  }, [existingImages]);
+    await applyOptimizedPhoto(index, result.assets[0]);
+  }, [applyOptimizedPhoto, showAlert]);
 
   const showPhotoOptions = useCallback((index: number) => {
     showAlert({
@@ -980,6 +1100,8 @@ const handleSave = useCallback(async () => {
           type: "warning",
         });
       }
+      skipNextPersistRef.current = true;
+      clearDraft();
     } catch (error) {
       console.error("Error al guardar visita 1:", error);
       showAlert({
@@ -1012,6 +1134,7 @@ const handleSave = useCallback(async () => {
     existingVisitId,
     showAlert,
     authUser,
+    clearDraft,
   ]);
 
   // ── Generate PDF (pdfmake) ──────────────────────────────────────────────
@@ -1339,7 +1462,7 @@ const handleSave = useCallback(async () => {
           onChangeText={setLat}
           placeholder="Ej: 8.7489"
           placeholderTextColor="#aaa"
-          keyboardType="decimal-pad"
+          keyboardType="numeric"
         />
         <ThemedText style={[styles.fieldLabel, { marginTop: verticalScale(10) }]}>Longitud</ThemedText>
         <TextInput
@@ -1348,7 +1471,7 @@ const handleSave = useCallback(async () => {
           onChangeText={setLng}
           placeholder="Ej: -75.8814"
           placeholderTextColor="#aaa"
-          keyboardType="decimal-pad"
+          keyboardType="numeric"
         />
         <ThemedText style={[styles.fieldLabel, { marginTop: verticalScale(10) }]}>ASNM (metros)</ThemedText>
         <TextInput

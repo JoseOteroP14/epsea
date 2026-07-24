@@ -2,6 +2,8 @@
 
 # dependencies
 node_modules/
+# Windows short-path workaround used by scripts/run-android.js (real modules live here)
+/n/
 
 # Expo
 .expo/

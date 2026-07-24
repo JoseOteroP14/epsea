@@ -31,6 +31,8 @@ import {
     type UnitOfMeasureItem,
 } from "@/constants/productive-lines-questions";
 import { checkConnectivity } from "@/hooks/use-network";
+import { useProducerFormDraft } from "@/hooks/use-producer-form-draft";
+import { useSurveyApplyDraft } from "@/hooks/use-survey-apply-draft";
 import type { Question } from "@/schemas/characterization";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
@@ -55,6 +57,7 @@ import {
 import { enqueue } from "@/utils/database/repositories/sync-repository";
 import { useSyncStore } from "@/store/useSyncStore";
 import type { ProductiveLinesBulkKind } from "@/utils/sync/sync-service";
+import { rewritePendingProductiveLineBulkCreate } from "@/utils/sync/rewrite-pending-productive-line";
 import {
     markInterventionMethodApplied,
 } from "@/utils/database/repositories/producer-intervention-repository";
@@ -65,7 +68,7 @@ import {
     BottomSheetScrollView,
     type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
-import { ChevronDown, ClipboardList, Plus, Search, Sprout, X } from "lucide-react-native";
+import { Check, ChevronDown, ClipboardList, Pencil, Plus, Search, Sprout, X } from "lucide-react-native";
 import {
     useCallback,
     useEffect,
@@ -114,6 +117,28 @@ function getAssistantName(id: number, items: AssistantItem[]): string {
   return items.find((i) => i.id === id)?.name ?? `#${id}`;
 }
 
+type ProductiveLinesFormDraft = {
+  activityType: ActivityType;
+  lineCountInput: string;
+  agriFormLines: AgriculturalLineForm[];
+  livestockFormLines: LivestockLineForm[];
+  forestFormLines: ForestLineForm[];
+  fishingFormLines: FishingLineForm[];
+  aquacultureFormLines: AquacultureLineForm[];
+  activeLineIndex: number;
+};
+
+function draftHasFormLinesForType(
+  draft: ProductiveLinesFormDraft,
+  type: ActivityType,
+): boolean {
+  if (type === "agricola") return draft.agriFormLines.length > 0;
+  if (type === "pecuaria") return draft.livestockFormLines.length > 0;
+  if (type === "forestal") return draft.forestFormLines.length > 0;
+  if (type === "pesca") return draft.fishingFormLines.length > 0;
+  return draft.aquacultureFormLines.length > 0;
+}
+
 /** Une filas nuevas al bundle SQLite usado sin red tras sincronizar descarga. */
 async function mergeAppendedLinesIntoBundleCache(
   producerId: number,
@@ -152,6 +177,60 @@ async function mergeAppendedLinesIntoBundleCache(
   });
 }
 
+/** Actualiza una fila del bundle SQLite tras editar offline. */
+async function mergeUpdatedLineIntoBundleCache(
+  producerId: number,
+  projectId: number,
+  userId: number,
+  kind: ProductiveLinesBulkKind,
+  lineId: number,
+  updated: unknown,
+): Promise<void> {
+  const raw = await getProductiveLinesBundleCacheRaw(producerId, projectId, userId);
+  const base = raw
+    ? (JSON.parse(raw) as {
+        agricultural?: unknown[];
+        livestock?: unknown[];
+        forest?: unknown[];
+        fishing?: unknown[];
+        aquaculture?: unknown[];
+      })
+    : {};
+  const replace = (rows: unknown[] | undefined) =>
+    (rows ?? []).map((row) =>
+      row && typeof row === "object" && (row as { id?: number }).id === lineId ? updated : row,
+    );
+  const next = {
+    agricultural: kind === "agricultural" ? replace(base.agricultural) : [...(base.agricultural ?? [])],
+    livestock: kind === "livestock" ? replace(base.livestock) : [...(base.livestock ?? [])],
+    forest: kind === "forest" ? replace(base.forest) : [...(base.forest ?? [])],
+    fishing: kind === "fishing" ? replace(base.fishing) : [...(base.fishing ?? [])],
+    aquaculture: kind === "aquaculture" ? replace(base.aquaculture) : [...(base.aquaculture ?? [])],
+  };
+  await upsertProductiveLinesBundleCache({
+    userId,
+    producerId,
+    projectId,
+    jsonPayload: JSON.stringify(next),
+  });
+}
+
+function kindForActivity(type: ActivityType): ProductiveLinesBulkKind {
+  if (type === "agricola") return "agricultural";
+  if (type === "pecuaria") return "livestock";
+  if (type === "forestal") return "forest";
+  if (type === "pesca") return "fishing";
+  return "aquaculture";
+}
+
+function apiPathForActivity(type: ActivityType): string {
+  if (type === "agricola") return "/agricultural-lines";
+  if (type === "pecuaria") return "/livestock-lines";
+  if (type === "forestal") return "/forest-lines";
+  if (type === "pesca") return "/fishing-lines";
+  return "/aquaculture-lines";
+}
+
 // ── Badge config ──────────────────────────────────────────────────────────────
 
 const CAROUSEL_PADDING = widthScale(10);
@@ -175,10 +254,12 @@ function ExistingLineCard({
   lineName,
   activityType,
   fields,
+  onEdit,
 }: {
   lineName: string;
   activityType: AllActivityType;
   fields: { label: string; value: string }[];
+  onEdit?: () => void;
 }) {
   const badge = ACTIVITY_BADGE_CONFIG[activityType];
   return (
@@ -197,6 +278,16 @@ function ExistingLineCard({
             {badge.label}
           </ThemedText>
         </View>
+        {onEdit ? (
+          <TouchableOpacity
+            style={styles.editIconButton}
+            onPress={onEdit}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Pencil size={responsiveFont(16)} color={badge.color} />
+          </TouchableOpacity>
+        ) : null}
       </View>
       <View style={styles.existingCardGrid}>
         {fields.map((f, i) => (
@@ -212,6 +303,7 @@ function ExistingLineCard({
 
 interface UnifiedLineItem {
   key: string;
+  id: number;
   type: AllActivityType;
   lineName: string;
   fields: { label: string; value: string }[];
@@ -545,6 +637,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
   const [complementaryAnswers, setComplementaryAnswers] = useState<Record<number, any>>({});
   const [localComplementaryQuestions, setLocalComplementaryQuestions] = useState<Question[]>([]);
   const hasFetchedComplementaryQuestions = useRef(false);
+  const [hasComplementarySurvey, setHasComplementarySurvey] = useState(false);
 
   // Line options for the picker (agricola/pecuaria/forestal)
   const [lineOptions, setLineOptions] = useState<ProductiveLine[]>([]);
@@ -572,6 +665,26 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
   const [loadingExisting, setLoadingExisting] = useState(true);
   const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
 
+  const {
+    wizardSessionKey,
+    draftWizardIndex,
+    syncAnswersRef,
+    beginApplySession,
+    persistOnClose,
+    markSavedAndSkipPersist,
+    handleWizardIndexChange,
+    wrapAnswerChange,
+  } = useSurveyApplyDraft({
+    producerId,
+    projectId,
+    interventionMethodId: PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
+    hasSurvey: hasComplementarySurvey || methodAlreadyApplied,
+  });
+
+  useEffect(() => {
+    syncAnswersRef(complementaryAnswers);
+  }, [complementaryAnswers, syncAnswersRef]);
+
   // Form state
   const [lineCountInput, setLineCountInput] = useState("1");
   const [agriFormLines, setAgriFormLines] = useState<AgriculturalLineForm[]>([]);
@@ -582,6 +695,8 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
   const [activeLineIndex, setActiveLineIndex] = useState(0);
   const [showSheet, setShowSheet] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [editingLineId, setEditingLineId] = useState<number | null>(null);
+  const editingLineIdRef = useRef<number | null>(null);
 
   // Picker state
   const [showTypePicker, setShowTypePicker] = useState(false);
@@ -597,6 +712,28 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
   const tabScrollRef = useRef<GHScrollView>(null);
   const snapPoints = useMemo(() => ["92%"], []);
   const [pagerHeight, setPagerHeight] = useState(verticalScale(252));
+  const [carouselPage, setCarouselPage] = useState(0);
+
+  const {
+    saveDraft: saveFormDraft,
+    readDraft: readFormDraft,
+    clearDraft: clearFormDraft,
+  } = useProducerFormDraft<ProductiveLinesFormDraft>({
+    producerId,
+    projectId,
+    scope: "productive-lines-form",
+  });
+  const skipFormDraftPersistRef = useRef(false);
+  const formDraftPayloadRef = useRef<ProductiveLinesFormDraft>({
+    activityType,
+    lineCountInput,
+    agriFormLines,
+    livestockFormLines,
+    forestFormLines,
+    fishingFormLines,
+    aquacultureFormLines,
+    activeLineIndex,
+  });
 
   const productiveLinesComponent = getProductiveLinesComponent();
 
@@ -646,7 +783,10 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
           merged[answer.question_id] = answer.value;
         }
       } catch {}
-      if (!cancelled) setComplementaryAnswers(merged);
+      if (!cancelled) {
+        setComplementaryAnswers(merged);
+        setHasComplementarySurvey(Object.keys(merged).length > 0);
+      }
     })();
     return () => { cancelled = true; };
   }, [productiveLinesComponent, producerId, projectId, currentUserId, fetchSurveyResults]);
@@ -843,15 +983,71 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
     return () => { cancelled = true; };
   }, [producerId, projectId, currentUserId]);
 
+  const formDraftPayload = useMemo(
+    (): ProductiveLinesFormDraft => ({
+      activityType,
+      lineCountInput,
+      agriFormLines,
+      livestockFormLines,
+      forestFormLines,
+      fishingFormLines,
+      aquacultureFormLines,
+      activeLineIndex,
+    }),
+    [
+      activityType,
+      lineCountInput,
+      agriFormLines,
+      livestockFormLines,
+      forestFormLines,
+      fishingFormLines,
+      aquacultureFormLines,
+      activeLineIndex,
+    ],
+  );
+
+  formDraftPayloadRef.current = formDraftPayload;
+  editingLineIdRef.current = editingLineId;
+
+  useEffect(() => {
+    if (skipFormDraftPersistRef.current) return;
+    if (editingLineId != null) return;
+    saveFormDraft(formDraftPayload);
+  }, [formDraftPayload, saveFormDraft, editingLineId]);
+
   // Control bottom sheet
   useEffect(() => {
     if (showSheet) bottomSheetRef.current?.present();
     else bottomSheetRef.current?.dismiss();
   }, [showSheet]);
 
-  const handleSheetChanges = useCallback((index: number) => {
-    if (index === -1) setShowSheet(false);
+  const clearEditFormState = useCallback(() => {
+    setEditingLineId(null);
+    setAgriFormLines([]);
+    setLivestockFormLines([]);
+    setForestFormLines([]);
+    setFishingFormLines([]);
+    setAquacultureFormLines([]);
+    setActiveLineIndex(0);
   }, []);
+
+  const handleSheetChanges = useCallback(
+    (index: number) => {
+      if (index === -1) {
+        if (editingLineIdRef.current != null) {
+          clearEditFormState();
+          setShowSheet(false);
+          return;
+        }
+        if (!skipFormDraftPersistRef.current) {
+          saveFormDraft(formDraftPayloadRef.current);
+        }
+        skipFormDraftPersistRef.current = false;
+        setShowSheet(false);
+      }
+    },
+    [saveFormDraft, clearEditFormState],
+  );
 
   const renderBackdrop = useCallback(
     (props: BottomSheetBackdropProps) => (
@@ -899,16 +1095,166 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
   );
 
   const handleCreate = useCallback(() => {
-    const count = Math.max(1, Math.min(99, parseInt(lineCountInput) || 1));
-    setLineCountInput(String(count));
-    if (activityType === "agricola") setAgriFormLines(Array.from({ length: count }, createEmptyAgriculturalForm));
-    else if (activityType === "pecuaria") setLivestockFormLines(Array.from({ length: count }, createEmptyLivestockForm));
-    else if (activityType === "forestal") setForestFormLines(Array.from({ length: count }, createEmptyForestForm));
-    else if (activityType === "pesca") setFishingFormLines(Array.from({ length: count }, createEmptyFishingForm));
-    else setAquacultureFormLines(Array.from({ length: count }, createEmptyAquacultureForm));
-    setActiveLineIndex(0);
+    setEditingLineId(null);
+    const draft = readFormDraft();
+    if (draft && draftHasFormLinesForType(draft, activityType)) {
+      setActivityType(draft.activityType);
+      setLineCountInput(draft.lineCountInput);
+      setAgriFormLines(draft.agriFormLines);
+      setLivestockFormLines(draft.livestockFormLines);
+      setForestFormLines(draft.forestFormLines);
+      setFishingFormLines(draft.fishingFormLines);
+      setAquacultureFormLines(draft.aquacultureFormLines);
+      setActiveLineIndex(draft.activeLineIndex);
+    } else {
+      const count = Math.max(1, Math.min(99, parseInt(lineCountInput) || 1));
+      setLineCountInput(String(count));
+      if (activityType === "agricola") setAgriFormLines(Array.from({ length: count }, createEmptyAgriculturalForm));
+      else if (activityType === "pecuaria") setLivestockFormLines(Array.from({ length: count }, createEmptyLivestockForm));
+      else if (activityType === "forestal") setForestFormLines(Array.from({ length: count }, createEmptyForestForm));
+      else if (activityType === "pesca") setFishingFormLines(Array.from({ length: count }, createEmptyFishingForm));
+      else setAquacultureFormLines(Array.from({ length: count }, createEmptyAquacultureForm));
+      setActiveLineIndex(0);
+    }
     setShowSheet(true);
-  }, [lineCountInput, activityType]);
+  }, [lineCountInput, activityType, readFormDraft]);
+
+  const handleEditLine = useCallback(
+    async (item: UnifiedLineItem) => {
+      setEditingLineId(item.id);
+      setActivityType(item.type);
+      setActiveLineIndex(0);
+      setLineCountInput("1");
+      setAgriFormLines([]);
+      setLivestockFormLines([]);
+      setForestFormLines([]);
+      setFishingFormLines([]);
+      setAquacultureFormLines([]);
+
+      const dateFromApi = (raw: string) =>
+        formatDateForDisplay((raw ?? "").split("T")[0] || raw || "");
+
+      if (item.type === "agricola") {
+        const line = existingAgriLines.find((l) => l.id === item.id);
+        if (!line) return;
+        setAgriFormLines([
+          {
+            line_id: line.line_id,
+            line_name: line.line?.name ?? getLineName(line.line_id, allLineOptions),
+            area: String(line.area ?? ""),
+            harvests: String(line.harvests ?? ""),
+            production: String(line.production ?? ""),
+            date: dateFromApi(line.date),
+          },
+        ]);
+      } else if (item.type === "pecuaria") {
+        const line = existingLivestockLines.find((l) => l.id === item.id);
+        if (!line) return;
+        const lineName = line.line?.name ?? getLineName(line.line_id, allLineOptions);
+        setLivestockFormLines([
+          {
+            line_id: line.line_id,
+            line_name: lineName,
+            unit_of_measure: UNIT_ID_TO_NAME[line.unit_of_measure_id] ?? "",
+            area: String(line.area ?? ""),
+            cycles: String(line.cycles ?? ""),
+            production: String(line.production ?? ""),
+            date: dateFromApi(line.date),
+          },
+        ]);
+      } else if (item.type === "forestal") {
+        const line = existingForestLines.find((l) => l.id === item.id);
+        if (!line) return;
+        let unitName = "";
+        const cachedUnits = plCatalog?.unitsByLineId[line.line_id] ?? [];
+        const match = cachedUnits.find((u) => u.unit_id === line.unit_of_measure_id);
+        if (match) unitName = match.unit_of_measure_name;
+        const online = await checkConnectivity();
+        if (online) {
+          try {
+            const res = await apiFetch<{ data: UnitOfMeasureItem[] }>(`/unit-of-measure/${line.line_id}`);
+            const units = res.data ?? [];
+            setForestUnitOptions(units);
+            const onlineMatch = units.find((u) => u.unit_id === line.unit_of_measure_id);
+            if (onlineMatch) unitName = onlineMatch.unit_of_measure_name;
+          } catch (e) {
+            console.error("Failed to fetch forest units for edit:", e);
+            if (cachedUnits.length) setForestUnitOptions(cachedUnits);
+          }
+        } else if (cachedUnits.length) {
+          setForestUnitOptions(cachedUnits);
+        }
+        setForestFormLines([
+          {
+            line_id: line.line_id,
+            line_name: line.line?.name ?? getLineName(line.line_id, allLineOptions),
+            unit_of_measure_id: String(line.unit_of_measure_id ?? ""),
+            unit_of_measure_name: unitName,
+            area: String(line.area ?? ""),
+            cycles: String(line.cycles ?? ""),
+            production: String(line.production ?? ""),
+            date: dateFromApi(line.date),
+          },
+        ]);
+      } else if (item.type === "pesca") {
+        const line = existingFishingLines.find((l) => l.id === item.id);
+        if (!line) return;
+        const species = (line.lines ?? []).map((s) => ({
+          line_id: s.line_id,
+          name: speciesLines.find((sp) => sp.id === s.line_id)?.name ?? `Especie #${s.line_id}`,
+        }));
+        setFishingFormLines([
+          {
+            type_id: String(line.type_id ?? ""),
+            type_name: line.type_name ?? getAssistantName(line.type_id, typesOfFishing),
+            fishing_area_id: String(line.fishing_area_id ?? ""),
+            fishing_area_name:
+              line.fishing_area_name ?? getAssistantName(line.fishing_area_id ?? 0, fishingAreas),
+            species,
+            weight: String(line.weight ?? ""),
+            date: dateFromApi(line.date),
+          },
+        ]);
+      } else {
+        const line = existingAquacultureLines.find((l) => l.id === item.id);
+        if (!line) return;
+        const species = (line.lines ?? []).map((s) => ({
+          line_id: s.line_id,
+          name: speciesLines.find((sp) => sp.id === s.line_id)?.name ?? `Especie #${s.line_id}`,
+        }));
+        setAquacultureFormLines([
+          {
+            type_id: String(line.type_id ?? ""),
+            type_name: line.type_system_name ?? getAssistantName(line.type_id, aquacultureTypes),
+            area_crop_id: String(line.area_crop_id ?? ""),
+            area_crop_name: line.area_crop_name ?? getAssistantName(line.area_crop_id, croppingSystemAreas),
+            area_value_crop: String(line.area_value_crop ?? ""),
+            number_of_animals: String(line.number_of_animals ?? ""),
+            cycles: String(line.cycles ?? ""),
+            production: String(line.production ?? ""),
+            date: dateFromApi(line.date),
+            species,
+          },
+        ]);
+      }
+
+      setShowSheet(true);
+    },
+    [
+      existingAgriLines,
+      existingLivestockLines,
+      existingForestLines,
+      existingFishingLines,
+      existingAquacultureLines,
+      allLineOptions,
+      plCatalog,
+      speciesLines,
+      typesOfFishing,
+      fishingAreas,
+      aquacultureTypes,
+      croppingSystemAreas,
+    ],
+  );
 
   // ── Change handlers ────────────────────────────────────────────────────────
 
@@ -1072,7 +1418,268 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
     try {
       const isOnline = await checkConnectivity();
 
+      // ── Edit existing line (PUT) ────────────────────────────────────────────
+      if (editingLineId != null) {
+        const lineId = editingLineId;
+        const kind = kindForActivity(activityType);
+        let body: Record<string, unknown> | null = null;
+        let optimistic: unknown = null;
+
+        if (activityType === "agricola") {
+          const f = agriFormLines[0];
+          if (!f?.line_id) {
+            showAlert({ title: "Error", message: "Debe seleccionar una línea productiva.", type: "error" });
+            return;
+          }
+          const area = parseFloat(f.area) || 0;
+          const harvests = parseInt(f.harvests) || 0;
+          const production = parseFloat(f.production) || 0;
+          const date = formatDateForApi(f.date);
+          body = {
+            producer_id: pid,
+            project_id: projId,
+            line_id: Number(f.line_id),
+            area,
+            harvests,
+            production,
+            date,
+          };
+          optimistic = {
+            id: lineId,
+            producer_id: pid,
+            project_id: projId,
+            line_id: Number(f.line_id),
+            line: { id: Number(f.line_id), name: getLineName(Number(f.line_id), lineOptions) },
+            area,
+            harvests,
+            production,
+            date,
+          } satisfies ExistingAgriculturalLine;
+        } else if (activityType === "pecuaria") {
+          const f = livestockFormLines[0];
+          if (!f?.line_id) {
+            showAlert({ title: "Error", message: "Debe seleccionar una línea productiva.", type: "error" });
+            return;
+          }
+          const unitName = f.unit_of_measure || LIVESTOCK_UNIT_MAP[f.line_name]?.value || "";
+          const unit_of_measure_id = UNIT_NAME_TO_ID[unitName] ?? 0;
+          const area = parseFloat(f.area) || 0;
+          const cycles = parseInt(f.cycles) || 0;
+          const production = parseFloat(f.production) || 0;
+          const date = formatDateForApi(f.date);
+          body = {
+            producer_id: pid,
+            project_id: projId,
+            line_id: Number(f.line_id),
+            unit_of_measure_id,
+            area,
+            cycles,
+            production,
+            date,
+          };
+          optimistic = {
+            id: lineId,
+            producer_id: pid,
+            project_id: projId,
+            line_id: Number(f.line_id),
+            line: { id: Number(f.line_id), name: getLineName(Number(f.line_id), allLineOptions) },
+            unit_of_measure_id,
+            area,
+            cycles,
+            production,
+            date,
+          } satisfies ExistingLivestockLine;
+        } else if (activityType === "forestal") {
+          const f = forestFormLines[0];
+          if (!f?.line_id || !f.unit_of_measure_id) {
+            showAlert({ title: "Error", message: "Debe completar especie y unidad de producción.", type: "error" });
+            return;
+          }
+          const unit_of_measure_id = parseInt(f.unit_of_measure_id) || 0;
+          const area = parseFloat(f.area) || 0;
+          const cycles = parseFloat(f.cycles) || 0;
+          const production = parseFloat(f.production) || 0;
+          const date = formatDateForApi(f.date);
+          body = {
+            producer_id: pid,
+            project_id: projId,
+            line_id: Number(f.line_id),
+            unit_of_measure_id,
+            area,
+            cycles,
+            production,
+            date,
+          };
+          optimistic = {
+            id: lineId,
+            producer_id: pid,
+            project_id: projId,
+            line_id: Number(f.line_id),
+            line: { id: Number(f.line_id), name: getLineName(Number(f.line_id), allLineOptions) },
+            unit_of_measure_id,
+            area,
+            cycles,
+            production,
+            date,
+          } satisfies ExistingForestLine;
+        } else if (activityType === "pesca") {
+          const f = fishingFormLines[0];
+          if (!f?.type_id || !f.fishing_area_id) {
+            showAlert({ title: "Error", message: "Debe completar tipo y zona de pesca.", type: "error" });
+            return;
+          }
+          // PUT no actualiza especies (parity con agro)
+          const type_id = parseInt(f.type_id) || 0;
+          const fishing_area_id = parseInt(f.fishing_area_id) || 0;
+          const weight = parseFloat(f.weight) || 0;
+          const date = formatDateForApi(f.date);
+          body = {
+            producer_id: pid,
+            project_id: projId,
+            type_id,
+            fishing_area_id,
+            weight,
+            date,
+          };
+          optimistic = {
+            id: lineId,
+            producer_id: pid,
+            project_id: projId,
+            type_id,
+            fishing_area_id,
+            type_name: f.type_name,
+            fishing_area_name: f.fishing_area_name,
+            weight,
+            date,
+            lines: f.species.map((s) => ({ line_id: s.line_id })),
+          } satisfies ExistingFishingLine;
+        } else {
+          const f = aquacultureFormLines[0];
+          if (!f?.type_id || !f.area_crop_id) {
+            showAlert({
+              title: "Error",
+              message: "Debe completar tipo de sistema y unidad de cultivo.",
+              type: "error",
+            });
+            return;
+          }
+          const type_id = parseInt(f.type_id) || 0;
+          const area_crop_id = parseInt(f.area_crop_id) || 0;
+          const area_value_crop = parseFloat(f.area_value_crop) || 0;
+          const number_of_animals = parseInt(f.number_of_animals) || 0;
+          const cycles = parseFloat(f.cycles) || 0;
+          const production = parseFloat(f.production) || 0;
+          const date = formatDateForApi(f.date);
+          body = {
+            producer_id: pid,
+            project_id: projId,
+            type_id,
+            area_crop_id,
+            area_value_crop,
+            number_of_animals,
+            cycles,
+            production,
+            date,
+          };
+          optimistic = {
+            id: lineId,
+            producer_id: pid,
+            project_id: projId,
+            type_id,
+            area_crop_id,
+            area_value_crop,
+            type_system_name: f.type_name,
+            area_crop_name: f.area_crop_name,
+            number_of_animals,
+            cycles,
+            production,
+            date,
+            lines: f.species.map((s) => ({ line_id: s.line_id })),
+          } satisfies ExistingAquacultureLine;
+        }
+
+        if (!body || !optimistic) return;
+
+        const applyOptimisticLocal = async () => {
+          if (activityType === "agricola") {
+            setExistingAgriLines((prev) =>
+              prev.map((l) => (l.id === lineId ? (optimistic as ExistingAgriculturalLine) : l)),
+            );
+          } else if (activityType === "pecuaria") {
+            setExistingLivestockLines((prev) =>
+              prev.map((l) => (l.id === lineId ? (optimistic as ExistingLivestockLine) : l)),
+            );
+          } else if (activityType === "forestal") {
+            setExistingForestLines((prev) =>
+              prev.map((l) => (l.id === lineId ? (optimistic as ExistingForestLine) : l)),
+            );
+          } else if (activityType === "pesca") {
+            setExistingFishingLines((prev) =>
+              prev.map((l) => (l.id === lineId ? (optimistic as ExistingFishingLine) : l)),
+            );
+          } else {
+            setExistingAquacultureLines((prev) =>
+              prev.map((l) => (l.id === lineId ? (optimistic as ExistingAquacultureLine) : l)),
+            );
+          }
+          await mergeUpdatedLineIntoBundleCache(pid, projId, userId, kind, lineId, optimistic);
+        };
+
+        if (lineId < 0) {
+          const rewritten = await rewritePendingProductiveLineBulkCreate({
+            userId,
+            kind,
+            localId: lineId,
+            lineBody: body,
+          });
+          await applyOptimisticLocal();
+          clearEditFormState();
+          setShowSheet(false);
+          if (rewritten) {
+            void useSyncStore.getState().refreshStatus();
+          }
+          showAlert({
+            title: rewritten ? "Sin internet" : "Guardado local",
+            message: rewritten
+              ? "Los cambios actualizaron la creación pendiente y se enviarán al sincronizar."
+              : "No se encontró la creación pendiente en cola. Los cambios quedaron solo en la vista local.",
+            type: "warning",
+          });
+          return;
+        }
+
+        if (isOnline) {
+          await apiFetch(`${apiPathForActivity(activityType)}/${lineId}`, {
+            method: "PUT",
+            body: JSON.stringify(body),
+          });
+          await refreshLines(activityType);
+        } else {
+          await enqueue(
+            "productive_line_update",
+            `${pid}-${projId}-${userId}-pl-upd-${kind}-${lineId}`,
+            { kind, id: lineId, body },
+            userId,
+          );
+          await applyOptimisticLocal();
+          void useSyncStore.getState().refreshStatus();
+        }
+
+        clearEditFormState();
+        setShowSheet(false);
+        showAlert({
+          title: isOnline ? "Actualizado" : "Sin internet",
+          message: isOnline
+            ? "La línea productiva se actualizó correctamente."
+            : "Los cambios quedaron en cola y se enviarán al sincronizar.",
+          type: isOnline ? "success" : "warning",
+        });
+        return;
+      }
+
       const finishSuccess = (offline: boolean) => {
+        skipFormDraftPersistRef.current = true;
+        clearFormDraft();
         setShowSheet(false);
         setAgriFormLines([]);
         setLivestockFormLines([]);
@@ -1107,13 +1714,6 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
         if (isOnline) {
           await apiFetch("/agricultural-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
         } else {
-          await enqueue(
-            "productive_lines_bulk",
-            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
-            { kind, body: { lines } },
-            userId,
-          );
-          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
           const forms = agriFormLines.filter((f) => f.line_id);
           const optimistic: ExistingAgriculturalLine[] = forms.map((f, idx) => ({
             id: optimisticBase - idx,
@@ -1126,6 +1726,13 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
             production: parseFloat(f.production) || 0,
             date: formatDateForApi(f.date),
           }));
+          await enqueue(
+            "productive_lines_bulk",
+            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
+            { kind, body: { lines }, local_ids: optimistic.map((o) => o.id) },
+            userId,
+          );
+          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
           setExistingAgriLines((prev) => [...prev, ...optimistic]);
           await mergeAppendedLinesIntoBundleCache(pid, projId, userId, kind, optimistic);
           void useSyncStore.getState().refreshStatus();
@@ -1153,13 +1760,6 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
         if (isOnline) {
           await apiFetch("/livestock-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
         } else {
-          await enqueue(
-            "productive_lines_bulk",
-            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
-            { kind, body: { lines } },
-            userId,
-          );
-          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
           const forms = livestockFormLines.filter((f) => f.line_id);
           const optimistic: ExistingLivestockLine[] = forms.map((f, idx) => ({
             id: optimisticBase - idx,
@@ -1173,6 +1773,13 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
             production: parseFloat(f.production) || 0,
             date: formatDateForApi(f.date),
           }));
+          await enqueue(
+            "productive_lines_bulk",
+            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
+            { kind, body: { lines }, local_ids: optimistic.map((o) => o.id) },
+            userId,
+          );
+          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
           setExistingLivestockLines((prev) => [...prev, ...optimistic]);
           await mergeAppendedLinesIntoBundleCache(pid, projId, userId, kind, optimistic);
           void useSyncStore.getState().refreshStatus();
@@ -1197,13 +1804,6 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
         if (isOnline) {
           await apiFetch("/forest-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
         } else {
-          await enqueue(
-            "productive_lines_bulk",
-            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
-            { kind, body: { lines } },
-            userId,
-          );
-          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
           const forms = forestFormLines.filter((f) => f.line_id && f.unit_of_measure_id);
           const optimistic: ExistingForestLine[] = forms.map((f, idx) => ({
             id: optimisticBase - idx,
@@ -1217,6 +1817,13 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
             production: parseFloat(f.production) || 0,
             date: formatDateForApi(f.date),
           }));
+          await enqueue(
+            "productive_lines_bulk",
+            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
+            { kind, body: { lines }, local_ids: optimistic.map((o) => o.id) },
+            userId,
+          );
+          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
           setExistingForestLines((prev) => [...prev, ...optimistic]);
           await mergeAppendedLinesIntoBundleCache(pid, projId, userId, kind, optimistic);
           void useSyncStore.getState().refreshStatus();
@@ -1246,13 +1853,6 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
         if (isOnline) {
           await apiFetch("/fishing-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
         } else {
-          await enqueue(
-            "productive_lines_bulk",
-            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
-            { kind, body: { lines } },
-            userId,
-          );
-          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
           const forms = fishingFormLines.filter((f) => f.type_id && f.fishing_area_id && f.species.length > 0);
           const optimistic: ExistingFishingLine[] = forms.map((f, idx) => ({
             id: optimisticBase - idx,
@@ -1266,6 +1866,13 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
             date: formatDateForApi(f.date),
             lines: f.species.map((s) => ({ line_id: s.line_id })),
           }));
+          await enqueue(
+            "productive_lines_bulk",
+            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
+            { kind, body: { lines }, local_ids: optimistic.map((o) => o.id) },
+            userId,
+          );
+          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
           setExistingFishingLines((prev) => [...prev, ...optimistic]);
           await mergeAppendedLinesIntoBundleCache(pid, projId, userId, kind, optimistic);
           void useSyncStore.getState().refreshStatus();
@@ -1298,13 +1905,6 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
         if (isOnline) {
           await apiFetch("/aquaculture-lines/bulk", { method: "POST", body: JSON.stringify({ lines }) });
         } else {
-          await enqueue(
-            "productive_lines_bulk",
-            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
-            { kind, body: { lines } },
-            userId,
-          );
-          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
           const forms = aquacultureFormLines.filter((f) => f.type_id && f.area_crop_id && f.species.length > 0);
           const optimistic: ExistingAquacultureLine[] = forms.map((f, idx) => ({
             id: optimisticBase - idx,
@@ -1321,6 +1921,13 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
             date: formatDateForApi(f.date),
             lines: f.species.map((s) => ({ line_id: s.line_id })),
           }));
+          await enqueue(
+            "productive_lines_bulk",
+            `${pid}-${projId}-${userId}-pl-${kind}-${Date.now()}`,
+            { kind, body: { lines }, local_ids: optimistic.map((o) => o.id) },
+            userId,
+          );
+          await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
           setExistingAquacultureLines((prev) => [...prev, ...optimistic]);
           await mergeAppendedLinesIntoBundleCache(pid, projId, userId, kind, optimistic);
           void useSyncStore.getState().refreshStatus();
@@ -1342,6 +1949,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
     projectId,
     currentUserId,
     activityType,
+    editingLineId,
     agriFormLines,
     livestockFormLines,
     forestFormLines,
@@ -1351,6 +1959,8 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
     refreshLines,
     lineOptions,
     allLineOptions,
+    clearFormDraft,
+    clearEditFormState,
   ]);
 
   const handleOpenComplementarySheet = useCallback(() => {
@@ -1358,17 +1968,25 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
       showAlert({ title: "Sin componente", message: "No se encontró el componente de Líneas Productivas.", type: "error" });
       return;
     }
+    const restored = beginApplySession(complementaryAnswers);
+    setComplementaryAnswers(restored as Record<number, any>);
     fetchQuestions(productiveLinesComponent.id);
     setShowComplementarySheet(true);
-  }, [productiveLinesComponent, fetchQuestions, showAlert]);
+  }, [productiveLinesComponent, fetchQuestions, showAlert, beginApplySession, complementaryAnswers]);
 
-  const handleComplementaryAnswerChange = useCallback((questionId: number, value: any) => {
-    setComplementaryAnswers((prev) => ({ ...prev, [questionId]: value }));
-  }, []);
+  const handleCloseComplementarySheet = useCallback(() => {
+    persistOnClose(complementaryAnswers);
+    setShowComplementarySheet(false);
+  }, [complementaryAnswers, persistOnClose]);
+
+  const handleComplementaryAnswerChange = useMemo(
+    () => wrapAnswerChange(setComplementaryAnswers),
+    [wrapAnswerChange],
+  );
 
   const handleCarouselCardLayout = useCallback((event: LayoutChangeEvent) => {
     const cardHeight = event.nativeEvent.layout.height;
-    const requiredHeight = cardHeight + verticalScale(12);
+    const requiredHeight = cardHeight + verticalScale(4);
     setPagerHeight((prev) => (requiredHeight > prev ? requiredHeight : prev));
   }, []);
 
@@ -1410,12 +2028,14 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
         await markInterventionMethodApplied(pid, projId, PRODUCTIVE_LINES_INTERVENTION_METHOD_ID, userId);
       }
       setMethodAlreadyApplied(true);
+      setHasComplementarySurvey(true);
+      markSavedAndSkipPersist();
       setShowComplementarySheet(false);
       showAlert({ title: isOnline ? "Guardado" : "Sin internet", message: isOnline ? "Los datos complementarios se guardaron correctamente." : "Los datos se guardaron localmente y se enviarán al sincronizar.", type: isOnline ? "success" : "warning" });
     } catch {
       showAlert({ title: "Error", message: "No se pudieron guardar los datos complementarios.", type: "error" });
     }
-  }, [complementaryAnswers, productiveLinesComponent, producerId, projectId, currentUserId, showAlert]);
+  }, [complementaryAnswers, productiveLinesComponent, producerId, projectId, currentUserId, showAlert, markSavedAndSkipPersist]);
 
   // ── Derived data ───────────────────────────────────────────────────────────
 
@@ -1429,7 +2049,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
 
   const unifiedLines = useMemo<UnifiedLineItem[]>(() => {
     const agri = existingAgriLines.map((l) => ({
-      key: `agri-${l.id}`, type: "agricola" as const,
+      key: `agri-${l.id}`, id: l.id, type: "agricola" as const,
       lineName: l.line?.name ?? getLineName(l.line_id, allLineOptions),
       fields: [
         { label: "Área (m²)", value: String(l.area) },
@@ -1439,7 +2059,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
       ],
     }));
     const livestock = existingLivestockLines.map((l) => ({
-      key: `livestock-${l.id}`, type: "pecuaria" as const,
+      key: `livestock-${l.id}`, id: l.id, type: "pecuaria" as const,
       lineName: l.line?.name ?? getLineName(l.line_id, allLineOptions),
       fields: [
         { label: "Área (m²)", value: String(l.area) },
@@ -1450,7 +2070,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
       ],
     }));
     const forest = existingForestLines.map((l) => ({
-      key: `forest-${l.id}`, type: "forestal" as const,
+      key: `forest-${l.id}`, id: l.id, type: "forestal" as const,
       lineName: l.line?.name ?? getLineName(l.line_id, allLineOptions),
       fields: [
         { label: "Área (m²)", value: String(l.area) },
@@ -1460,7 +2080,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
       ],
     }));
     const fishing = existingFishingLines.map((l) => ({
-      key: `fishing-${l.id}`, type: "pesca" as const,
+      key: `fishing-${l.id}`, id: l.id, type: "pesca" as const,
       lineName: l.type_name ?? getAssistantName(l.type_id, typesOfFishing),
       fields: [
         { label: "Zona de pesca", value: l.fishing_area_name ?? getAssistantName(l.fishing_area_id ?? 0, fishingAreas) },
@@ -1469,7 +2089,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
       ],
     }));
     const aquaculture = existingAquacultureLines.map((l) => ({
-      key: `aqua-${l.id}`, type: "acuicola" as const,
+      key: `aqua-${l.id}`, id: l.id, type: "acuicola" as const,
       lineName: l.type_system_name ?? getAssistantName(l.type_id, aquacultureTypes),
       fields: [
         { label: "Nº animales", value: String(l.number_of_animals) },
@@ -1480,6 +2100,15 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
     }));
     return [...agri, ...livestock, ...forest, ...fishing, ...aquaculture];
   }, [existingAgriLines, existingLivestockLines, existingForestLines, existingFishingLines, existingAquacultureLines, allLineOptions, typesOfFishing, fishingAreas, aquacultureTypes]);
+
+  const unifiedLinesIdentity = useMemo(
+    () => unifiedLines.map((item) => item.key).join("|"),
+    [unifiedLines],
+  );
+
+  useEffect(() => {
+    setCarouselPage(0);
+  }, [unifiedLinesIdentity]);
 
   const filteredLineOptions = useMemo(() => {
     if (!lineSearchQuery.trim()) return lineOptions;
@@ -1558,15 +2187,39 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
           <View style={styles.carouselHeader}>
             <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>Líneas productivas</ThemedText>
           </View>
-          <PagerViewCompat style={[styles.pagerView, { height: pagerHeight }]} initialPage={0}>
+          <PagerViewCompat
+            style={[styles.pagerView, { height: pagerHeight }]}
+            initialPage={0}
+            onPageSelected={setCarouselPage}
+          >
             {unifiedLines.map((item) => (
               <View key={item.key} style={styles.pagerPage} collapsable={false}>
                 <View style={styles.carouselCardWrapper} onLayout={handleCarouselCardLayout}>
-                  <ExistingLineCard lineName={item.lineName} activityType={item.type} fields={item.fields} />
+                  <ExistingLineCard
+                    lineName={item.lineName}
+                    activityType={item.type}
+                    fields={item.fields}
+                    onEdit={() => void handleEditLine(item)}
+                  />
                 </View>
               </View>
             ))}
           </PagerViewCompat>
+          {unifiedLines.length > 1 && (
+            <View style={styles.carouselDots}>
+              {unifiedLines.map((item, index) => (
+                <View
+                  key={item.key}
+                  style={[
+                    styles.carouselDot,
+                    index === carouselPage
+                      ? styles.carouselDotActive
+                      : styles.carouselDotInactive,
+                  ]}
+                />
+              ))}
+            </View>
+          )}
           <TouchableOpacity style={styles.complementaryButton} onPress={handleOpenComplementarySheet} activeOpacity={0.8}>
             <ClipboardList size={responsiveFont(18)} color="#fff" />
             <ThemedText lightColor="#fff" darkColor="#fff" type="defaultSemiBold" style={styles.complementaryButtonText}>Datos complementarios</ThemedText>
@@ -1689,7 +2342,9 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
                 return (
                   <TouchableOpacity key={sp.id} style={styles.speciesPickerOption} onPress={() => handleToggleSpecies({ line_id: sp.id, name: sp.name })} activeOpacity={0.8}>
                     <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
-                      {isSelected && <ThemedText lightColor="#fff" darkColor="#fff" style={styles.checkmark}>✓</ThemedText>}
+                      {isSelected && (
+                        <Check size={responsiveFont(12)} color="#fff" strokeWidth={3} />
+                      )}
                     </View>
                     <ThemedText style={styles.pickerOptionText}>{sp.name}</ThemedText>
                   </TouchableOpacity>
@@ -1718,23 +2373,34 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
       >
         <View style={styles.sheetHeader}>
           <ThemedText type="defaultSemiBold" style={styles.sheetTitle} lightColor="#333" darkColor="#333" numberOfLines={1}>
-            {ACTIVITY_TYPE_LABELS[activityType]}
+            {editingLineId != null
+              ? `Editar · ${ACTIVITY_TYPE_LABELS[activityType]}`
+              : ACTIVITY_TYPE_LABELS[activityType]}
           </ThemedText>
-          <TouchableOpacity style={styles.closeButton} onPress={() => setShowSheet(false)} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={styles.closeButton}
+            onPress={() => {
+              if (editingLineId != null) clearEditFormState();
+              setShowSheet(false);
+            }}
+            activeOpacity={0.7}
+          >
             <X size={responsiveFont(20)} color="#666" />
           </TouchableOpacity>
         </View>
 
-        <GHScrollView ref={tabScrollRef} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsRow} style={styles.tabsScroll}>
-          {formLines.map((_, i) => (
-            <TouchableOpacity key={i} style={[styles.lineTab, activeLineIndex === i && styles.lineTabActive]}
-              onPress={() => { setActiveLineIndex(i); tabScrollRef.current?.scrollTo({ x: Math.max(0, i * widthScale(84) - widthScale(100)), animated: true }); }}
-              activeOpacity={0.8}
-            >
-              <ThemedText lightColor={activeLineIndex === i ? "#fff" : "#555"} darkColor={activeLineIndex === i ? "#fff" : "#aaa"} style={styles.lineTabText}>Línea {i + 1}</ThemedText>
-            </TouchableOpacity>
-          ))}
-        </GHScrollView>
+        {editingLineId == null && (
+          <GHScrollView ref={tabScrollRef} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsRow} style={styles.tabsScroll}>
+            {formLines.map((_, i) => (
+              <TouchableOpacity key={i} style={[styles.lineTab, activeLineIndex === i && styles.lineTabActive]}
+                onPress={() => { setActiveLineIndex(i); tabScrollRef.current?.scrollTo({ x: Math.max(0, i * widthScale(84) - widthScale(100)), animated: true }); }}
+                activeOpacity={0.8}
+              >
+                <ThemedText lightColor={activeLineIndex === i ? "#fff" : "#555"} darkColor={activeLineIndex === i ? "#fff" : "#aaa"} style={styles.lineTabText}>Línea {i + 1}</ThemedText>
+              </TouchableOpacity>
+            ))}
+          </GHScrollView>
+        )}
 
         <BottomSheetScrollView contentContainerStyle={styles.formContent} keyboardShouldPersistTaps="handled">
           {activityType === "agricola" && agriFormLines[activeLineIndex] && (
@@ -1767,7 +2433,9 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
 
           <TouchableOpacity style={[styles.saveButton, saving && styles.saveButtonDisabled]} onPress={handleSave} disabled={saving} activeOpacity={0.8}>
             {saving ? <ActivityIndicator size="small" color="#fff" /> : (
-              <ThemedText lightColor="#fff" darkColor="#fff" type="defaultSemiBold" style={styles.saveButtonText}>Guardar</ThemedText>
+              <ThemedText lightColor="#fff" darkColor="#fff" type="defaultSemiBold" style={styles.saveButtonText}>
+                {editingLineId != null ? "Guardar cambios" : "Guardar"}
+              </ThemedText>
             )}
           </TouchableOpacity>
         </BottomSheetScrollView>
@@ -1775,7 +2443,7 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
 
       <SurveyBottomSheet
         visible={showComplementarySheet}
-        onClose={() => setShowComplementarySheet(false)}
+        onClose={handleCloseComplementarySheet}
         title={productiveLinesComponent?.name ?? "LÍNEAS PRODUCTIVAS"}
         questions={localComplementaryQuestions}
         answers={complementaryAnswers}
@@ -1783,6 +2451,9 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
         onSave={handleSaveComplementary}
         getTypeName={getCanonicalTypeName}
         loading={loadingQuestions}
+        wizardSessionKey={wizardSessionKey}
+        initialIndex={draftWizardIndex}
+        onIndexChange={handleWizardIndexChange}
       />
     </View>
   );
@@ -1804,19 +2475,42 @@ const styles = StyleSheet.create({
   typeSelectorText: { fontSize: responsiveFont(15), color: "#333" },
   createButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#1a7a3a", paddingVertical: verticalScale(10), borderRadius: widthScale(10), gap: widthScale(8) },
   createButtonText: { fontSize: responsiveFont(15) },
-  carouselContainer: { flex: 1, marginBottom: TAB_BAR_RESERVED, gap: verticalScale(6) },
+  carouselContainer: { flex: 1, marginBottom: TAB_BAR_RESERVED, gap: verticalScale(4) },
   carouselHeader: { flexDirection: "row", alignItems: "center", paddingHorizontal: CAROUSEL_PADDING },
   sectionTitle: { fontSize: responsiveFont(15), color: "#333" },
   pagerView: { flexGrow: 0 },
-  pagerPage: { flex: 1, alignItems: "center", justifyContent: "flex-start", paddingTop: verticalScale(4) },
+  pagerPage: { flex: 1, alignItems: "center", justifyContent: "flex-start", paddingTop: verticalScale(2) },
   carouselCardWrapper: { width: CARD_WIDTH },
-  complementaryButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#1a7a3a", borderRadius: widthScale(10), marginHorizontal: CAROUSEL_PADDING, marginTop: verticalScale(14), marginBottom: verticalScale(4), paddingVertical: verticalScale(10), gap: widthScale(8) },
+  carouselDots: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: widthScale(6),
+    marginTop: verticalScale(-6),
+    marginBottom: verticalScale(2),
+  },
+  carouselDot: {
+    width: widthScale(6),
+    height: widthScale(6),
+    borderRadius: widthScale(3),
+  },
+  carouselDotActive: { backgroundColor: "#1a7a3a" },
+  carouselDotInactive: { backgroundColor: "rgba(17, 24, 28, 0.25)" },
+  complementaryButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#1a7a3a", borderRadius: widthScale(10), marginHorizontal: CAROUSEL_PADDING, marginTop: verticalScale(12), marginBottom: verticalScale(4), paddingVertical: verticalScale(10), gap: widthScale(8) },
   complementaryButtonText: { fontSize: responsiveFont(15) },
   existingCard: { backgroundColor: "#fff", borderRadius: widthScale(10), padding: widthScale(12), gap: verticalScale(8), shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4, elevation: 1 },
   existingCardHeader: { flexDirection: "row", alignItems: "center", gap: widthScale(8), paddingBottom: verticalScale(4), borderBottomWidth: 1, borderBottomColor: "rgba(0,0,0,0.05)" },
   existingCardTitle: { flex: 1, fontSize: responsiveFont(18), color: "#1a7a3a" },
   activityBadge: { paddingHorizontal: widthScale(8), paddingVertical: verticalScale(2), borderRadius: widthScale(6) },
   activityBadgeText: { fontSize: responsiveFont(13), fontWeight: "700" },
+  editIconButton: {
+    width: widthScale(32),
+    height: widthScale(32),
+    borderRadius: widthScale(8),
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(26,122,58,0.08)",
+  },
   existingCardGrid: { flexDirection: "row", flexWrap: "wrap", gap: verticalScale(8) },
   existingCardCell: { width: "48%", gap: verticalScale(2) },
   existingCardLabel: { fontSize: responsiveFont(15), color: "#666" },
@@ -1839,7 +2533,6 @@ const styles = StyleSheet.create({
   speciesPickerOption: { flexDirection: "row", alignItems: "center", paddingVertical: verticalScale(10), paddingHorizontal: widthScale(14), borderRadius: widthScale(8), gap: widthScale(10) },
   checkbox: { width: widthScale(20), height: widthScale(20), borderRadius: widthScale(4), borderWidth: 2, borderColor: "#ccc", justifyContent: "center", alignItems: "center" },
   checkboxSelected: { backgroundColor: "#1a7a3a", borderColor: "#1a7a3a" },
-  checkmark: { fontSize: responsiveFont(13), fontWeight: "700" },
   sheetBackground: { backgroundColor: "#f4fbf7", borderTopLeftRadius: widthScale(24), borderTopRightRadius: widthScale(24) },
   handleIndicator: { backgroundColor: "#11181C", width: widthScale(40) },
   sheetHeader: { flexDirection: "row", alignItems: "center", paddingHorizontal: widthScale(16), paddingTop: verticalScale(4), paddingBottom: verticalScale(12), borderBottomWidth: 1, borderBottomColor: "rgba(0,0,0,0.06)" },

@@ -35,6 +35,9 @@ interface QuestionWizardProps {
   getTypeName: (typeId: number) => string;
   title?: string;
   ScrollViewComponent?: ComponentType<any>;
+  /** Restore step when reopening a draft sheet. */
+  initialIndex?: number;
+  onIndexChange?: (index: number) => void;
 }
 
 export function QuestionWizard({
@@ -46,8 +49,12 @@ export function QuestionWizard({
   getTypeName,
   title,
   ScrollViewComponent = ScrollView,
+  initialIndex = 0,
+  onIndexChange,
 }: QuestionWizardProps) {
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentIndex, setCurrentIndex] = useState(() =>
+    Math.max(0, initialIndex),
+  );
   const pagerRef = useRef<GHScrollView>(null);
   const progressWidth = useSharedValue(0);
   const { questionDetails, fetchQuestionDetail } = useCharacterizationStore();
@@ -248,6 +255,7 @@ export function QuestionWizard({
     (index: number) => {
       if (index >= 0 && index < totalQuestions) {
         setCurrentIndex(index);
+        onIndexChange?.(index);
         // Scroll pager to make the number visible
         pagerRef.current?.scrollTo({
           x: Math.max(0, index * widthScale(46) - widthScale(120)),
@@ -255,7 +263,7 @@ export function QuestionWizard({
         });
       }
     },
-    [totalQuestions],
+    [totalQuestions, onIndexChange],
   );
 
   const goNext = useCallback(() => {

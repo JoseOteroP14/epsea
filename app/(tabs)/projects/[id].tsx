@@ -36,10 +36,25 @@ interface ExtensionistProjectReport {
   total_assigned: number;
   total_surveyed_classification: number;
   total_surveyed_visit_1: number;
+  total_surveyed_visit_2: number;
   total_surveyed_visit_3: number;
   total_surveyed_general_information: number;
   total_surveyed_characterization: number;
   total_surveyed_property_information: number;
+}
+
+function resolveVisitSurveyedCount(
+  data: Record<string, unknown> | null | undefined,
+  keys: string[],
+): number {
+  if (!data) return 0;
+  for (const key of keys) {
+    const candidate = data[key];
+    if (candidate !== undefined && candidate !== null) {
+      return Number(candidate) || 0;
+    }
+  }
+  return 0;
 }
 
 function toPercent(value: number, total: number): number {
@@ -141,13 +156,21 @@ export default function ProjectDetailScreen() {
         { method: "GET" },
       );
 
-      const data = response?.data ?? response;
+      const data = (response?.data ?? response) as Record<string, unknown> | null;
       setProjectReport({
         total_assigned: Number(data?.total_assigned ?? 0),
         total_surveyed_classification: Number(data?.total_surveyed_classification ?? 0),
         total_surveyed_visit_1: Number(data?.total_surveyed_visit_1 ?? 0),
-        // El backend puede o no exponer aún `total_surveyed_visit_3`; usar 0 como fallback.
-        total_surveyed_visit_3: Number(data?.total_surveyed_visit_3 ?? 0),
+        total_surveyed_visit_2: resolveVisitSurveyedCount(data, [
+          "total_surveyed_visit_2",
+          "total_surveyed_visit2",
+          "total_surveyed_visits_2",
+        ]),
+        total_surveyed_visit_3: resolveVisitSurveyedCount(data, [
+          "total_surveyed_visit_3",
+          "total_surveyed_visit3",
+          "total_surveyed_visits_3",
+        ]),
         total_surveyed_general_information: Number(
           data?.total_surveyed_general_information ?? 0,
         ),
@@ -226,6 +249,11 @@ export default function ProjectDetailScreen() {
         value: projectReport?.total_surveyed_visit_1 ?? 0,
       },
       {
+        key: "visit2",
+        label: "Visita 2",
+        value: projectReport?.total_surveyed_visit_2 ?? 0,
+      },
+      {
         key: "visit3",
         label: "Visita 3",
         value: projectReport?.total_surveyed_visit_3 ?? 0,
@@ -245,8 +273,8 @@ export default function ProjectDetailScreen() {
     return Math.min(100, Math.max(0, sum / reportRows.length));
   }, [reportRows]);
 
-  const radialSize = widthScale(176);
-  const radialStrokeWidth = widthScale(18);
+  const radialSize = widthScale(141);
+  const radialStrokeWidth = widthScale(14.4);
   const radialRadius = (radialSize - radialStrokeWidth) / 2;
   const radialCircumference = 2 * Math.PI * radialRadius;
   const radialDashOffset =
@@ -678,12 +706,12 @@ const styles = StyleSheet.create({
   },
   radialSection: {
     alignItems: "center",
-    paddingTop: verticalScale(4),
-    paddingBottom: verticalScale(8),
+    paddingTop: verticalScale(2),
+    paddingBottom: verticalScale(4),
   },
   radialWrapper: {
-    width: widthScale(176),
-    height: widthScale(176),
+    width: widthScale(141),
+    height: widthScale(141),
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
@@ -694,13 +722,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   radialPercentText: {
-    fontSize: responsiveFont(28),
+    fontSize: responsiveFont(22),
     color: "#ff5b00",
     fontWeight: "800",
   },
   radialLabelText: {
     marginTop: verticalScale(2),
-    fontSize: responsiveFont(16),
+    fontSize: responsiveFont(13),
     color: "#0f7a2f",
     fontWeight: "600",
   },
@@ -729,12 +757,12 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   statsSheetList: {
-    gap: verticalScale(10),
+    gap: verticalScale(8),
   },
   surveyRow: {
     backgroundColor: "rgba(255,255,255,0.9)",
     borderRadius: widthScale(10),
-    paddingVertical: verticalScale(10),
+    paddingVertical: verticalScale(8),
     paddingHorizontal: widthScale(12),
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.05)",
@@ -744,21 +772,21 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     gap: widthScale(8),
-    marginBottom: verticalScale(8),
+    marginBottom: verticalScale(6),
   },
   surveyLabel: {
     flex: 1,
-    fontSize: responsiveFont(15),
+    fontSize: responsiveFont(14),
     fontWeight: "600",
   },
   surveyValue: {
-    fontSize: responsiveFont(14),
+    fontSize: responsiveFont(13),
     color: "#11181C",
     fontWeight: "600",
   },
   progressTrack: {
     width: "100%",
-    height: verticalScale(8),
+    height: verticalScale(7),
     borderRadius: widthScale(4),
     backgroundColor: PROJECT_STATS_SHEET_COLORS.progressTrack,
     overflow: "hidden",

@@ -2,6 +2,11 @@ import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
 import { checkConnectivity } from "@/hooks/use-network";
+import { useSurveyApplyDraft } from "@/hooks/use-survey-apply-draft";
+import {
+  buildSurveyEditDraftKey,
+  useSurveyDraftStore,
+} from "@/store/useSurveyDraftStore";
 import type { Question } from "@/schemas/characterization";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
@@ -26,7 +31,9 @@ import {
     serializeCharacterizationOfflineUpsert,
     serializePersonalOfflineUpsert,
     snapshotServerBaselineAnswers,
+    unwrapOfflineAnswerUpdateValue,
 } from "@/utils/survey/offline-new-value-serializers";
+import { rewritePendingSurveyAnswerCreate } from "@/utils/survey/rewrite-pending-survey-answers";
 import {
     collectActiveDependentChildQuestionIds,
     collectListaDependienteChildQuestionIds,
@@ -48,7 +55,7 @@ import {
     Layers,
     Pencil,
 } from "lucide-react-native";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     ScrollView,
@@ -213,13 +220,37 @@ export function CharacterizationTab({
   const [editAnswers, setEditAnswers] = useState<Record<number, any>>({});
   /** Padre lista dependiente + hijas opcionales para el mismo bottom sheet que en información personal */
   const [editQuestions, setEditQuestions] = useState<Question[]>([]);
+  const skipEditDraftPersistRef = useRef(false);
+  const setSurveyDraft = useSurveyDraftStore((s) => s.setDraft);
+  const getSurveyDraft = useSurveyDraftStore((s) => s.getDraft);
+  const clearSurveyDraft = useSurveyDraftStore((s) => s.clearDraft);
 
-  // Snapshot of answers before opening sheet, used to restore on close without save
+  // Snapshot of answers before opening sheet, used to restore display state on close
   const answersSnapshotRef = useRef<Record<number, any>>({});
 
   const baselineAnswersRef = useRef<Record<number, unknown>>({});
   const baselineItemNamesRef = useRef<Record<number, string | string[] | null>>({});
   const baselineDataScopeRef = useRef<string>("");
+
+  const {
+    wizardSessionKey,
+    draftWizardIndex,
+    syncAnswersRef,
+    beginApplySession,
+    persistOnClose,
+    markSavedAndSkipPersist,
+    handleWizardIndexChange,
+    wrapAnswerChange,
+  } = useSurveyApplyDraft({
+    producerId,
+    projectId,
+    interventionMethodId: CHARACTERIZATION_INTERVENTION_METHOD_ID,
+    hasSurvey,
+  });
+
+  useEffect(() => {
+    syncAnswersRef(answers);
+  }, [answers, syncAnswersRef]);
 
   // Refresh answers when upload completes so pending badges clear
   const isUploading = useSyncStore((state) => state.isUploading);
@@ -365,18 +396,16 @@ export function CharacterizationTab({
       try {
         const updates = await getAnswerUpdatesByMethod(pid, projId, currentUserId, CHARACTERIZATION_INTERVENTION_METHOD_ID);
         for (const upd of updates) {
-          let usedParsed = false;
-          try {
-            const parsed = JSON.parse(upd.new_value ?? "");
-            if (Array.isArray(parsed) || (parsed && typeof parsed === "object")) {
-              merged[upd.question_id] = parsed;
-              usedParsed = true;
-            }
-          } catch {}
-          if (!usedParsed) {
-            merged[upd.question_id] = upd.new_value;
-          }
+          const unwrapped = unwrapOfflineAnswerUpdateValue(upd.new_value);
+          merged[upd.question_id] = unwrapped.value;
           pendingIds.add(upd.question_id);
+          if (
+            unwrapped.childQuestionId != null &&
+            Number.isFinite(unwrapped.childQuestionId)
+          ) {
+            merged[unwrapped.childQuestionId] = unwrapped.childValue;
+            pendingIds.add(unwrapped.childQuestionId);
+          }
         }
       } catch (e) {
         console.error("Failed to load pending answer updates:", e);
@@ -497,42 +526,70 @@ export function CharacterizationTab({
     setEditingQuestion(null);
     setEditQuestions([]);
     answersSnapshotRef.current = { ...answers };
+    const restored = beginApplySession(answers);
+    setAnswers(restored as Record<number, any>);
     fetchQuestions(activeComponent.id);
     setShowSheet(true);
-  }, [activeComponent, fetchQuestions, answers]);
+  }, [activeComponent, fetchQuestions, answers, beginApplySession]);
 
   const handleCloseSheet = useCallback(() => {
     if (!editingQuestion) {
+      persistOnClose(answers);
       setAnswers(answersSnapshotRef.current);
+    } else if (!skipEditDraftPersistRef.current) {
+      setSurveyDraft(
+        buildSurveyEditDraftKey(
+          producerId,
+          projectId,
+          CHARACTERIZATION_INTERVENTION_METHOD_ID,
+          editingQuestion.id,
+        ),
+        { answers: editAnswers, wizardIndex: 0 },
+      );
     }
+    skipEditDraftPersistRef.current = false;
     setShowSheet(false);
     setEditingQuestion(null);
     setEditQuestions([]);
-  }, [editingQuestion]);
+  }, [
+    editingQuestion,
+    answers,
+    editAnswers,
+    persistOnClose,
+    producerId,
+    projectId,
+    setSurveyDraft,
+  ]);
 
-  const handleAnswerChange = useCallback((questionId: number, value: any) => {
-    setAnswers((prev) => {
-      if (value === undefined) {
-        if (prev[questionId] === undefined) return prev;
-        const next = { ...prev };
-        delete next[questionId];
-        return next;
-      }
-      return { ...prev, [questionId]: value };
-    });
-  }, []);
+  const handleAnswerChange = useMemo(
+    () => wrapAnswerChange(setAnswers),
+    [wrapAnswerChange],
+  );
 
   const handleEditAnswerChange = useCallback((questionId: number, value: any) => {
     setEditAnswers((prev) => {
+      let next: Record<number, any>;
       if (value === undefined) {
         if (prev[questionId] === undefined) return prev;
-        const next = { ...prev };
+        next = { ...prev };
         delete next[questionId];
-        return next;
+      } else {
+        next = { ...prev, [questionId]: value };
       }
-      return { ...prev, [questionId]: value };
+      if (editingQuestion) {
+        setSurveyDraft(
+          buildSurveyEditDraftKey(
+            producerId,
+            projectId,
+            CHARACTERIZATION_INTERVENTION_METHOD_ID,
+            editingQuestion.id,
+          ),
+          { answers: next, wizardIndex: 0 },
+        );
+      }
+      return next;
     });
-  }, []);
+  }, [editingQuestion, producerId, projectId, setSurveyDraft]);
 
   // Save new survey (apply mode)
   const handleSave = useCallback(async () => {
@@ -629,6 +686,7 @@ export function CharacterizationTab({
       }
 
       // Sheet dismiss calls handleCloseSheet → restores snapshot; keep submitted answers
+      markSavedAndSkipPersist();
       answersSnapshotRef.current = { ...answers };
       setMethodAlreadyApplied(true);
       setShowSheet(false);
@@ -638,7 +696,7 @@ export function CharacterizationTab({
       console.error("Failed to save answers:", error);
       showAlert({ title: "Error", message: "No se pudieron guardar las respuestas.", type: "error" });
     }
-  }, [answers, activeComponent, producerId, projectId, currentUserId, showAlert]);
+  }, [answers, activeComponent, producerId, projectId, currentUserId, showAlert, markSavedAndSkipPersist]);
 
   // Edit single answer
   const handleEditPress = useCallback(
@@ -662,19 +720,38 @@ export function CharacterizationTab({
         questionsForEdit = [question, ...childQuestions];
       }
 
-      const initialAnswers: Record<number, unknown> = {};
-      for (const q of questionsForEdit) {
-        if (answers[q.id] !== undefined) {
-          initialAnswers[q.id] = answers[q.id];
-        }
-      }
+      const editKey = buildSurveyEditDraftKey(
+        producerId,
+        projectId,
+        CHARACTERIZATION_INTERVENTION_METHOD_ID,
+        questionId,
+      );
+      const draft = getSurveyDraft(editKey);
 
       setEditingQuestion(question);
       setEditQuestions(questionsForEdit);
-      setEditAnswers(initialAnswers as Record<number, any>);
+      if (draft && Object.keys(draft.answers).length > 0) {
+        setEditAnswers(draft.answers as Record<number, any>);
+      } else {
+        const initialAnswers: Record<number, unknown> = {};
+        for (const q of questionsForEdit) {
+          if (answers[q.id] !== undefined) {
+            initialAnswers[q.id] = answers[q.id];
+          }
+        }
+        setEditAnswers(initialAnswers as Record<number, any>);
+      }
       setShowSheet(true);
     },
-    [localQuestions, answers, getCanonicalTypeName, questionDetails],
+    [
+      localQuestions,
+      answers,
+      getCanonicalTypeName,
+      questionDetails,
+      producerId,
+      projectId,
+      getSurveyDraft,
+    ],
   );
 
   const handleEditSave = useCallback(async () => {
@@ -685,6 +762,19 @@ export function CharacterizationTab({
     const typeName = getCanonicalTypeName(editingQuestion.question_type_id);
     const isDependent = typeName === "dependent_list";
     const isMultiple = editingQuestion.multiple === true;
+    const editKey = buildSurveyEditDraftKey(
+      producerId,
+      projectId,
+      CHARACTERIZATION_INTERVENTION_METHOD_ID,
+      editingQuestion.id,
+    );
+    const finishEditClose = () => {
+      clearSurveyDraft(editKey);
+      skipEditDraftPersistRef.current = true;
+      setShowSheet(false);
+      setEditingQuestion(null);
+      setEditQuestions([]);
+    };
 
     const detailParent = questionDetails[editingQuestion.id];
     const requiredChildIds = isDependent
@@ -732,6 +822,105 @@ export function CharacterizationTab({
       const match = findOptionMatchingStoredValue(opts, val);
       return (match?.name as string | undefined) ?? null;
     };
+
+    const isLocalCreatePending =
+      answerId == null && pendingQuestionIds.has(editingQuestion.id);
+
+    const applyEditedAnswersToUi = () => {
+      if (isDependent) {
+        setAnswers((prev) => {
+          const next = { ...prev, [editingQuestion.id]: rawVal };
+          const childIdsInEdit = editQuestions
+            .filter((q) => q.id !== editingQuestion.id)
+            .map((q) => q.id);
+          for (const cid of childIdsInEdit) {
+            if (requiredChildIds.includes(cid)) {
+              const cv = editAnswers[cid];
+              if (!isSurveyAnswerEmpty(cv)) next[cid] = cv;
+              else delete next[cid];
+            } else {
+              delete next[cid];
+            }
+          }
+          return next;
+        });
+        setItemNames((prev) => {
+          const next = { ...prev };
+          delete next[editingQuestion.id];
+          const childIdsInEdit = editQuestions
+            .filter((q) => q.id !== editingQuestion.id)
+            .map((q) => q.id);
+          for (const cid of childIdsInEdit) {
+            if (requiredChildIds.includes(cid)) {
+              const cv = editAnswers[cid];
+              const name = !isSurveyAnswerEmpty(cv)
+                ? resolveItemName(cid, cv)
+                : null;
+              if (name) next[cid] = name;
+              else delete next[cid];
+            } else {
+              delete next[cid];
+            }
+          }
+          return next;
+        });
+        setPendingQuestionIds((prev) => new Set([...prev, editingQuestion.id]));
+      } else {
+        setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
+        setItemNames((prev) => {
+          const next = { ...prev };
+          delete next[editingQuestion.id];
+          return next;
+        });
+        setPendingQuestionIds((prev) => new Set([...prev, editingQuestion.id]));
+      }
+    };
+
+    if (isLocalCreatePending) {
+      const pid = Number(producerId);
+      const projId = Number(projectId ?? 0);
+      const compId = activeComponent?.id ?? 0;
+      const userId = currentUserId ?? 0;
+      const updates: { questionId: number; rawVal: unknown }[] = [
+        { questionId: editingQuestion.id, rawVal },
+      ];
+      if (isDependent) {
+        for (const cid of requiredChildIds) {
+          const cv = editAnswers[cid];
+          if (!isSurveyAnswerEmpty(cv)) {
+            updates.push({ questionId: cid, rawVal: cv });
+          }
+        }
+      }
+      try {
+        await rewritePendingSurveyAnswerCreate({
+          entityKey: `${pid}-${projId}-${compId}-${userId}`,
+          userId,
+          producerId: pid,
+          projectId: projId,
+          componentId: compId,
+          interventionMethodId: CHARACTERIZATION_INTERVENTION_METHOD_ID,
+          updates,
+        });
+        applyEditedAnswersToUi();
+        useSyncStore.getState().refreshStatus();
+        finishEditClose();
+        showAlert({
+          title: "Sin internet",
+          message:
+            "La respuesta pendiente se actualizó y se enviará al sincronizar.",
+          type: "warning",
+        });
+      } catch (error) {
+        console.error("Failed to rewrite pending survey create:", error);
+        showAlert({
+          title: "Error",
+          message: "No se pudo actualizar la respuesta pendiente.",
+          type: "error",
+        });
+      }
+      return;
+    }
 
     const isOnline = await checkConnectivity();
 
@@ -859,9 +1048,7 @@ export function CharacterizationTab({
           });
         }
 
-        setShowSheet(false);
-        setEditingQuestion(null);
-        setEditQuestions([]);
+        finishEditClose();
         showAlert({
           title: "Actualizado",
           message: "La respuesta se actualizó correctamente.",
@@ -897,8 +1084,22 @@ export function CharacterizationTab({
             primaryChildQuestionId:
               editSerializationCtx.primaryChildQuestionId,
             rawChildVal: editSerializationCtx.rawChildVal,
+            surveyId,
           })
-        : serializeCharacterizationOfflineUpsert(rawVal);
+        : serializeCharacterizationOfflineUpsert(rawVal, {
+            questionId: editingQuestion.id,
+            surveyId,
+            multiple: isMultiple,
+          });
+
+      if (answerId == null) {
+        showAlert({
+          title: "Error",
+          message: "No se encontró el identificador de la respuesta a editar.",
+          type: "error",
+        });
+        return;
+      }
 
       const baselineRow = baselineAnswersRef.current;
       const qId = editingQuestion.id;
@@ -924,8 +1125,13 @@ export function CharacterizationTab({
               primaryChildQuestionId:
                 baselineSerializationCtx.primaryChildQuestionId,
               rawChildVal: baselineSerializationCtx.rawChildVal,
+              surveyId,
             })
-          : serializeCharacterizationOfflineUpsert(baselineRaw);
+          : serializeCharacterizationOfflineUpsert(baselineRaw, {
+              questionId: editingQuestion.id,
+              surveyId,
+              multiple: isMultiple,
+            });
 
         if (
           offlinePendingValuesAreEquivalent({
@@ -969,9 +1175,7 @@ export function CharacterizationTab({
             return next;
           });
           useSyncStore.getState().refreshStatus();
-          setShowSheet(false);
-          setEditingQuestion(null);
-          setEditQuestions([]);
+          finishEditClose();
           showAlert({
             title: "Sin cambios pendientes",
             message:
@@ -994,58 +1198,8 @@ export function CharacterizationTab({
       });
 
       useSyncStore.getState().refreshStatus();
-
-      if (isDependent) {
-        setAnswers((prev) => {
-          const next = { ...prev, [editingQuestion.id]: rawVal };
-          const childIdsInEdit = editQuestions
-            .filter((q) => q.id !== editingQuestion.id)
-            .map((q) => q.id);
-          for (const cid of childIdsInEdit) {
-            if (requiredChildIds.includes(cid)) {
-              const cv = editAnswers[cid];
-              if (!isSurveyAnswerEmpty(cv)) next[cid] = cv;
-              else delete next[cid];
-            } else {
-              delete next[cid];
-            }
-          }
-          return next;
-        });
-        setItemNames((prev) => {
-          const next = { ...prev };
-          delete next[editingQuestion.id];
-          const childIdsInEdit = editQuestions
-            .filter((q) => q.id !== editingQuestion.id)
-            .map((q) => q.id);
-          for (const cid of childIdsInEdit) {
-            if (requiredChildIds.includes(cid)) {
-              const cv = editAnswers[cid];
-              const name = !isSurveyAnswerEmpty(cv)
-                ? resolveItemName(cid, cv)
-                : null;
-              if (name) next[cid] = name;
-              else delete next[cid];
-            } else {
-              delete next[cid];
-            }
-          }
-          return next;
-        });
-        setPendingQuestionIds((prev) => new Set([...prev, editingQuestion.id]));
-      } else {
-        setAnswers((prev) => ({ ...prev, [qId]: rawVal }));
-        setItemNames((prev) => {
-          const next = { ...prev };
-          delete next[qId];
-          return next;
-        });
-        setPendingQuestionIds((prev) => new Set([...prev, qId]));
-      }
-
-      setShowSheet(false);
-      setEditingQuestion(null);
-      setEditQuestions([]);
+      applyEditedAnswersToUi();
+      finishEditClose();
     }
   }, [
     editingQuestion,
@@ -1053,6 +1207,7 @@ export function CharacterizationTab({
     editAnswers,
     answerIds,
     surveyIds,
+    pendingQuestionIds,
     activeComponent,
     producerId,
     projectId,
@@ -1062,6 +1217,7 @@ export function CharacterizationTab({
     questionDetails,
     updateMultipleAnswers,
     localQuestions,
+    clearSurveyDraft,
   ]);
 
   if (loadingComponents) {
@@ -1135,6 +1291,9 @@ export function CharacterizationTab({
           onSave={handleSave}
           getTypeName={getCanonicalTypeName}
           loading={loadingQuestions}
+          wizardSessionKey={wizardSessionKey}
+          initialIndex={draftWizardIndex}
+          onIndexChange={handleWizardIndexChange}
         />
       </View>
     );
@@ -1170,7 +1329,8 @@ export function CharacterizationTab({
                         <ThemedText style={styles.pendingBadgeText}>PENDIENTE</ThemedText>
                       </View>
                     )}
-                    {answerIds[item.questionId] != null && (
+                    {(answerIds[item.questionId] != null ||
+                      pendingQuestionIds.has(item.questionId)) && (
                       <TouchableOpacity
                         style={[styles.editButton, item.isPending && styles.editButtonPending]}
                         onPress={() => handleEditPress(item.questionId)}

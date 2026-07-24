@@ -29,6 +29,7 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
+  type KeyboardTypeOptions,
 } from "react-native";
 
 interface QuestionRendererProps {
@@ -77,6 +78,75 @@ function normalizeQuestionType(value: unknown): string | null {
   return QUESTION_TYPE_ALIASES[normalized] ?? null;
 }
 
+function stripDiacritics(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/** Infer keyboard from field_innova_name / name / description (phone, email, document). */
+function resolveTextInputKeyboard(question: Question): {
+  keyboardType: KeyboardTypeOptions;
+  autoCapitalize: "none" | "sentences";
+  autoCorrect: boolean;
+  multiline: boolean;
+} {
+  const raw = question as Record<string, unknown>;
+  const haystack = stripDiacritics(
+    [
+      raw.field_innova_name,
+      raw.fieldInnovaName,
+      question.name,
+      question.description,
+      raw.placeholder,
+    ]
+      .filter((v): v is string => typeof v === "string" && v.length > 0)
+      .join(" ")
+      .toLowerCase(),
+  );
+
+  if (
+    /\b(phone|telephone|telefono|celular|movil|whatsapp|sms)\b/.test(haystack) ||
+    haystack.includes("numero telefon") ||
+    haystack.includes("telefono celular") ||
+    haystack.includes("telefono fijo")
+  ) {
+    return {
+      keyboardType: "phone-pad",
+      autoCapitalize: "none",
+      autoCorrect: false,
+      multiline: false,
+    };
+  }
+
+  if (/\b(email|correo|e-mail|mail)\b/.test(haystack) || haystack.includes("correo electronico")) {
+    return {
+      keyboardType: "email-address",
+      autoCapitalize: "none",
+      autoCorrect: false,
+      multiline: false,
+    };
+  }
+
+  if (
+    /\b(cedula|documento|identificacion|nit|nuip|pasaporte)\b/.test(haystack) ||
+    haystack.includes("numero de documento") ||
+    haystack.includes("numero de identificacion")
+  ) {
+    return {
+      keyboardType: "number-pad",
+      autoCapitalize: "none",
+      autoCorrect: false,
+      multiline: false,
+    };
+  }
+
+  return {
+    keyboardType: "default",
+    autoCapitalize: "sentences",
+    autoCorrect: true,
+    multiline: true,
+  };
+}
+
 function inferQuestionTypeFromMetadata(question: Question): string | null {
   const raw = question as Record<string, unknown>;
   const rawQuestionType =
@@ -119,6 +189,8 @@ function TextQuestion({
   value: string;
   onChange: (id: number, val: string) => void;
 }) {
+  const inputProps = resolveTextInputKeyboard(question);
+
   return (
     <TextInput
       style={styles.textInput}
@@ -127,7 +199,10 @@ function TextQuestion({
       value={value ?? ""}
       onChangeText={(text) => onChange(question.id, text)}
       maxLength={detail?.max_length ?? undefined}
-      multiline
+      keyboardType={inputProps.keyboardType}
+      autoCapitalize={inputProps.autoCapitalize}
+      autoCorrect={inputProps.autoCorrect}
+      multiline={inputProps.multiline}
     />
   );
 }
@@ -227,6 +302,9 @@ function NumericQuestion({
   value: string;
   onChange: (id: number, val: string) => void;
 }) {
+  const allowDecimals =
+    detail?.decimal_places == null || detail.decimal_places > 0;
+
   return (
     <TextInput
       style={styles.textInput}
@@ -238,7 +316,7 @@ function NumericQuestion({
       placeholderTextColor="rgba(17, 24, 28, 0.4)"
       value={value ?? ""}
       onChangeText={(text) => onChange(question.id, text)}
-      keyboardType="decimal-pad"
+      keyboardType={allowDecimals ? "decimal-pad" : "number-pad"}
     />
   );
 }

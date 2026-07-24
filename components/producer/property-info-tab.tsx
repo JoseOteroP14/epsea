@@ -2,6 +2,11 @@ import { ThemedText } from "@/components/themed-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
 import { checkConnectivity } from "@/hooks/use-network";
+import { useSurveyApplyDraft } from "@/hooks/use-survey-apply-draft";
+import {
+  buildSurveyEditDraftKey,
+  useSurveyDraftStore,
+} from "@/store/useSurveyDraftStore";
 import type { Question } from "@/schemas/characterization";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
@@ -26,7 +31,9 @@ import {
     offlinePendingValuesAreEquivalent,
     serializePropertyOfflineUpsert,
     snapshotServerBaselineAnswers,
+    unwrapOfflineAnswerUpdateValue,
 } from "@/utils/survey/offline-new-value-serializers";
+import { rewritePendingSurveyAnswerCreate } from "@/utils/survey/rewrite-pending-survey-answers";
 import {
   recordSurveyQuestionMinOrder,
   resolveSurveyQuestionDisplayOrdinal,
@@ -38,7 +45,7 @@ import {
     Layers,
     Pencil,
 } from "lucide-react-native";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     ScrollView,
@@ -191,13 +198,37 @@ export function PropertyInfoTab({
 
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [editAnswers, setEditAnswers] = useState<Record<number, any>>({});
+  const skipEditDraftPersistRef = useRef(false);
+  const setSurveyDraft = useSurveyDraftStore((s) => s.setDraft);
+  const getSurveyDraft = useSurveyDraftStore((s) => s.getDraft);
+  const clearSurveyDraft = useSurveyDraftStore((s) => s.clearDraft);
 
-  // Snapshot of answers before opening sheet, used to restore on close without save
+  // Snapshot of answers before opening sheet, used to restore display state on close
   const answersSnapshotRef = useRef<Record<number, any>>({});
 
   const baselineAnswersRef = useRef<Record<number, unknown>>({});
   const baselineItemNamesRef = useRef<Record<number, string | string[] | null>>({});
   const baselineDataScopeRef = useRef<string>("");
+
+  const {
+    wizardSessionKey,
+    draftWizardIndex,
+    syncAnswersRef,
+    beginApplySession,
+    persistOnClose,
+    markSavedAndSkipPersist,
+    handleWizardIndexChange,
+    wrapAnswerChange,
+  } = useSurveyApplyDraft({
+    producerId,
+    projectId,
+    interventionMethodId: PROPERTY_INFO_INTERVENTION_METHOD_ID,
+    hasSurvey,
+  });
+
+  useEffect(() => {
+    syncAnswersRef(answers);
+  }, [answers, syncAnswersRef]);
 
   // Refresh answers when upload completes so pending badges clear
   const isUploading = useSyncStore((state) => state.isUploading);
@@ -353,21 +384,16 @@ export function PropertyInfoTab({
           PROPERTY_INFO_INTERVENTION_METHOD_ID,
         );
         for (const upd of updates) {
-          let usedParsed = false;
-          try {
-            const parsed = JSON.parse(upd.new_value ?? "");
-            if (
-              Array.isArray(parsed) ||
-              (parsed && typeof parsed === "object")
-            ) {
-              merged[upd.question_id] = parsed;
-              usedParsed = true;
-            }
-          } catch {}
-          if (!usedParsed) {
-            merged[upd.question_id] = upd.new_value;
-          }
+          const unwrapped = unwrapOfflineAnswerUpdateValue(upd.new_value);
+          merged[upd.question_id] = unwrapped.value;
           pendingIds.add(upd.question_id);
+          if (
+            unwrapped.childQuestionId != null &&
+            Number.isFinite(unwrapped.childQuestionId)
+          ) {
+            merged[unwrapped.childQuestionId] = unwrapped.childValue;
+            pendingIds.add(unwrapped.childQuestionId);
+          }
         }
       } catch (e) {
         console.error("Failed to load pending answer updates:", e);
@@ -512,43 +538,71 @@ export function PropertyInfoTab({
     if (!activeComponent) return;
     setEditingQuestion(null);
     answersSnapshotRef.current = { ...answers };
+    const restored = beginApplySession(answers);
+    setAnswers(restored as Record<number, any>);
     fetchQuestions(activeComponent.id);
     setShowSheet(true);
-  }, [activeComponent, fetchQuestions, answers]);
+  }, [activeComponent, fetchQuestions, answers, beginApplySession]);
 
   const handleCloseSheet = useCallback(() => {
     if (!editingQuestion) {
+      persistOnClose(answers);
       setAnswers(answersSnapshotRef.current);
+    } else if (!skipEditDraftPersistRef.current) {
+      setSurveyDraft(
+        buildSurveyEditDraftKey(
+          producerId,
+          projectId,
+          PROPERTY_INFO_INTERVENTION_METHOD_ID,
+          editingQuestion.id,
+        ),
+        { answers: editAnswers, wizardIndex: 0 },
+      );
     }
+    skipEditDraftPersistRef.current = false;
     setShowSheet(false);
     setEditingQuestion(null);
-  }, [editingQuestion]);
+  }, [
+    editingQuestion,
+    answers,
+    editAnswers,
+    persistOnClose,
+    producerId,
+    projectId,
+    setSurveyDraft,
+  ]);
 
-  const handleAnswerChange = useCallback((questionId: number, value: any) => {
-    setAnswers((prev) => {
-      if (value === undefined) {
-        if (prev[questionId] === undefined) return prev;
-        const next = { ...prev };
-        delete next[questionId];
-        return next;
-      }
-      return { ...prev, [questionId]: value };
-    });
-  }, []);
+  const handleAnswerChange = useMemo(
+    () => wrapAnswerChange(setAnswers),
+    [wrapAnswerChange],
+  );
 
   const handleEditAnswerChange = useCallback(
     (questionId: number, value: any) => {
       setEditAnswers((prev) => {
+        let next: Record<number, any>;
         if (value === undefined) {
           if (prev[questionId] === undefined) return prev;
-          const next = { ...prev };
+          next = { ...prev };
           delete next[questionId];
-          return next;
+        } else {
+          next = { ...prev, [questionId]: value };
         }
-        return { ...prev, [questionId]: value };
+        if (editingQuestion) {
+          setSurveyDraft(
+            buildSurveyEditDraftKey(
+              producerId,
+              projectId,
+              PROPERTY_INFO_INTERVENTION_METHOD_ID,
+              editingQuestion.id,
+            ),
+            { answers: next, wizardIndex: 0 },
+          );
+        }
+        return next;
       });
     },
-    [],
+    [editingQuestion, producerId, projectId, setSurveyDraft],
   );
 
   const handleSave = useCallback(async () => {
@@ -647,6 +701,7 @@ export function PropertyInfoTab({
       }
 
       // Sheet dismiss calls handleCloseSheet → restores snapshot; keep submitted answers
+      markSavedAndSkipPersist();
       answersSnapshotRef.current = { ...answers };
       setMethodAlreadyApplied(true);
       setShowSheet(false);
@@ -667,6 +722,7 @@ export function PropertyInfoTab({
     projectId,
     currentUserId,
     showAlert,
+    markSavedAndSkipPersist,
   ]);
 
   const handleEditPress = useCallback(
@@ -674,10 +730,21 @@ export function PropertyInfoTab({
       const question = localQuestions.find((q) => q.id === questionId);
       if (!question) return;
       setEditingQuestion(question);
-      setEditAnswers({ [questionId]: answers[questionId] });
+      const editKey = buildSurveyEditDraftKey(
+        producerId,
+        projectId,
+        PROPERTY_INFO_INTERVENTION_METHOD_ID,
+        questionId,
+      );
+      const draft = getSurveyDraft(editKey);
+      if (draft && Object.keys(draft.answers).length > 0) {
+        setEditAnswers(draft.answers as Record<number, any>);
+      } else {
+        setEditAnswers({ [questionId]: answers[questionId] });
+      }
       setShowSheet(true);
     },
-    [localQuestions, answers],
+    [localQuestions, answers, producerId, projectId, getSurveyDraft],
   );
 
   const handleEditSave = useCallback(async () => {
@@ -686,6 +753,62 @@ export function PropertyInfoTab({
     const surveyId = surveyIds[editingQuestion.id];
     const rawVal = editAnswers[editingQuestion.id];
     const isMultiple = editingQuestion.multiple === true;
+    const editKey = buildSurveyEditDraftKey(
+      producerId,
+      projectId,
+      PROPERTY_INFO_INTERVENTION_METHOD_ID,
+      editingQuestion.id,
+    );
+    const finishEditClose = () => {
+      clearSurveyDraft(editKey);
+      skipEditDraftPersistRef.current = true;
+      setShowSheet(false);
+      setEditingQuestion(null);
+    };
+
+    const isLocalCreatePending =
+      answerId == null && pendingQuestionIds.has(editingQuestion.id);
+
+    if (isLocalCreatePending) {
+      const pid = Number(producerId);
+      const projId = Number(projectId ?? 0);
+      const compId = activeComponent?.id ?? 0;
+      const userId = currentUserId ?? 0;
+      try {
+        await rewritePendingSurveyAnswerCreate({
+          entityKey: `${pid}-${projId}-${compId}-${userId}`,
+          userId,
+          producerId: pid,
+          projectId: projId,
+          componentId: compId,
+          interventionMethodId: PROPERTY_INFO_INTERVENTION_METHOD_ID,
+          updates: [{ questionId: editingQuestion.id, rawVal }],
+        });
+        setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
+        setItemNames((prev) => {
+          const next = { ...prev };
+          delete next[editingQuestion.id];
+          return next;
+        });
+        setPendingQuestionIds((prev) => new Set([...prev, editingQuestion.id]));
+        useSyncStore.getState().refreshStatus();
+        finishEditClose();
+        showAlert({
+          title: "Sin internet",
+          message:
+            "La respuesta pendiente se actualizó y se enviará al sincronizar.",
+          type: "warning",
+        });
+      } catch (error) {
+        console.error("Failed to rewrite pending survey create:", error);
+        showAlert({
+          title: "Error",
+          message: "No se pudo actualizar la respuesta pendiente.",
+          type: "error",
+        });
+      }
+      return;
+    }
 
     const isOnline = await checkConnectivity();
 
@@ -711,8 +834,7 @@ export function PropertyInfoTab({
         setAnswers((prev) => ({ ...prev, [editingQuestion.id]: rawVal }));
         setItemNames((prev) => { const next = { ...prev }; delete next[editingQuestion.id]; return next; });
         setPendingQuestionIds((prev) => { const next = new Set(prev); next.delete(editingQuestion.id); return next; });
-        setShowSheet(false);
-        setEditingQuestion(null);
+        finishEditClose();
         showAlert({
           title: "Actualizado",
           message: "La respuesta se actualizó correctamente.",
@@ -732,7 +854,19 @@ export function PropertyInfoTab({
       const compId = activeComponent?.id ?? 0;
       const userId = currentUserId ?? 0;
 
-      const proposedStored = serializePropertyOfflineUpsert(rawVal);
+      const proposedStored = serializePropertyOfflineUpsert(rawVal, {
+        questionId: editingQuestion.id,
+        surveyId,
+        multiple: isMultiple,
+      });
+      if (answerId == null) {
+        showAlert({
+          title: "Error",
+          message: "No se encontró el identificador de la respuesta a editar.",
+          type: "error",
+        });
+        return;
+      }
       const baselineRow = baselineAnswersRef.current;
       const qid = editingQuestion.id;
       const hasServerBaseline = Object.prototype.hasOwnProperty.call(
@@ -741,7 +875,11 @@ export function PropertyInfoTab({
       );
 
       if (hasServerBaseline) {
-        const baselineStored = serializePropertyOfflineUpsert(baselineRow[qid]);
+        const baselineStored = serializePropertyOfflineUpsert(baselineRow[qid], {
+          questionId: editingQuestion.id,
+          surveyId,
+          multiple: isMultiple,
+        });
         if (
           offlinePendingValuesAreEquivalent({
             proposed: proposedStored,
@@ -768,8 +906,7 @@ export function PropertyInfoTab({
             return next;
           });
           useSyncStore.getState().refreshStatus();
-          setShowSheet(false);
-          setEditingQuestion(null);
+          finishEditClose();
           showAlert({
             title: "Sin cambios pendientes",
             message:
@@ -798,19 +935,20 @@ export function PropertyInfoTab({
         return next;
       });
       setPendingQuestionIds((prev) => new Set([...prev, editingQuestion.id]));
-      setShowSheet(false);
-      setEditingQuestion(null);
+      finishEditClose();
     }
   }, [
     editingQuestion,
     editAnswers,
     answerIds,
     surveyIds,
+    pendingQuestionIds,
     activeComponent,
     producerId,
     projectId,
     currentUserId,
     showAlert,
+    clearSurveyDraft,
   ]);
 
   if (loadingComponents) {
@@ -891,6 +1029,9 @@ export function PropertyInfoTab({
           onSave={handleSave}
           getTypeName={getCanonicalTypeName}
           loading={loadingQuestions}
+          wizardSessionKey={wizardSessionKey}
+          initialIndex={draftWizardIndex}
+          onIndexChange={handleWizardIndexChange}
         />
       </View>
     );
@@ -929,7 +1070,8 @@ export function PropertyInfoTab({
                         </ThemedText>
                       </View>
                     )}
-                    {answerIds[item.questionId] != null && (
+                    {(answerIds[item.questionId] != null ||
+                      pendingQuestionIds.has(item.questionId)) && (
                       <TouchableOpacity
                         style={[
                           styles.editButton,

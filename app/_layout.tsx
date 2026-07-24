@@ -17,6 +17,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import "react-native-reanimated";
 
 import { DatabaseProvider } from "@/components/database-provider";
+import { OfflineAlertCoordinator } from "@/components/offline-alert-coordinator";
 import { SyncBackgroundCoordinator } from "@/components/sync-background-coordinator";
 import { registerAndroidForegroundSyncService } from "@/utils/sync/android-foreground-sync";
 
@@ -67,6 +68,7 @@ export default function RootLayout() {
         <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
           <BottomSheetModalProvider>
             <AlertProvider>
+            <OfflineAlertCoordinator />
             <SyncBackgroundCoordinator />
             <Stack screenOptions={{ animation: "fade", animationDuration: 250 }}>
               <Stack.Screen name="login" options={{ headerShown: false }} />

@@ -6,15 +6,26 @@ type PagerViewCompatProps = {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
   initialPage?: number;
+  onPageSelected?: (page: number) => void;
 };
 
 export function PagerViewCompat({
   children,
   style,
   initialPage = 0,
+  onPageSelected,
 }: PagerViewCompatProps) {
   return (
-    <PagerView style={style} initialPage={initialPage} overdrag>
+    <PagerView
+      style={style}
+      initialPage={initialPage}
+      overdrag
+      onPageSelected={
+        onPageSelected
+          ? (e) => onPageSelected(e.nativeEvent.position)
+          : undefined
+      }
+    >
       {children}
     </PagerView>
   );

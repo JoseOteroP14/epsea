@@ -4,6 +4,22 @@ import { resolveDependentChildIdsFromDetail } from "./dependent-child-ids";
 
 /** Debe mantenerse alineado con el `new_value` guardado offline en cada tab. */
 
+export function serializeMultipleOfflineUpsert(params: {
+  questionId: number;
+  surveyId: number;
+  rawVal: unknown;
+}): string {
+  const values = Array.isArray(params.rawVal)
+    ? params.rawVal
+    : [params.rawVal];
+  return JSON.stringify({
+    __type: "multiple",
+    question_id: params.questionId,
+    survey_id: params.surveyId,
+    answers: values.map((v) => ({ answer_value: String(v ?? "") })),
+  });
+}
+
 export function serializePersonalOfflineUpsert(params: {
   question: Question;
   typeName: string;
@@ -11,8 +27,17 @@ export function serializePersonalOfflineUpsert(params: {
   /** First active child question id when lista dependiente, else undefined */
   primaryChildQuestionId: number | undefined;
   rawChildVal: unknown;
+  /** Requerido para multi-select → endpoint update-answer-multiple al sincronizar */
+  surveyId?: number;
 }): string {
-  const { question, typeName, rawVal, primaryChildQuestionId, rawChildVal } = params;
+  const {
+    question,
+    typeName,
+    rawVal,
+    primaryChildQuestionId,
+    rawChildVal,
+    surveyId,
+  } = params;
 
   if (typeName === "dependent_list") {
     const parentValue =
@@ -38,6 +63,14 @@ export function serializePersonalOfflineUpsert(params: {
           : null,
     };
     return JSON.stringify(payload);
+  }
+
+  if (question.multiple === true && surveyId != null && Number.isFinite(surveyId)) {
+    return serializeMultipleOfflineUpsert({
+      questionId: question.id,
+      surveyId,
+      rawVal,
+    });
   }
 
   const newValue = Array.isArray(rawVal)
@@ -77,7 +110,22 @@ export function getPrimaryDependentChildSerializationContext(
   };
 }
 
-export function serializeClassificationOfflineUpsert(question: Question, rawVal: unknown): string {
+export function serializeClassificationOfflineUpsert(
+  question: Question,
+  rawVal: unknown,
+  surveyId?: number,
+): string {
+  if (
+    question.multiple === true &&
+    surveyId != null &&
+    Number.isFinite(surveyId)
+  ) {
+    return serializeMultipleOfflineUpsert({
+      questionId: question.id,
+      surveyId,
+      rawVal,
+    });
+  }
   if (question.multiple === true && Array.isArray(rawVal)) {
     return [...rawVal].map((v) => String(v)).join(",");
   }
@@ -93,8 +141,26 @@ export function serializeClassificationOfflineUpsert(question: Question, rawVal:
   return newValue;
 }
 
-export function serializeCharacterizationOfflineUpsert(rawVal: unknown): string {
-  return typeof rawVal === "object" && rawVal !== null && !Array.isArray(rawVal)
+export function serializeCharacterizationOfflineUpsert(
+  rawVal: unknown,
+  opts?: { questionId?: number; surveyId?: number; multiple?: boolean },
+): string {
+  if (
+    opts?.multiple === true &&
+    opts.surveyId != null &&
+    Number.isFinite(opts.surveyId) &&
+    opts.questionId != null
+  ) {
+    return serializeMultipleOfflineUpsert({
+      questionId: opts.questionId,
+      surveyId: opts.surveyId,
+      rawVal,
+    });
+  }
+  if (Array.isArray(rawVal)) {
+    return rawVal.map((v) => String(v)).join(",");
+  }
+  return typeof rawVal === "object" && rawVal !== null
     ? String(
         (rawVal as { _main?: unknown })._main ??
           (rawVal as { value?: unknown }).value ??
@@ -103,7 +169,22 @@ export function serializeCharacterizationOfflineUpsert(rawVal: unknown): string 
     : String(rawVal ?? "");
 }
 
-export function serializePropertyOfflineUpsert(rawVal: unknown): string {
+export function serializePropertyOfflineUpsert(
+  rawVal: unknown,
+  opts?: { questionId?: number; surveyId?: number; multiple?: boolean },
+): string {
+  if (
+    opts?.multiple === true &&
+    opts.surveyId != null &&
+    Number.isFinite(opts.surveyId) &&
+    opts.questionId != null
+  ) {
+    return serializeMultipleOfflineUpsert({
+      questionId: opts.questionId,
+      surveyId: opts.surveyId,
+      rawVal,
+    });
+  }
   return Array.isArray(rawVal)
     ? rawVal.join(",")
     : typeof rawVal === "object" && rawVal !== null
@@ -126,6 +207,24 @@ export function snapshotServerBaselineAnswers(
     baselineAnswers: cloneBaselineSnapshot(mergedAfterRemoteOnly),
     baselineItemNames: cloneBaselineSnapshot(itemNamesAfterRemoteOnly),
   };
+}
+
+function normalizeMultiplePayloadValues(parsed: {
+  answers?: unknown;
+}): string {
+  const raw = parsed.answers;
+  if (!Array.isArray(raw)) return "";
+  return raw
+    .map((a) =>
+      String(
+        a != null && typeof a === "object"
+          ? (a as { answer_value?: unknown }).answer_value ?? ""
+          : a ?? "",
+      ).trim(),
+    )
+    .filter(Boolean)
+    .sort()
+    .join("|");
 }
 
 /** Compara `new_value` como lo guardamos offline, tolerando orden en multi-select y espacios. */
@@ -193,7 +292,57 @@ export function offlinePendingValuesAreEquivalent(params: {
         String(pa.value ?? "").trim() === String(pb.value ?? "").trim()
       );
     }
+    if (
+      pa &&
+      typeof pa === "object" &&
+      pa.__type === "multiple" &&
+      pb &&
+      typeof pb === "object" &&
+      pb.__type === "multiple"
+    ) {
+      return (
+        normalizeMultiplePayloadValues(pa) ===
+        normalizeMultiplePayloadValues(pb)
+      );
+    }
   } catch {}
 
   return trimPair;
+}
+
+/** Desenvuelve `new_value` de answer_updates para mostrar en UI. */
+export function unwrapOfflineAnswerUpdateValue(newValue: string | null): {
+  value: unknown;
+  childQuestionId?: number;
+  childValue?: string;
+} {
+  if (newValue == null) return { value: null };
+  try {
+    const parsed = JSON.parse(newValue);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      if (parsed.__type === "multiple" && Array.isArray(parsed.answers)) {
+        return {
+          value: parsed.answers.map((a: { answer_value?: unknown }) =>
+            String(a?.answer_value ?? ""),
+          ),
+        };
+      }
+      if (parsed.__type === "dependent") {
+        const child = parsed.child as
+          | { question_id?: unknown; answer_value?: unknown }
+          | null
+          | undefined;
+        return {
+          value: String(parsed.value ?? ""),
+          childQuestionId:
+            child != null ? Number(child.question_id) : undefined,
+          childValue:
+            child != null ? String(child.answer_value ?? "") : undefined,
+        };
+      }
+      return { value: parsed };
+    }
+    if (Array.isArray(parsed)) return { value: parsed };
+  } catch {}
+  return { value: newValue };
 }

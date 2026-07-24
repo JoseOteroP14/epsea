@@ -30,6 +30,19 @@ export async function enqueue(
   );
 }
 
+/** Busca un ítem pendiente (o cualquier status) por tipo + clave única. */
+export async function getSyncQueueItem(
+  entityType: string,
+  entityKey: string,
+): Promise<SyncQueueItem | null> {
+  const db = getDb();
+  return db.getFirstAsync<SyncQueueItem>(
+    "SELECT * FROM sync_queue WHERE entity_type = ? AND entity_key = ?",
+    entityType,
+    entityKey,
+  );
+}
+
 export async function getPending(userId?: number): Promise<SyncQueueItem[]> {
   const db = getDb();
   if (userId != null) {

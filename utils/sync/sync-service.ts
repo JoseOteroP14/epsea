@@ -65,6 +65,10 @@ import type {
     Visit3UpdatePayload,
 } from "@/schemas/visit3";
 import {
+  clearOfflineVisitPhotoDir,
+  deletePersistedOfflineVisitPhotoUris,
+} from "@/utils/visit-offline-photos";
+import {
     getPendingAnswerUpdates,
     deleteAnswerUpdate,
 } from "@/utils/database/repositories/answer-update-repository";
@@ -104,6 +108,15 @@ export type ProductiveLinesBulkKind =
 export interface ProductiveLinesBulkQueuePayload {
   kind: ProductiveLinesBulkKind;
   body: { lines: unknown[] };
+  /** Paralelo a `body.lines`: ids locales (negativos) para reescribir creates pendientes. */
+  local_ids?: number[];
+}
+
+/** Cola offline: PUT de una línea productiva existente. */
+export interface ProductiveLineUpdateQueuePayload {
+  kind: ProductiveLinesBulkKind;
+  id: number;
+  body: Record<string, unknown>;
 }
 
 const PRODUCTIVE_LINES_BULK_PATH: Record<ProductiveLinesBulkKind, string> = {
@@ -112,6 +125,14 @@ const PRODUCTIVE_LINES_BULK_PATH: Record<ProductiveLinesBulkKind, string> = {
   forest: "/forest-lines/bulk",
   fishing: "/fishing-lines/bulk",
   aquaculture: "/aquaculture-lines/bulk",
+};
+
+const PRODUCTIVE_LINES_ITEM_PATH: Record<ProductiveLinesBulkKind, string> = {
+  agricultural: "/agricultural-lines",
+  livestock: "/livestock-lines",
+  forest: "/forest-lines",
+  fishing: "/fishing-lines",
+  aquaculture: "/aquaculture-lines",
 };
 
 type DownloadPhaseKey = "projects" | "producers" | "results" | "finalize";
@@ -1421,6 +1442,29 @@ export async function uploadPendingAnswers(
                   }
                 : null,
           };
+        } else if (
+          parsed &&
+          typeof parsed === "object" &&
+          parsed.__type === "multiple"
+        ) {
+          endpoint = `/surveys/update-answer-multiple`;
+          const rawAnswers = (parsed as { answers?: unknown }).answers;
+          body = {
+            question_id: Number(
+              (parsed as { question_id?: unknown }).question_id ??
+                update.question_id,
+            ),
+            survey_id: Number((parsed as { survey_id?: unknown }).survey_id),
+            answers: Array.isArray(rawAnswers)
+              ? rawAnswers.map((a) => ({
+                  answer_value: String(
+                    a != null && typeof a === "object"
+                      ? (a as { answer_value?: unknown }).answer_value ?? ""
+                      : a ?? "",
+                  ),
+                }))
+              : [],
+          };
         }
       } catch {}
 
@@ -1468,6 +1512,29 @@ export async function uploadPendingAnswers(
         const first = Array.isArray(lines) ? (lines[0] as Record<string, unknown>) : undefined;
         const pid = Number(first?.producer_id);
         const projId = Number(first?.project_id);
+        if (Number.isFinite(pid) && Number.isFinite(projId)) {
+          addExtensionistTouch(touches, pid, projId);
+          addSurveyTouch(
+            touches,
+            pid,
+            projId,
+            PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
+          );
+        }
+        await deleteSyncQueueRow(item.id);
+        uploaded++;
+        continue;
+      }
+
+      if (item.entity_type === "productive_line_update") {
+        const pl = payload as ProductiveLineUpdateQueuePayload;
+        const base = PRODUCTIVE_LINES_ITEM_PATH[pl.kind];
+        await apiFetch(`${base}/${pl.id}`, {
+          method: "PUT",
+          body: JSON.stringify(pl.body),
+        });
+        const pid = Number(pl.body.producer_id);
+        const projId = Number(pl.body.project_id);
         if (Number.isFinite(pid) && Number.isFinite(projId)) {
           addExtensionistTouch(touches, pid, projId);
           addSurveyTouch(
@@ -1551,14 +1618,27 @@ export async function uploadPendingAnswers(
     try {
       await uploadVisit1Item(item);
       await deleteVisit1QueueRow(item.id!);
-      // Mark VISIT method as applied after successful upload
       try {
+        const { photos } = parseVisit1QueuePhotosColumn(item.photos);
+        await deletePersistedOfflineVisitPhotoUris(photos.map((p) => p.uri));
         const visitPayload = JSON.parse(item.payload) as {
           producer_id?: unknown;
           project_id?: unknown;
         };
         const vPid = Number(visitPayload.producer_id);
         const vProj = Number(visitPayload.project_id);
+        if (
+          Number.isFinite(vPid) &&
+          Number.isFinite(vProj) &&
+          item.user_id != null
+        ) {
+          await clearOfflineVisitPhotoDir({
+            kind: "visit1",
+            userId: item.user_id,
+            producerId: vPid,
+            projectId: vProj,
+          });
+        }
         await markInterventionMethodApplied(
           vPid,
           vProj,
@@ -1604,7 +1684,24 @@ export async function uploadPendingAnswers(
       await uploadVisit2Item(item);
       await deleteVisit2QueueRow(item.id);
       try {
+        let extras: Visit2QueueExtras;
+        try {
+          extras = JSON.parse(item.photos ?? "{}");
+        } catch {
+          extras = { monitoringCommitments: [], photos: [] };
+        }
+        await deletePersistedOfflineVisitPhotoUris(
+          (extras.photos ?? []).map((p) => p.uri),
+        );
         const visitPayload = JSON.parse(item.payload) as Visit2Payload;
+        if (item.user_id != null) {
+          await clearOfflineVisitPhotoDir({
+            kind: "visit2",
+            userId: item.user_id,
+            producerId: visitPayload.producer_id,
+            projectId: visitPayload.project_id,
+          });
+        }
         await markInterventionMethodApplied(
           visitPayload.producer_id,
           visitPayload.project_id,
@@ -1652,11 +1749,38 @@ export async function uploadPendingAnswers(
       await uploadVisit3Item(item);
       await deleteVisit3QueueRow(item.id);
       try {
+        let extras: Visit3QueueExtras;
+        try {
+          extras = JSON.parse(item.photos ?? "{}");
+        } catch {
+          extras = {
+            photos: [],
+            keepRemoteImages: [],
+            pendingImageDeletions: [],
+            pendingCommitmentDeletions: [],
+            trackings: [],
+          };
+        }
+        await deletePersistedOfflineVisitPhotoUris(
+          (extras.photos ?? []).map((p) => p.uri),
+        );
         const visitPayload = JSON.parse(item.payload) as
           | Visit3CreatePayload
           | Visit3UpdatePayload;
         const vPid = Number(visitPayload.producer_id);
         const vProj = Number(visitPayload.project_id);
+        if (
+          Number.isFinite(vPid) &&
+          Number.isFinite(vProj) &&
+          item.user_id != null
+        ) {
+          await clearOfflineVisitPhotoDir({
+            kind: "visit3",
+            userId: item.user_id,
+            producerId: vPid,
+            projectId: vProj,
+          });
+        }
         await markInterventionMethodApplied(
           vPid,
           vProj,

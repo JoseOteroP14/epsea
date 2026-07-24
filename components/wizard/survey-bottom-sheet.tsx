@@ -7,12 +7,10 @@ import {
   BottomSheetScrollView,
   type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
-import { X } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   ActivityIndicator,
   StyleSheet,
-  TouchableOpacity,
   View,
 } from "react-native";
 import type { Question } from "@/schemas/characterization";
@@ -27,6 +25,10 @@ interface SurveyBottomSheetProps {
   onSave?: () => void;
   getTypeName: (typeId: number) => string;
   loading?: boolean;
+  /** Remount token so the wizard can restore a draft step on each open. */
+  wizardSessionKey?: string | number;
+  initialIndex?: number;
+  onIndexChange?: (index: number) => void;
 }
 
 export function SurveyBottomSheet({
@@ -39,6 +41,9 @@ export function SurveyBottomSheet({
   onSave,
   getTypeName,
   loading,
+  wizardSessionKey = 0,
+  initialIndex = 0,
+  onIndexChange,
 }: SurveyBottomSheetProps) {
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const snapPoints = useMemo(() => ["92%"], []);
@@ -102,13 +107,6 @@ export function SurveyBottomSheet({
               {title}
             </ThemedText>
           </View>
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={onClose}
-            activeOpacity={0.7}
-          >
-            <X size={responsiveFont(20)} color="#666" />
-          </TouchableOpacity>
         </View>
 
         {/* Content */}
@@ -128,6 +126,7 @@ export function SurveyBottomSheet({
             </View>
           ) : (
             <QuestionWizard
+              key={`survey-wizard-${wizardSessionKey}`}
               questions={questions}
               answers={answers}
               onAnswerChange={onAnswerChange}
@@ -136,6 +135,8 @@ export function SurveyBottomSheet({
               getTypeName={getTypeName}
               title={title}
               ScrollViewComponent={BottomSheetScrollView}
+              initialIndex={initialIndex}
+              onIndexChange={onIndexChange}
             />
           )}
         </View>
@@ -172,15 +173,6 @@ const styles = StyleSheet.create({
   },
   sheetTitle: {
     fontSize: responsiveFont(20),
-  },
-  closeButton: {
-    width: widthScale(36),
-    height: widthScale(36),
-    borderRadius: widthScale(18),
-    backgroundColor: "rgba(0,0,0,0.05)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginLeft: widthScale(12),
   },
   sheetContent: {
     flex: 1,
