@@ -886,20 +886,24 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
       if (cancelled) return;
 
       if (online) {
-        const safe = async <T,>(url: string): Promise<T[]> => {
+        type LinesFetchResult<T> =
+          | { ok: true; data: T[] }
+          | { ok: false };
+
+        const safe = async <T,>(url: string): Promise<LinesFetchResult<T>> => {
           try {
             const res = await apiFetch<{ data: T[] }>(url);
-            return res.data ?? [];
+            return { ok: true, data: res.data ?? [] };
           } catch {
-            return [];
+            return { ok: false };
           }
         };
         const [
-          agricultural,
-          livestock,
-          forest,
-          fishing,
-          aquaculture,
+          agriRes,
+          livestockRes,
+          forestRes,
+          fishingRes,
+          aquacultureRes,
         ] = await Promise.all([
           safe<ExistingAgriculturalLine>(
             `/agricultural-lines/producer/${producerId}/project/${projectId}`,
@@ -917,29 +921,108 @@ export function ProductiveLinesTab({ producerId, projectId }: ProductiveLinesTab
             `/aquaculture-lines/producer/${producerId}/project/${projectId}`,
           ),
         ]);
-        if (!cancelled) {
+
+        const anyOk =
+          agriRes.ok ||
+          livestockRes.ok ||
+          forestRes.ok ||
+          fishingRes.ok ||
+          aquacultureRes.ok;
+
+        if (!cancelled && anyOk) {
+          // Conservar tipos que fallaron desde caché previa (no borrar con []).
+          let previous: {
+            agricultural?: ExistingAgriculturalLine[];
+            livestock?: ExistingLivestockLine[];
+            forest?: ExistingForestLine[];
+            fishing?: ExistingFishingLine[];
+            aquaculture?: ExistingAquacultureLine[];
+          } = {};
+          try {
+            const rawPrev = await getProductiveLinesBundleCacheRaw(
+              Number(producerId),
+              Number(projectId),
+              currentUserId,
+            );
+            if (rawPrev) previous = JSON.parse(rawPrev);
+          } catch {
+            previous = {};
+          }
+
+          const agricultural = agriRes.ok
+            ? agriRes.data
+            : (previous.agricultural ?? []);
+          const livestock = livestockRes.ok
+            ? livestockRes.data
+            : (previous.livestock ?? []);
+          const forest = forestRes.ok
+            ? forestRes.data
+            : (previous.forest ?? []);
+          const fishing = fishingRes.ok
+            ? fishingRes.data
+            : (previous.fishing ?? []);
+          const aquaculture = aquacultureRes.ok
+            ? aquacultureRes.data
+            : (previous.aquaculture ?? []);
+
           setExistingAgriLines(agricultural);
           setExistingLivestockLines(livestock);
           setExistingForestLines(forest);
           setExistingFishingLines(fishing);
           setExistingAquacultureLines(aquaculture);
-        }
-        if (!cancelled && currentUserId != null) {
-          try {
-            await upsertProductiveLinesBundleCache({
-              userId: currentUserId,
-              producerId: Number(producerId),
-              projectId: Number(projectId),
-              jsonPayload: JSON.stringify({
-                agricultural,
-                livestock,
-                forest,
-                fishing,
-                aquaculture,
-              }),
-            });
-          } catch (e) {
-            console.warn("productive lines bundle cache persist failed:", e);
+
+          if (currentUserId != null) {
+            try {
+              await upsertProductiveLinesBundleCache({
+                userId: currentUserId,
+                producerId: Number(producerId),
+                projectId: Number(projectId),
+                jsonPayload: JSON.stringify({
+                  agricultural,
+                  livestock,
+                  forest,
+                  fishing,
+                  aquaculture,
+                }),
+              });
+            } catch (e) {
+              console.warn("productive lines bundle cache persist failed:", e);
+            }
+          }
+        } else if (!cancelled) {
+          // Online pero todos los endpoints fallaron: no pisar caché con vacío.
+          const raw = await getProductiveLinesBundleCacheRaw(
+            Number(producerId),
+            Number(projectId),
+            currentUserId,
+          );
+          if (raw) {
+            try {
+              const bundle = JSON.parse(raw) as {
+                agricultural?: ExistingAgriculturalLine[];
+                livestock?: ExistingLivestockLine[];
+                forest?: ExistingForestLine[];
+                fishing?: ExistingFishingLine[];
+                aquaculture?: ExistingAquacultureLine[];
+              };
+              setExistingAgriLines(bundle.agricultural ?? []);
+              setExistingLivestockLines(bundle.livestock ?? []);
+              setExistingForestLines(bundle.forest ?? []);
+              setExistingFishingLines(bundle.fishing ?? []);
+              setExistingAquacultureLines(bundle.aquaculture ?? []);
+            } catch {
+              setExistingAgriLines([]);
+              setExistingLivestockLines([]);
+              setExistingForestLines([]);
+              setExistingFishingLines([]);
+              setExistingAquacultureLines([]);
+            }
+          } else {
+            setExistingAgriLines([]);
+            setExistingLivestockLines([]);
+            setExistingForestLines([]);
+            setExistingFishingLines([]);
+            setExistingAquacultureLines([]);
           }
         }
       } else {

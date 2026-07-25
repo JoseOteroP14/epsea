@@ -27,7 +27,7 @@ export async function upsertSurveyResults(
   if (results.length === 0) return;
   const db = getDb();
 
-  for (const r of results) {
+  const writeRow = async (r: SurveyResultRow) => {
     await db.runAsync(
       `INSERT OR REPLACE INTO survey_results
         (survey_id, answer_id, question_id, answer_value, item_name, question_description,
@@ -49,6 +49,20 @@ export async function upsertSurveyResults(
       r.created_at ?? null,
       r.updated_at ?? null,
     );
+  };
+
+  // Atomic batch so a sync interrupt mid-method does not leave a half-written method.
+  if (typeof db.withTransactionAsync === "function") {
+    await db.withTransactionAsync(async () => {
+      for (const r of results) {
+        await writeRow(r);
+      }
+    });
+    return;
+  }
+
+  for (const r of results) {
+    await writeRow(r);
   }
 }
 

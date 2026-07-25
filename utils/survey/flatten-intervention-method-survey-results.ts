@@ -46,6 +46,39 @@ function syntheticAnswerId(
 }
 
 /**
+ * Normalizes GET `/surveys/.../intervention_method/{method}` JSON into a question/answer array.
+ * Handles common wrappers: `{ data: [] }`, `{ data: { items|answers|results|questions } }`, etc.
+ */
+export function extractInterventionMethodSurveyArray(
+  response: unknown,
+): unknown[] {
+  if (Array.isArray(response)) return response;
+  if (!response || typeof response !== "object") return [];
+
+  const root = response as Record<string, unknown>;
+  const candidates: unknown[] = [
+    root.data,
+    root.items,
+    root.answers,
+    root.results,
+    root.questions,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+    if (candidate && typeof candidate === "object") {
+      const nested = candidate as Record<string, unknown>;
+      for (const key of ["items", "answers", "results", "questions", "data"] as const) {
+        const inner = nested[key];
+        if (Array.isArray(inner)) return inner;
+      }
+    }
+  }
+
+  return [];
+}
+
+/**
  * Flattens GET `/surveys/{project}/producer/{producer}/intervention_method/{method}` payloads
  * into rows for `survey_results` (same shape as tabs + sync).
  *
@@ -61,11 +94,7 @@ export function flattenInterventionMethodSurveyPayloadToRows(
   producerId: number,
   projectId: number,
 ): SurveyResultRow[] {
-  const arr: unknown[] = Array.isArray(rawData)
-    ? rawData
-    : Array.isArray((rawData as { data?: unknown })?.data)
-      ? ((rawData as { data: unknown[] }).data ?? [])
-      : [];
+  const arr = extractInterventionMethodSurveyArray(rawData);
   if (arr.length === 0) return [];
 
   const sorted = [...arr].sort(compareInterventionMethodItemsStable);

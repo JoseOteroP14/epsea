@@ -9,6 +9,9 @@ let registered = false;
 let active = false;
 let pendingForegroundWork: (() => Promise<void>) | null = null;
 
+/** Serializes FGS runs so a recover session never nests / stops another mid-flight. */
+let foregroundSyncTail: Promise<void> = Promise.resolve();
+
 export function registerAndroidForegroundSyncService(): void {
   if (Platform.OS !== "android" || registered) return;
 
@@ -36,6 +39,22 @@ export function registerAndroidForegroundSyncService(): void {
 
 export function isAndroidForegroundSyncActive(): boolean {
   return active;
+}
+
+/**
+ * Waits until no foreground sync work is active (and the mutex chain is idle).
+ * Used before starting a recover session so stopForegroundService cannot kill it.
+ */
+export async function waitForAndroidForegroundSyncIdle(
+  timeoutMs = 20_000,
+): Promise<void> {
+  const started = Date.now();
+  while (active || pendingForegroundWork != null) {
+    if (Date.now() - started > timeoutMs) break;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  // Let Notifee finish stopForegroundService / cancelNotification.
+  await new Promise((r) => setTimeout(r, 250));
 }
 
 async function ensureChannel(): Promise<void> {
@@ -80,10 +99,27 @@ async function showForegroundNotification(
   });
 }
 
+async function stopForegroundNotification(): Promise<void> {
+  const notifeePkg = loadNotifeeModule();
+  if (!notifeePkg) return;
+  try {
+    await notifeePkg.default.stopForegroundService();
+  } catch {
+    // ignore
+  }
+  try {
+    await notifeePkg.default.cancelNotification(NOTIFICATION_ID);
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Runs sync inside the Notifee foreground-service task so Android keeps the
  * process eligible for background network + JS while the user switches apps.
  * Falls back to running work directly in Expo Go (no native Notifee).
+ *
+ * Concurrent callers are queued (mutex) so recover never tears down an active FGS.
  */
 export async function runAndroidForegroundSync(
   work: () => Promise<void>,
@@ -93,39 +129,40 @@ export async function runAndroidForegroundSync(
     return;
   }
 
-  await ensureChannel();
-
-  return new Promise<void>((resolve, reject) => {
-    pendingForegroundWork = async () => {
-      try {
-        await work();
-        resolve();
-      } catch (error) {
-        reject(error);
-        throw error;
-      } finally {
-        const notifeePkg = loadNotifeeModule();
-        if (!notifeePkg) return;
-        try {
-          await notifeePkg.default.stopForegroundService();
-        } catch {
-          // ignore
-        }
-        try {
-          await notifeePkg.default.cancelNotification(NOTIFICATION_ID);
-        } catch {
-          // ignore
-        }
-      }
-    };
-
-    void showForegroundNotification("Sincronizando datos…", 0, true).catch(
-      (error) => {
-        pendingForegroundWork = null;
-        reject(error);
-      },
-    );
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
   });
+  const previous = foregroundSyncTail;
+  foregroundSyncTail = previous.then(() => gate).catch(() => gate);
+  await previous.catch(() => {});
+
+  try {
+    await ensureChannel();
+
+    await new Promise<void>((resolve, reject) => {
+      pendingForegroundWork = async () => {
+        try {
+          await work();
+          resolve();
+        } catch (error) {
+          reject(error);
+          throw error;
+        } finally {
+          await stopForegroundNotification();
+        }
+      };
+
+      void showForegroundNotification("Sincronizando datos…", 0, true).catch(
+        (error) => {
+          pendingForegroundWork = null;
+          reject(error);
+        },
+      );
+    });
+  } finally {
+    release();
+  }
 }
 
 export async function updateAndroidForegroundSync(
@@ -164,18 +201,5 @@ export async function stopAndroidForegroundSync(): Promise<void> {
   if (Platform.OS !== "android" || !active) return;
   active = false;
   pendingForegroundWork = null;
-
-  const notifeePkg = loadNotifeeModule();
-  if (!notifeePkg) return;
-
-  try {
-    await notifeePkg.default.stopForegroundService();
-  } catch {
-    // ignore
-  }
-  try {
-    await notifeePkg.default.cancelNotification(NOTIFICATION_ID);
-  } catch {
-    // ignore
-  }
+  await stopForegroundNotification();
 }

@@ -1581,7 +1581,6 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
           projectId={projectId}
           interventionMethodId={VISIT3_CLASSIFICATION_INTERVENTION_METHOD_ID}
           applyButtonLabel="Aplicar clasificación de Visita 3"
-          applyButtonLabelApplied="Ver / Editar clasificación de Visita 3"
           sheetTitle="Clasificación — Visita 3"
           onSaved={() => setRefreshKey((k) => k + 1)}
         />

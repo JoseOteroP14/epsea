@@ -13,9 +13,12 @@ import {
   VISIT3_REGISTRATION_INTERVENTION_METHOD_ID,
   VISIT_INTERVENTION_METHOD_ID,
 } from "@/store/useCharacterizationStore";
-import { apiFetch } from "@/utils/api";
+import { apiFetch, NetworkError } from "@/utils/api";
 import { API_BASE_URL } from "@/utils/api-config";
-import { upsertQuestions } from "@/utils/database/repositories/characterization-repository";
+import {
+  upsertQuestionDetail,
+  upsertQuestions,
+} from "@/utils/database/repositories/characterization-repository";
 import {
     deleteProducersNotIn,
     getProducerRawJsonRow,
@@ -34,7 +37,10 @@ import {
 } from "@/utils/database/repositories/sync-repository";
 import { deleteAnswers } from "@/utils/database/repositories/answer-repository";
 import { upsertSurveyResults } from "@/utils/database/repositories/survey-results-repository";
-import { flattenInterventionMethodSurveyPayloadToRows } from "@/utils/survey/flatten-intervention-method-survey-results";
+import {
+  extractInterventionMethodSurveyArray,
+  flattenInterventionMethodSurveyPayloadToRows,
+} from "@/utils/survey/flatten-intervention-method-survey-results";
 import { getStoredToken } from "@/utils/secure-storage";
 import {
     deleteVisit1QueueRow,
@@ -76,6 +82,7 @@ import { markInterventionMethodApplied } from "@/utils/database/repositories/pro
 import {
   upsertVisitServerCache,
   upsertProductiveLinesBundleCache,
+  getProductiveLinesBundleCacheRaw,
   deleteExtensionistCachesNotInProject,
 } from "@/utils/database/repositories/server-extensionist-cache-repository";
 import {
@@ -83,8 +90,8 @@ import {
     refreshVisitObjectivesCacheForLine,
 } from "@/utils/agro-objectives";
 import {
+  assertDownloadGeneration,
   clearDownloadResultsCheckpoint,
-  isDownloadSessionStale,
   loadDownloadResultsCheckpoint,
   saveDownloadResultsCheckpoint,
   yieldToEventLoop,
@@ -161,6 +168,26 @@ const SURVEY_CATALOG_COMPONENT_IDS = [
 ] as const;
 
 /**
+ * Persiste opciones/ítems de listas desde el payload with-options para lectura offline.
+ */
+async function persistQuestionDetailsFromCatalog(
+  questions: Question[],
+): Promise<void> {
+  for (const q of questions) {
+    const rec = q as Record<string, unknown>;
+    const options = rec.options;
+    const items = rec.items;
+    if (Array.isArray(options) && options.length > 0) {
+      await upsertQuestionDetail(q.id, "lista", { options });
+      continue;
+    }
+    if (Array.isArray(items) && items.length > 0) {
+      await upsertQuestionDetail(q.id, "lista dependiente", { items });
+    }
+  }
+}
+
+/**
  * Refresca preguntas desde el API en el orden devuelto por cada componente
  * (`GET /questions/with-options/{componentId}/`).
  */
@@ -174,6 +201,7 @@ async function downloadSurveyQuestionsCatalog(): Promise<void> {
       const list = Array.isArray(raw) ? raw : [];
       if (list.length === 0) continue;
       await upsertQuestions(list as Question[]);
+      await persistQuestionDetailsFromCatalog(list as Question[]);
     } catch (e) {
       console.error(
         `Failed to download questions catalog for component ${componentId}:`,
@@ -181,6 +209,41 @@ async function downloadSurveyQuestionsCatalog(): Promise<void> {
       );
     }
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimited(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.message.includes("429") || error.message.includes("rate");
+  }
+  return false;
+}
+
+function getRetryDelay(attempts: number): number {
+  return Math.min(1000 * Math.pow(2, attempts), 5 * 60 * 1000);
+}
+
+/** Reintenta fallos transitorios (red / 429) durante la precarga offline. */
+async function apiFetchWithRetry<T>(
+  endpoint: string,
+  options?: Parameters<typeof apiFetch>[1],
+  attempts = 3,
+): Promise<T> {
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await apiFetch<T>(endpoint, options);
+    } catch (e) {
+      lastError = e;
+      const retryable = e instanceof NetworkError || isRateLimited(e);
+      if (!retryable || i === attempts - 1) throw e;
+      await sleep(getRetryDelay(i));
+    }
+  }
+  throw lastError;
 }
 
 function calcPhasePercent(phase: { start: number; weight: number }, current: number, total: number): number {
@@ -196,14 +259,15 @@ function isRecordWithId(value: unknown): value is Record<string, unknown> & {
 }
 
 /**
- * Persista visitas 1/2 y listas REST de líneas productivas tras la descarga por productor/proyecto.
+ * Persista visitas 1/2/3 y listas REST de líneas productivas tras la descarga por productor/proyecto.
+ * No sobrescribe el bundle local con arrays vacíos si todos los endpoints fallan.
  */
 async function downloadExtensionistCachesForProducer(
   userId: number,
   projectId: number,
   producerId: number,
 ): Promise<void> {
-  const settleVisit1 = apiFetch<{ data?: unknown }>(
+  const settleVisit1 = apiFetchWithRetry<{ data?: unknown }>(
     `/visit-1/project/${projectId}/producer/${producerId}`,
   )
     .then(async (res) => {
@@ -224,9 +288,14 @@ async function downloadExtensionistCachesForProducer(
         );
       }
     })
-    .catch(() => {});
+    .catch((e) => {
+      console.warn(
+        `Visit1 cache download failed p=${producerId} proj=${projectId}:`,
+        e,
+      );
+    });
 
-  const settleVisit2 = apiFetch<{ data?: unknown }>(
+  const settleVisit2 = apiFetchWithRetry<{ data?: unknown }>(
     `/visit-2/project/${projectId}/producer/${producerId}`,
   )
     .then(async (res) => {
@@ -247,9 +316,14 @@ async function downloadExtensionistCachesForProducer(
         );
       }
     })
-    .catch(() => {});
+    .catch((e) => {
+      console.warn(
+        `Visit2 cache download failed p=${producerId} proj=${projectId}:`,
+        e,
+      );
+    });
 
-  const settleVisit3 = apiFetch<{ data?: unknown }>(
+  const settleVisit3 = apiFetchWithRetry<{ data?: unknown }>(
     `/visit-3/project/${projectId}/producer/${producerId}`,
   )
     .then(async (res) => {
@@ -270,64 +344,108 @@ async function downloadExtensionistCachesForProducer(
         );
       }
     })
-    .catch(() => {});
+    .catch((e) => {
+      console.warn(
+        `Visit3 cache download failed p=${producerId} proj=${projectId}:`,
+        e,
+      );
+    });
+
+  const fetchLines = async (
+    path: string,
+  ): Promise<{ ok: true; data: unknown[] } | { ok: false }> => {
+    try {
+      const res = await apiFetchWithRetry<{ data?: unknown[] }>(path);
+      return {
+        ok: true,
+        data: Array.isArray(res?.data) ? res.data : [],
+      };
+    } catch (e) {
+      console.warn(
+        `Productive lines cache download failed ${path}:`,
+        e,
+      );
+      return { ok: false };
+    }
+  };
 
   const settleBundle = Promise.all([
-    apiFetch<{ data?: unknown[] }>(
-      `/agricultural-lines/producer/${producerId}/project/${projectId}`,
-    ).catch(() => ({ data: [] })),
-    apiFetch<{ data?: unknown[] }>(
-      `/livestock-lines/producer/${producerId}/project/${projectId}`,
-    ).catch(() => ({ data: [] })),
-    apiFetch<{ data?: unknown[] }>(
-      `/forest-lines/producer/${producerId}/project/${projectId}`,
-    ).catch(() => ({ data: [] })),
-    apiFetch<{ data?: unknown[] }>(
-      `/fishing-lines/producer/${producerId}/project/${projectId}`,
-    ).catch(() => ({ data: [] })),
-    apiFetch<{ data?: unknown[] }>(
-      `/aquaculture-lines/producer/${producerId}/project/${projectId}`,
-    ).catch(() => ({ data: [] })),
-  ])
-    .then(async ([agriRes, livestockRes, forestRes, fishingRes, aquacultureRes]) => {
-      const agricultural = Array.isArray(agriRes?.data) ? agriRes!.data : [];
-      const livestock = Array.isArray(livestockRes?.data) ? livestockRes!.data : [];
-      const forest = Array.isArray(forestRes?.data) ? forestRes!.data : [];
-      const fishing = Array.isArray(fishingRes?.data) ? fishingRes!.data : [];
-      const aquaculture = Array.isArray(aquacultureRes?.data)
-        ? aquacultureRes!.data
-        : [];
+    fetchLines(`/agricultural-lines/producer/${producerId}/project/${projectId}`),
+    fetchLines(`/livestock-lines/producer/${producerId}/project/${projectId}`),
+    fetchLines(`/forest-lines/producer/${producerId}/project/${projectId}`),
+    fetchLines(`/fishing-lines/producer/${producerId}/project/${projectId}`),
+    fetchLines(`/aquaculture-lines/producer/${producerId}/project/${projectId}`),
+  ]).then(async ([agriRes, livestockRes, forestRes, fishingRes, aquacultureRes]) => {
+    const anyOk =
+      agriRes.ok ||
+      livestockRes.ok ||
+      forestRes.ok ||
+      fishingRes.ok ||
+      aquacultureRes.ok;
 
-      await upsertProductiveLinesBundleCache({
-        userId,
+    // Si todos fallan, conservar el bundle previo en SQLite (no escribir vacío).
+    if (!anyOk) return;
+
+    type BundleShape = {
+      agricultural?: unknown[];
+      livestock?: unknown[];
+      forest?: unknown[];
+      fishing?: unknown[];
+      aquaculture?: unknown[];
+    };
+    let previous: BundleShape = {};
+    try {
+      const raw = await getProductiveLinesBundleCacheRaw(
         producerId,
         projectId,
-        jsonPayload: JSON.stringify({
-          agricultural,
-          livestock,
-          forest,
-          fishing,
-          aquaculture,
-        }),
-      });
+        userId,
+      );
+      if (raw) previous = JSON.parse(raw) as BundleShape;
+    } catch {
+      previous = {};
+    }
 
-      const linesCount =
-        agricultural.length +
-        livestock.length +
-        forest.length +
-        fishing.length +
-        aquaculture.length;
+    const agricultural = agriRes.ok
+      ? agriRes.data
+      : (previous.agricultural ?? []);
+    const livestock = livestockRes.ok
+      ? livestockRes.data
+      : (previous.livestock ?? []);
+    const forest = forestRes.ok ? forestRes.data : (previous.forest ?? []);
+    const fishing = fishingRes.ok ? fishingRes.data : (previous.fishing ?? []);
+    const aquaculture = aquacultureRes.ok
+      ? aquacultureRes.data
+      : (previous.aquaculture ?? []);
 
-      if (linesCount > 0) {
-        await markInterventionMethodApplied(
-          producerId,
-          projectId,
-          PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
-          userId,
-        );
-      }
-    })
-    .catch(() => {});
+    await upsertProductiveLinesBundleCache({
+      userId,
+      producerId,
+      projectId,
+      jsonPayload: JSON.stringify({
+        agricultural,
+        livestock,
+        forest,
+        fishing,
+        aquaculture,
+      }),
+    });
+
+    const linesCount =
+      agricultural.length +
+      livestock.length +
+      forest.length +
+      fishing.length +
+      aquaculture.length;
+
+    if (linesCount > 0) {
+      await markInterventionMethodApplied(
+        producerId,
+        projectId,
+        PRODUCTIVE_LINES_INTERVENTION_METHOD_ID,
+        userId,
+      );
+    }
+  });
 
   await Promise.all([settleVisit1, settleVisit2, settleVisit3, settleBundle]);
 }
@@ -419,15 +537,11 @@ export async function refreshTouchedDataAfterLocalUpload(
   for (const t of uniqueSurveys) {
     report(`Actualizando respuestas (productor ${t.producerId})…`);
     try {
-      const response = await apiFetch<any>(
+      const response = await apiFetchWithRetry<unknown>(
         `/surveys/${t.projectId}/producer/${t.producerId}/intervention_method/${t.methodId}`,
         { method: "GET" },
       );
-      const rawData = Array.isArray(response?.data)
-        ? response.data
-        : Array.isArray(response)
-          ? response
-          : [];
+      const rawData = extractInterventionMethodSurveyArray(response);
       if (rawData.length > 0) {
         const flatResults = flattenInterventionMethodSurveyPayloadToRows(
           rawData,
@@ -443,10 +557,17 @@ export async function refreshTouchedDataAfterLocalUpload(
             t.methodId,
             userId,
           );
+        } else {
+          console.warn(
+            `Survey refresh flatten empty p=${t.producerId} m=${t.methodId} raw=${rawData.length}`,
+          );
         }
       }
-    } catch {
-      // Igual que en descarga global: productor sin resultados o endpoint vacío
+    } catch (e) {
+      console.warn(
+        `Survey refresh failed p=${t.producerId} m=${t.methodId}:`,
+        e,
+      );
     }
     step++;
   }
@@ -505,30 +626,24 @@ async function downloadProducerResults(
   const INTERVENTION_METHOD_IDS = [1, 2, 3, 5, 6, 7, 8, 9];
   const totalProducers = allProducerIds.length;
   const objectiveLineIds = new Set<number>();
+  let hardSurveyFailures = 0;
 
   await saveDownloadResultsCheckpoint(startIndex, allProducerIds);
 
   for (let i = startIndex; i < totalProducers; i++) {
-    if (generation != null && isDownloadSessionStale(generation)) {
-      return;
-    }
+    assertDownloadGeneration(generation);
 
     const { producerId, projectId } = allProducerIds[i]!;
+    let producerHadHardFailure = false;
 
     for (const methodId of INTERVENTION_METHOD_IDS) {
-      if (generation != null && isDownloadSessionStale(generation)) {
-        return;
-      }
+      assertDownloadGeneration(generation);
       try {
-        const response = await apiFetch<any>(
+        const response = await apiFetchWithRetry<unknown>(
           `/surveys/${projectId}/producer/${producerId}/intervention_method/${methodId}`,
           { method: "GET" },
         );
-        const rawData = Array.isArray(response?.data)
-          ? response.data
-          : Array.isArray(response)
-            ? response
-            : [];
+        const rawData = extractInterventionMethodSurveyArray(response);
 
         if (rawData.length > 0) {
           const flatResults = flattenInterventionMethodSurveyPayloadToRows(
@@ -545,10 +660,24 @@ async function downloadProducerResults(
               methodId,
               userId,
             );
+          } else {
+            console.warn(
+              `Survey download flatten empty p=${producerId} m=${methodId} raw=${rawData.length}`,
+            );
           }
         }
-      } catch {
-        // Skip silently — endpoint may not exist or producer has no results
+      } catch (e) {
+        // 404 = método sin aplicar; otros errores no deben finalizar la sync como "completa".
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("404") || msg.includes("Error 404")) {
+          continue;
+        }
+        producerHadHardFailure = true;
+        hardSurveyFailures += 1;
+        console.warn(
+          `Survey download failed p=${producerId} proj=${projectId} m=${methodId}:`,
+          e,
+        );
       }
     }
 
@@ -558,7 +687,16 @@ async function downloadProducerResults(
     const lineId = readProductionLineId(rawProducer);
     if (lineId != null) objectiveLineIds.add(lineId);
 
-    await saveDownloadResultsCheckpoint(i + 1, allProducerIds);
+    // No avanzar checkpoint si este productor quedó incompleto: se reintentará al reanudar.
+    if (!producerHadHardFailure) {
+      await saveDownloadResultsCheckpoint(i + 1, allProducerIds);
+    } else {
+      // Mantener índice en este productor para reintento; no marcar fase como lista.
+      await saveDownloadResultsCheckpoint(i, allProducerIds);
+      throw new Error(
+        `Descarga incompleta: falló la precarga de encuestas del productor ${producerId}. Reintente la sincronización.`,
+      );
+    }
 
     reportPhase(
       `Resultados ${i + 1} de ${totalProducers}`,
@@ -578,11 +716,15 @@ async function downloadProducerResults(
       totalProducers,
     );
     for (const lineId of objectiveLineIds) {
-      if (generation != null && isDownloadSessionStale(generation)) {
-        return;
-      }
+      assertDownloadGeneration(generation);
       await refreshVisitObjectivesCacheForLine(lineId);
     }
+  }
+
+  if (hardSurveyFailures > 0) {
+    throw new Error(
+      `Descarga incompleta: ${hardSurveyFailures} encuesta(s) no se pudieron precargar.`,
+    );
   }
 
   reportPhase("Resultados descargados", DOWNLOAD_PHASES.results, 1, 1);
@@ -622,9 +764,7 @@ export async function downloadAllData(
       reportPhase,
     );
 
-    if (generation != null && isDownloadSessionStale(generation)) {
-      return;
-    }
+    assertDownloadGeneration(generation);
 
     reportPhase("Finalizando descarga", DOWNLOAD_PHASES.finalize, 0, 1);
     await setMetadata("last_full_download", new Date().toISOString());
@@ -635,6 +775,7 @@ export async function downloadAllData(
 
   await clearDownloadResultsCheckpoint();
   await downloadSurveyQuestionsCatalog();
+  assertDownloadGeneration(generation);
 
   // 1. Projects
   reportPhase("Descargando proyectos", DOWNLOAD_PHASES.projects, 0, 1);
@@ -668,6 +809,7 @@ export async function downloadAllData(
     reportPhase("Usuarios descargados", DOWNLOAD_PHASES.producers, 1, 1);
   } else {
     for (let i = 0; i < projects.length; i++) {
+      assertDownloadGeneration(generation);
       const project = projects[i];
 
       // Fetch all pages
@@ -733,11 +875,11 @@ export async function downloadAllData(
     reportPhase("Usuarios descargados", DOWNLOAD_PHASES.producers, 1, 1);
   }
 
-  if (generation != null && isDownloadSessionStale(generation)) {
-    return;
-  }
+  assertDownloadGeneration(generation);
 
   const totalProducers = allProducerIds.length;
+  // Checkpoint antes de resultados: si el OS congela aquí, recover puede reanudar.
+  await saveDownloadResultsCheckpoint(0, allProducerIds);
   reportPhase("Descargando resultados", DOWNLOAD_PHASES.results, 0, totalProducers || 1);
 
   await downloadProducerResults(
@@ -748,9 +890,7 @@ export async function downloadAllData(
     reportPhase,
   );
 
-  if (generation != null && isDownloadSessionStale(generation)) {
-    return;
-  }
+  assertDownloadGeneration(generation);
 
   reportPhase("Finalizando descarga", DOWNLOAD_PHASES.finalize, 0, 1);
   await setMetadata("last_full_download", new Date().toISOString());
@@ -759,17 +899,6 @@ export async function downloadAllData(
 }
 
 const BASE_URL = API_BASE_URL;
-
-function isRateLimited(error: unknown): boolean {
-  if (error instanceof Error) {
-    return error.message.includes("429") || error.message.includes("rate");
-  }
-  return false;
-}
-
-function getRetryDelay(attempts: number): number {
-  return Math.min(1000 * Math.pow(2, attempts), 5 * 60 * 1000);
-}
 
 async function uploadVisit1Item(item: Visit1QueueItem): Promise<void> {
   const token = await getStoredToken();

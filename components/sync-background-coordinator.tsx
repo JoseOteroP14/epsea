@@ -1,5 +1,7 @@
+import { useAuthStore } from "@/store/useAuthStore";
 import { useSyncStore } from "@/store/useSyncStore";
 import { isBackgroundSyncServiceRunning } from "@/utils/sync/background-sync-runner";
+import { hasIncompleteDownloadCheckpoint } from "@/utils/sync/sync-download-session";
 import {
   configureSyncNotifications,
   ensureSyncNotificationPermissions,
@@ -14,6 +16,7 @@ import { AppState, type AppStateStatus } from "react-native";
 /**
  * Observa sincronizaciones en curso y, si el usuario deja la app en segundo plano,
  * muestra notificaciones de progreso y de resultado al terminar.
+ * También reanuda descargas incompletas tras matar el proceso / reiniciar.
  */
 export function SyncBackgroundCoordinator() {
   const isDownloading = useSyncStore((s) => s.isDownloading);
@@ -21,6 +24,11 @@ export function SyncBackgroundCoordinator() {
   const error = useSyncStore((s) => s.error);
   const lastProgressAt = useSyncStore((s) => s.lastProgressAt);
   const recoverStalledDownload = useSyncStore((s) => s.recoverStalledDownload);
+  const resumeIncompleteDownloadIfNeeded = useSyncStore(
+    (s) => s.resumeIncompleteDownloadIfNeeded,
+  );
+  const isHydrated = useAuthStore((s) => s.isHydrated);
+  const user = useAuthStore((s) => s.user);
 
   const isBusy = isDownloading || isUploading;
   const isBusyRef = useRef(isBusy);
@@ -42,6 +50,12 @@ export function SyncBackgroundCoordinator() {
     void ensureSyncNotificationPermissions();
   }, []);
 
+  // Cold-start / process-death resume once auth + DB are ready.
+  useEffect(() => {
+    if (!isHydrated || !user) return;
+    void resumeIncompleteDownloadIfNeeded();
+  }, [isHydrated, user, resumeIncompleteDownloadIfNeeded]);
+
   useEffect(() => {
     const onAppStateChange = (next: AppStateStatus) => {
       if (
@@ -61,6 +75,15 @@ export function SyncBackgroundCoordinator() {
         if (stalledFor >= 15_000) {
           void recoverStalledRef.current();
         }
+      }
+
+      // If we returned to the app idle but a checkpoint remains, resume.
+      if (next === "active" && !isBusyRef.current) {
+        void (async () => {
+          if (await hasIncompleteDownloadCheckpoint()) {
+            await useSyncStore.getState().resumeIncompleteDownloadIfNeeded();
+          }
+        })();
       }
     };
 
@@ -84,9 +107,19 @@ export function SyncBackgroundCoordinator() {
     const syncError = errorRef.current;
     if (syncError) {
       void notifySyncFailed(syncError);
-    } else {
-      void notifySyncSucceeded();
+      return;
     }
+
+    // Never announce success if a producer queue is still pending in SQLite.
+    void (async () => {
+      if (await hasIncompleteDownloadCheckpoint()) {
+        void notifySyncFailed(
+          "La sincronización quedó incompleta. Ábrela de nuevo para reanudarla.",
+        );
+        return;
+      }
+      void notifySyncSucceeded();
+    })();
   }, [isBusy]);
 
   return null;

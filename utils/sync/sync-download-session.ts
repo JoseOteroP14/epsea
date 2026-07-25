@@ -7,8 +7,27 @@ export type ProducerQueueItem = { producerId: number; projectId: number };
 
 let downloadGeneration = 0;
 
+/** Thrown when a newer download session invalidated this one (stall recover / supersede). */
+export class DownloadSessionAbortedError extends Error {
+  constructor(message = "Download session aborted") {
+    super(message);
+    this.name = "DownloadSessionAbortedError";
+  }
+}
+
+export function isDownloadSessionAbortedError(error: unknown): boolean {
+  return (
+    error instanceof DownloadSessionAbortedError ||
+    (error instanceof Error && error.name === "DownloadSessionAbortedError")
+  );
+}
+
 export function beginDownloadSession(): number {
   downloadGeneration += 1;
+  return downloadGeneration;
+}
+
+export function getActiveDownloadGeneration(): number {
   return downloadGeneration;
 }
 
@@ -18,6 +37,13 @@ export function isDownloadSessionStale(generation: number): boolean {
 
 export function abortActiveDownloadSession(): number {
   return beginDownloadSession();
+}
+
+/** Throws if this generation was superseded so callers never treat abort as success. */
+export function assertDownloadGeneration(generation: number | undefined): void {
+  if (generation != null && isDownloadSessionStale(generation)) {
+    throw new DownloadSessionAbortedError();
+  }
 }
 
 export async function clearDownloadResultsCheckpoint(): Promise<void> {
@@ -58,6 +84,12 @@ export async function loadDownloadResultsCheckpoint(): Promise<{
   } catch {
     return { index: 0, queue: [] };
   }
+}
+
+/** True when a previous download left an unfinished producer queue in SQLite. */
+export async function hasIncompleteDownloadCheckpoint(): Promise<boolean> {
+  const { index, queue } = await loadDownloadResultsCheckpoint();
+  return queue.length > 0 && index < queue.length;
 }
 
 export function yieldToEventLoop(): Promise<void> {

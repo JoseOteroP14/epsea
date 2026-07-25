@@ -73,8 +73,6 @@ export interface ClassificationTabProps {
   onSaved?: () => void;
   /** Copy visible en el botón principal cuando aún no existe encuesta. */
   applyButtonLabel?: string;
-  /** Copy del botón principal cuando ya se aplicó el método. */
-  applyButtonLabelApplied?: string;
   /** Título del bottom sheet en modo aplicar. Por defecto usa el nombre del componente. */
   sheetTitle?: string;
 }
@@ -245,7 +243,6 @@ export function ClassificationTab({
   interventionMethodId = CLASSIFICATION_INTERVENTION_METHOD_ID,
   onSaved,
   applyButtonLabel,
-  applyButtonLabelApplied,
   sheetTitle,
 }: ClassificationTabProps) {
   const {
@@ -263,7 +260,6 @@ export function ClassificationTab({
     updateMultipleAnswers,
     getClassificationComponent,
     getCanonicalTypeName,
-    hasInterventionMethodApplied,
   } = useCharacterizationStore();
 
   const currentUserId = useAuthStore((state) => state.user?.user_id);
@@ -277,7 +273,6 @@ export function ClassificationTab({
   const [savedAnswers, setSavedAnswers] = useState<DisplayAnswer[]>([]);
   const [loadingAnswers, setLoadingAnswers] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
   const [itemNames, setItemNames] = useState<
     Record<number, string | string[] | null>
   >({});
@@ -510,27 +505,6 @@ export function ClassificationTab({
     currentUserId,
     fetchSurveyResults,
     refreshKey,
-    interventionMethodId,
-  ]);
-
-  // Check if method already applied (for apply/re-apply guard)
-  useEffect(() => {
-    if (!producerId || !projectId || !currentUserId) return;
-    const pid = Number(producerId);
-    const projId = Number(projectId);
-    (async () => {
-      const applied = await hasInterventionMethodApplied(
-        pid,
-        projId,
-        interventionMethodId,
-      );
-      setMethodAlreadyApplied(applied);
-    })();
-  }, [
-    producerId,
-    projectId,
-    currentUserId,
-    hasInterventionMethodApplied,
     interventionMethodId,
   ]);
 
@@ -800,7 +774,6 @@ export function ClassificationTab({
       // Sheet dismiss calls handleCloseSheet → restores snapshot; keep submitted answers
       markSavedAndSkipPersist();
       answersSnapshotRef.current = { ...answers };
-      setMethodAlreadyApplied(true);
       setHasSurvey(true);
       setShowSheet(false);
       setRefreshKey((k) => k + 1);
@@ -1116,7 +1089,7 @@ export function ClassificationTab({
         showsVerticalScrollIndicator={false}
       >
         {/* Apply button — only when no survey exists */}
-        {(!hasSurvey && savedAnswers.length === 0) || methodAlreadyApplied ? (
+        {!hasSurvey && savedAnswers.length === 0 ? (
           <TouchableOpacity
             style={styles.applyButton}
             activeOpacity={0.8}
@@ -1129,9 +1102,7 @@ export function ClassificationTab({
               type="defaultSemiBold"
               style={styles.applyButtonText}
             >
-              {methodAlreadyApplied
-                ? applyButtonLabelApplied ?? "Ver / Editar Respuestas"
-                : applyButtonLabel ?? "Aplicar Clasificación"}
+              {applyButtonLabel ?? "Aplicar Clasificación"}
             </ThemedText>
           </TouchableOpacity>
         ) : null}

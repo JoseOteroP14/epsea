@@ -327,28 +327,27 @@ export const useCharacterizationStore = create<CharacterizationState>(
         return cachedResults;
       }
 
-      // 3. If online, try to fetch from API
+      // 3. If online, try to fetch from API and write-through to SQLite
       try {
         const response = await apiFetch<any>(
           `/surveys/${projectId}/producer/${producerId}/intervention_method/${interventionMethodId}`,
           { method: "GET" },
         );
-        const rawData = Array.isArray(response?.data)
-          ? response.data
-          : Array.isArray(response)
-            ? response
-            : [];
-
         const rows = flattenInterventionMethodSurveyPayloadToRows(
-          rawData,
+          response,
           interventionMethodId,
           producerId,
           projectId,
         );
         if (rows.length > 0) {
           await upsertSurveyResults(rows);
+          return mapSurveyResultRowsToItems(rows);
         }
-        return mapSurveyResultRowsToItems(rows);
+        // API vacía o no aplanable: conservar caché local (fuente de verdad offline)
+        if (cachedResults.length > 0) {
+          return cachedResults;
+        }
+        return [];
       } catch (error) {
         // API failed — return cached results if available
         if (cachedResults.length > 0) {
