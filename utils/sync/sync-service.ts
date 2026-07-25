@@ -930,9 +930,8 @@ const BASE_URL = API_BASE_URL;
 async function uploadVisit1Item(item: Visit1QueueItem): Promise<void> {
   const token = await getStoredToken();
   const payload = JSON.parse(item.payload) as Visit1Payload;
-  const { photos, remote_visit_1_id } = parseVisit1QueuePhotosColumn(
-    item.photos,
-  );
+  const { photos, remote_visit_1_id, pendingImageDeletions } =
+    parseVisit1QueuePhotosColumn(item.photos);
 
   if (remote_visit_1_id != null) {
     const putRes = await fetch(`${BASE_URL}/visit-1/${remote_visit_1_id}`, {
@@ -951,6 +950,19 @@ async function uploadVisit1Item(item: Visit1QueueItem): Promise<void> {
           ? errData.message
           : `Error ${putRes.status}`,
       );
+    }
+    for (const imgId of pendingImageDeletions) {
+      try {
+        await fetch(`${BASE_URL}/visit-1/images/${imgId}`, {
+          method: "DELETE",
+          headers: {
+            Accept: "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+      } catch {
+        /* ignore individual delete failures */
+      }
     }
     if (photos.length > 0) {
       const formData = new FormData();
@@ -1046,6 +1058,9 @@ async function uploadVisit2Item(item: Visit2QueueItem): Promise<void> {
   const monitoringCommitments = extras.monitoringCommitments ?? [];
   const photos: LocalPhoto[] = extras.photos ?? [];
   const remoteId = extras.remote_visit_2_id ?? null;
+  const pendingImageDeletions = Array.isArray(extras.pendingImageDeletions)
+    ? extras.pendingImageDeletions.filter((id) => Number.isFinite(Number(id))).map(Number)
+    : [];
 
   const mapCommitmentApi = (
     c: Visit2MonitoringCommitment,
@@ -1093,6 +1108,20 @@ async function uploadVisit2Item(item: Visit2QueueItem): Promise<void> {
           ? errData.message
           : `Error ${putRes.status}`,
       );
+    }
+
+    for (const imgId of pendingImageDeletions) {
+      try {
+        await fetch(`${BASE_URL}/visit-2/images/${imgId}`, {
+          method: "DELETE",
+          headers: {
+            Accept: "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+      } catch {
+        /* ignore */
+      }
     }
 
     const existingCommitments = monitoringCommitments.filter((c) => c.id != null);

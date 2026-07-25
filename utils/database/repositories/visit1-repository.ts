@@ -38,32 +38,96 @@ export interface Visit1Payload {
   attendance_identification?: string | null;
 }
 
+export interface Visit1RemoteImageSlot {
+  id: number;
+  filename: string;
+}
+
 export interface Visit1QueuePhotosEnvelope {
+  /** Fotos nuevas a subir (lista plana para sync). */
   photos: LocalPhoto[];
+  /** Huecos 0–2 preservando posición (preferido al hidratar UI). */
+  photoSlots?: (LocalPhoto | null)[];
+  /** Remotas que aún se conservan por hueco (tras ediciones offline). */
+  remoteImageSlots?: (Visit1RemoteImageSlot | null)[];
+  /** IDs remotos a DELETE al sincronizar. */
+  pendingImageDeletions?: number[];
   remote_visit_1_id?: number | null;
 }
 
-/** Compatibilidad: columnas viejas guardaban sólo JSON de `LocalPhoto[]`. */
 export function parseVisit1QueuePhotosColumn(raw: string | null | undefined): {
   photos: LocalPhoto[];
+  photoSlots: (LocalPhoto | null)[];
+  remoteImageSlots: (Visit1RemoteImageSlot | null)[];
+  pendingImageDeletions: number[];
   remote_visit_1_id: number | null;
 } {
+  const emptySlots = (): (LocalPhoto | null)[] => [null, null, null];
+  const emptyRemote = (): (Visit1RemoteImageSlot | null)[] => [
+    null,
+    null,
+    null,
+  ];
   try {
     const parsed = JSON.parse(raw ?? "[]") as
       | LocalPhoto[]
       | Visit1QueuePhotosEnvelope;
     if (Array.isArray(parsed)) {
-      return { photos: parsed, remote_visit_1_id: null };
+      const photoSlots = emptySlots();
+      parsed.slice(0, 3).forEach((p, i) => {
+        photoSlots[i] = p;
+      });
+      return {
+        photos: parsed,
+        photoSlots,
+        remoteImageSlots: emptyRemote(),
+        pendingImageDeletions: [],
+        remote_visit_1_id: null,
+      };
     }
     const photos = parsed.photos ?? [];
     const rid = parsed.remote_visit_1_id;
+    const photoSlots: (LocalPhoto | null)[] = Array.isArray(parsed.photoSlots)
+      ? [
+          parsed.photoSlots[0] ?? null,
+          parsed.photoSlots[1] ?? null,
+          parsed.photoSlots[2] ?? null,
+        ]
+      : (() => {
+          const slots = emptySlots();
+          photos.slice(0, 3).forEach((p, i) => {
+            slots[i] = p;
+          });
+          return slots;
+        })();
+    const remoteImageSlots: (Visit1RemoteImageSlot | null)[] = Array.isArray(
+      parsed.remoteImageSlots,
+    )
+      ? [
+          parsed.remoteImageSlots[0] ?? null,
+          parsed.remoteImageSlots[1] ?? null,
+          parsed.remoteImageSlots[2] ?? null,
+        ]
+      : emptyRemote();
+    const pendingImageDeletions = Array.isArray(parsed.pendingImageDeletions)
+      ? parsed.pendingImageDeletions.filter((id) => Number.isFinite(Number(id))).map(Number)
+      : [];
     return {
       photos,
+      photoSlots,
+      remoteImageSlots,
+      pendingImageDeletions,
       remote_visit_1_id:
         rid != null && Number.isFinite(Number(rid)) ? Number(rid) : null,
     };
   } catch {
-    return { photos: [], remote_visit_1_id: null };
+    return {
+      photos: [],
+      photoSlots: emptySlots(),
+      remoteImageSlots: emptyRemote(),
+      pendingImageDeletions: [],
+      remote_visit_1_id: null,
+    };
   }
 }
 
@@ -73,10 +137,22 @@ export async function enqueueVisit1(
   photos: LocalPhoto[],
   userId: number,
   remoteVisit1Id?: number | null,
+  extras?: {
+    photoSlots?: (LocalPhoto | null)[];
+    remoteImageSlots?: (Visit1RemoteImageSlot | null)[];
+    pendingImageDeletions?: number[];
+  },
 ): Promise<void> {
   const db = getDb();
   const envelope: Visit1QueuePhotosEnvelope = {
     photos,
+    ...(extras?.photoSlots ? { photoSlots: extras.photoSlots } : {}),
+    ...(extras?.remoteImageSlots
+      ? { remoteImageSlots: extras.remoteImageSlots }
+      : {}),
+    ...(extras?.pendingImageDeletions?.length
+      ? { pendingImageDeletions: extras.pendingImageDeletions }
+      : {}),
     ...(remoteVisit1Id != null && Number.isFinite(remoteVisit1Id)
       ? { remote_visit_1_id: remoteVisit1Id }
       : {}),

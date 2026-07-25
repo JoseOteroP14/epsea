@@ -20,6 +20,10 @@ export interface Visit3QueueTracking {
 
 export interface Visit3QueueExtras {
   photos: Visit3LocalPhoto[];
+  /** Huecos 0–2 preservando posición. */
+  photoSlots?: (Visit3LocalPhoto | null)[];
+  /** Remotas conservadas por hueco. */
+  remoteImageSlots?: ({ id: number; filename: string } | null)[];
   /** Existentes en servidor que se conservan (no borradas por el usuario). */
   keepRemoteImages: number[];
   /** Imágenes remotas que se deben eliminar al sincronizar. */

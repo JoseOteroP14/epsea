@@ -44,10 +44,21 @@ export interface Visit2MonitoringCommitment {
   porcentaje?: string;
 }
 
+export interface Visit2RemoteImageSlot {
+  id: number;
+  filename: string;
+}
+
 /** Persisted beside local photos JSON; consumed by sync and load-offline hydration. */
 export interface Visit2QueueExtras {
   monitoringCommitments: Visit2MonitoringCommitment[];
   photos: LocalPhoto[];
+  /** Huecos 0–2 preservando posición. */
+  photoSlots?: (LocalPhoto | null)[];
+  /** Remotas conservadas por hueco tras ediciones offline. */
+  remoteImageSlots?: (Visit2RemoteImageSlot | null)[];
+  /** IDs remotos a DELETE al sincronizar. */
+  pendingImageDeletions?: number[];
   /** When edits target a Visita 2 ya existente en servidor (PUT tras reconectar). */
   remote_visit_2_id?: number | null;
 }
@@ -59,11 +70,23 @@ export async function enqueueVisit2(
   photos: LocalPhoto[],
   userId: number,
   remoteVisit2Id?: number | null,
+  photoExtras?: {
+    photoSlots?: (LocalPhoto | null)[];
+    remoteImageSlots?: (Visit2RemoteImageSlot | null)[];
+    pendingImageDeletions?: number[];
+  },
 ): Promise<void> {
   const db = getDb();
   const extras: Visit2QueueExtras = {
     monitoringCommitments,
     photos,
+    ...(photoExtras?.photoSlots ? { photoSlots: photoExtras.photoSlots } : {}),
+    ...(photoExtras?.remoteImageSlots
+      ? { remoteImageSlots: photoExtras.remoteImageSlots }
+      : {}),
+    ...(photoExtras?.pendingImageDeletions?.length
+      ? { pendingImageDeletions: photoExtras.pendingImageDeletions }
+      : {}),
     ...(remoteVisit2Id != null && Number.isFinite(remoteVisit2Id)
       ? { remote_visit_2_id: remoteVisit2Id }
       : {}),

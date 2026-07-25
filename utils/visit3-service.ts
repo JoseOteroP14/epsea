@@ -1,6 +1,7 @@
 import { apiFetch, NetworkError } from "@/utils/api";
 import { API_BASE_URL } from "@/utils/api-config";
 import { getStoredToken } from "@/utils/secure-storage";
+import { invalidateVisitImageCache } from "@/utils/visit-image-cache";
 import {
   unwrapVisit3Payload,
   Visit3ResponseSchema,
@@ -173,6 +174,7 @@ export async function uploadVisit3Images(
  */
 export async function deleteVisit3Image(imageId: number): Promise<void> {
   await apiFetch(`/visit-3/images/${imageId}`, { method: "DELETE" });
+  await invalidateVisitImageCache("visit3", imageId);
 }
 
 /** URL de la imagen para renderizado (requiere auth mediante fetch/download). */

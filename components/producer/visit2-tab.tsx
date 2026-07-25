@@ -1,7 +1,10 @@
 import { ThemedText } from "@/components/themed-text";
+import { VisitPhotoSlots } from "@/components/producer/visit-photo-slots";
 import { useAlert } from "@/components/ui/custom-alert";
+import { InfoPopover } from "@/components/ui/info-popover";
 import { checkConnectivity } from "@/hooks/use-network";
 import { useProducerFormDraft } from "@/hooks/use-producer-form-draft";
+import { useVisitRemotePhotoUris } from "@/hooks/use-visit-remote-photo-uris";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
     VISIT2_INTERVENTION_METHOD_ID,
@@ -38,6 +41,7 @@ import {
     ImageOptimizationError,
     optimizeImageToWebp,
 } from "@/utils/optimize-image";
+import { invalidateVisitImageCache } from "@/utils/visit-image-cache";
 import { persistLocalVisitPhotoSlots } from "@/utils/visit-offline-photos";
 import {
     BottomSheetBackdrop,
@@ -45,7 +49,6 @@ import {
     BottomSheetScrollView,
     type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
-import { Image as ExpoImage } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import {
     Camera,
@@ -54,7 +57,6 @@ import {
     ChevronUp,
     ClipboardList,
     FileText,
-    ImagePlus,
     MessageSquare,
     PencilLine,
     Plus,
@@ -233,6 +235,8 @@ interface Visit2FormDraft {
     registrationDate: string;
     commitments: Visit2MonitoringCommitment[];
     localPhotos: (LocalPhoto | null)[];
+    existingImages: (Visit2Image | null)[];
+    pendingImageDeletions: number[];
     expandedSections: SectionKey[];
     recompBuckets: Record<RecompType, RecompBucketState>;
 }
@@ -244,17 +248,82 @@ interface SectionConfig {
     sectionNum: string;
     icon: typeof Target;
     color: string;
+    info?: string;
 }
 
 const SECTIONS: SectionConfig[] = [
-    { key: "objective", label: "Objetivo General del Acompañamiento", shortLabel: "Obj. General", sectionNum: "5", icon: Target, color: "#1a7a3a" },
-    { key: "specific_objectives", label: "Objetivos Específicos", shortLabel: "Obj. Específicos", sectionNum: "5.0", icon: Target, color: "#1a7a3a" },
-    { key: "diagnosis", label: "Diagnóstico visita", shortLabel: "Diagnóstico", sectionNum: "5.1", icon: Stethoscope, color: "#0284c7" },
-    { key: "commitment_followup", label: "Seguimiento al cumplimiento de compromisos", shortLabel: "Seguimiento", sectionNum: "5.2", icon: ClipboardList, color: "#0284c7" },
-    { key: "recommendations", label: "Recomendaciones y Compromisos", shortLabel: "Recomend.", sectionNum: "5.3", icon: FileText, color: "#0284c7" },
-    { key: "observations", label: "Observaciones visita", shortLabel: "Observac.", sectionNum: "5.4", icon: MessageSquare, color: "#0284c7" },
-    { key: "photos", label: "Registro Fotográfico", shortLabel: "Fotos", sectionNum: "5.5", icon: Camera, color: "#059669" },
-    { key: "attendance", label: "Datos del Acompañamiento", shortLabel: "Acompañ.", sectionNum: "1", icon: Users, color: "#d97706" },
+    {
+        key: "objective",
+        label: "Objetivo General del Acompañamiento",
+        shortLabel: "Obj. General",
+        sectionNum: "5",
+        icon: Target,
+        color: "#1a7a3a",
+        info: "Solo lectura. Objetivos tipo «General» definidos en el servidor para el evento Visita 2 y la línea productiva principal del usuario.",
+    },
+    {
+        key: "specific_objectives",
+        label: "Objetivos Específicos",
+        shortLabel: "Obj. Específicos",
+        sectionNum: "5.0",
+        icon: Target,
+        color: "#1a7a3a",
+        info: "Solo lectura. Objetivos tipo «Específico» del mismo catálogo (evento Visita 2, línea principal).",
+    },
+    {
+        key: "diagnosis",
+        label: "Diagnóstico visita",
+        shortLabel: "Diagnóstico",
+        sectionNum: "5.1",
+        icon: Stethoscope,
+        color: "#0284c7",
+        info: "Describa detalladamente el diagnóstico técnico del sistema productivo, resaltando fortalezas y problemáticas.",
+    },
+    {
+        key: "commitment_followup",
+        label: "Seguimiento al cumplimiento de compromisos",
+        shortLabel: "Seguimiento",
+        sectionNum: "5.2",
+        icon: ClipboardList,
+        color: "#0284c7",
+        info: "Pulse «Agregar» para seleccionar las líneas cargadas en la Visita 1 y registrar % de cumplimiento y apropiación. No podrá guardar la Visita 2 hasta cubrir todas las recomendaciones y todos los compromisos definidos en esa visita (si una lista viene vacía, no aplica). La lista siguiente es solo lectura; para corregir valores use «Modificar valores».",
+    },
+    {
+        key: "recommendations",
+        label: "Recomendaciones y Compromisos",
+        shortLabel: "Recomend.",
+        sectionNum: "5.3",
+        icon: FileText,
+        color: "#0284c7",
+        info: "Plantee recomendaciones técnicas de acuerdo al avance o situación encontrada en la unidad productiva.",
+    },
+    {
+        key: "observations",
+        label: "Observaciones visita",
+        shortLabel: "Observac.",
+        sectionNum: "5.4",
+        icon: MessageSquare,
+        color: "#0284c7",
+        info: "Registre observaciones adicionales relevantes de la visita.",
+    },
+    {
+        key: "photos",
+        label: "Registro Fotográfico",
+        shortLabel: "Fotos",
+        sectionNum: "5.5",
+        icon: Camera,
+        color: "#059669",
+        info: "Adjuntar hasta 3 fotografías con marca de agua (lugar, fecha, hora, georreferenciación, ASNM).",
+    },
+    {
+        key: "attendance",
+        label: "Datos del Acompañamiento",
+        shortLabel: "Acompañ.",
+        sectionNum: "1",
+        icon: Users,
+        color: "#d97706",
+        info: "Registre la fecha y la persona que atendió el acompañamiento.",
+    },
 ];
 
 // ─── API Helpers ────────────────────────────────────────────────────────────
@@ -395,10 +464,7 @@ async function uploadVisit2Images(
 
 async function deleteVisit2Image(imageId: number): Promise<void> {
     await apiFetch(`/visit-2/images/${imageId}`, { method: "DELETE" });
-}
-
-function getVisit2ImageUrl(imageId: number): string {
-    return `${API_BASE_URL}/visit-2/images/${imageId}`;
+    await invalidateVisitImageCache("visit2", imageId);
 }
 
 async function createMonitoringCommitment(
@@ -487,9 +553,19 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
     // Photos: local picks + existing server images
     const [localPhotos, setLocalPhotos] = useState<(LocalPhoto | null)[]>([null, null, null]);
     const [existingImages, setExistingImages] = useState<(Visit2Image | null)[]>([null, null, null]);
+    const [pendingImageDeletions, setPendingImageDeletions] = useState<number[]>([]);
+    const { sources: remotePreviewSources, loading: remotePreviewsLoading, imageIds: remoteImageIds } =
+        useVisitRemotePhotoUris("visit2", existingImages);
+    const [localFallbackUris, setLocalFallbackUris] = useState<(string | null)[]>([
+        null,
+        null,
+        null,
+    ]);
 
     // UI state
-    const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(new Set(["objective"]));
+    const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(
+        () => new Set(),
+    );
     const [showAttendanceDropdown, setShowAttendanceDropdown] = useState(false);
     const [loading, setLoading] = useState(true);
     const [objectivesApiLoading, setObjectivesApiLoading] = useState(false);
@@ -508,7 +584,6 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
     const skipNextPersistRef = useRef(false);
 
     const scrollRef = useRef<ScrollView>(null);
-    const token = useAuthStore((s) => s.token);
     const authUser = useAuthStore((s) => s.user);
     const producerDetail = useProducerStore((s) => s.producerDetail);
 
@@ -564,6 +639,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
     // ── Bottom sheet handlers ───────────────────────────────────────────
 
     const openSheet = useCallback(() => {
+        setExpandedSections(new Set());
         sheetRef.current?.present();
         setSheetOpen(true);
     }, []);
@@ -704,12 +780,35 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     }
 
                     const photos: LocalPhoto[] = stored.photos ?? [];
-                    const newLocal: (LocalPhoto | null)[] = [null, null, null];
-                    photos.slice(0, 3).forEach((p, i) => {
-                        newLocal[i] = p;
-                    });
-                    setLocalPhotos(newLocal);
-                    setExistingImages([null, null, null]);
+                    const photoSlots: (LocalPhoto | null)[] = Array.isArray(stored.photoSlots)
+                        ? [
+                            stored.photoSlots[0] ?? null,
+                            stored.photoSlots[1] ?? null,
+                            stored.photoSlots[2] ?? null,
+                        ]
+                        : (() => {
+                            const slots: (LocalPhoto | null)[] = [null, null, null];
+                            photos.slice(0, 3).forEach((p, i) => {
+                                slots[i] = p;
+                            });
+                            return slots;
+                        })();
+                    const remoteSlots: (Visit2Image | null)[] = Array.isArray(
+                        stored.remoteImageSlots,
+                    )
+                        ? [
+                            stored.remoteImageSlots[0] ?? null,
+                            stored.remoteImageSlots[1] ?? null,
+                            stored.remoteImageSlots[2] ?? null,
+                        ]
+                        : [null, null, null];
+                    setLocalPhotos(photoSlots);
+                    setExistingImages(remoteSlots);
+                    setPendingImageDeletions(
+                        Array.isArray(stored.pendingImageDeletions)
+                            ? stored.pendingImageDeletions
+                            : [],
+                    );
                 };
 
                 const clearForm = () => {
@@ -727,6 +826,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     setCommitments([]);
                     setLocalPhotos([null, null, null]);
                     setExistingImages([null, null, null]);
+                    setPendingImageDeletions([]);
                 };
 
                 if (cancelled) return;
@@ -841,8 +941,18 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                             draft.localPhotos[2] ?? null,
                         ]);
                     }
+                    if (Array.isArray(draft.existingImages)) {
+                        setExistingImages([
+                            draft.existingImages[0] ?? null,
+                            draft.existingImages[1] ?? null,
+                            draft.existingImages[2] ?? null,
+                        ]);
+                    }
+                    if (Array.isArray(draft.pendingImageDeletions)) {
+                        setPendingImageDeletions(draft.pendingImageDeletions);
+                    }
                     if (Array.isArray(draft.expandedSections)) {
-                        setExpandedSections(new Set(draft.expandedSections));
+                        // expandedSections: siempre colapsadas al abrir; no restaurar del draft
                     }
                     if (draft.recompBuckets) {
                         setRecompBuckets(draft.recompBuckets);
@@ -881,6 +991,8 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             registrationDate,
             commitments,
             localPhotos,
+            existingImages,
+            pendingImageDeletions,
             expandedSections: Array.from(expandedSections),
             recompBuckets,
         });
@@ -898,6 +1010,8 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         registrationDate,
         commitments,
         localPhotos,
+        existingImages,
+        pendingImageDeletions,
         expandedSections,
         recompBuckets,
         saveDraft,
@@ -1121,12 +1235,34 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                 type: optimized.type,
             };
 
-            if (existingImages[index]) {
-                try { await deleteVisit2Image(existingImages[index]!.id); } catch {}
-                setExistingImages((prev) => { const n = [...prev]; n[index] = null; return n; });
+            const existing = existingImages[index];
+            if (existing) {
+                const online = await checkConnectivity();
+                if (online) {
+                    try {
+                        await deleteVisit2Image(existing.id);
+                    } catch {
+                        setPendingImageDeletions((prev) =>
+                            prev.includes(existing.id) ? prev : [...prev, existing.id],
+                        );
+                    }
+                } else {
+                    setPendingImageDeletions((prev) =>
+                        prev.includes(existing.id) ? prev : [...prev, existing.id],
+                    );
+                }
+                setExistingImages((prev) => {
+                    const n = [...prev];
+                    n[index] = null;
+                    return n;
+                });
             }
 
-            setLocalPhotos((prev) => { const n = [...prev]; n[index] = photo; return n; });
+            setLocalPhotos((prev) => {
+                const n = [...prev];
+                n[index] = photo;
+                return n;
+            });
         } catch (e) {
             const message =
                 e instanceof ImageOptimizationError
@@ -1187,20 +1323,36 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
     }, [pickImage, takePhoto]);
 
     const removePhoto = useCallback(async (index: number) => {
-        if (existingImages[index]) {
+        const existing = existingImages[index];
+        if (existing) {
             setDeletingPhotoIndex(index);
-            try {
-                await deleteVisit2Image(existingImages[index]!.id);
-                setExistingImages((prev) => { const n = [...prev]; n[index] = null; return n; });
-            } catch {
-                showAlert({ title: "Error", message: "No se pudo eliminar la imagen", type: "error" });
-                setDeletingPhotoIndex(null);
-                return;
+            const online = await checkConnectivity();
+            if (online) {
+                try {
+                    await deleteVisit2Image(existing.id);
+                } catch {
+                    showAlert({ title: "Error", message: "No se pudo eliminar la imagen", type: "error" });
+                    setDeletingPhotoIndex(null);
+                    return;
+                }
+            } else {
+                setPendingImageDeletions((prev) =>
+                    prev.includes(existing.id) ? prev : [...prev, existing.id],
+                );
             }
+            setExistingImages((prev) => {
+                const n = [...prev];
+                n[index] = null;
+                return n;
+            });
             setDeletingPhotoIndex(null);
         }
-        setLocalPhotos((prev) => { const n = [...prev]; n[index] = null; return n; });
-    }, [existingImages]);
+        setLocalPhotos((prev) => {
+            const n = [...prev];
+            n[index] = null;
+            return n;
+        });
+    }, [existingImages, showAlert]);
 
     // ── Save ──────────────────────────────────────────────────────────────
 
@@ -1301,6 +1453,13 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                         });
                     }
 
+                    for (const imgId of pendingImageDeletions) {
+                        try {
+                            await deleteVisit2Image(imgId);
+                        } catch {
+                            /* ignore */
+                        }
+                    }
                     if (newPhotos.length > 0) {
                         try {
                             await uploadVisit2Images(existingVisitId, newPhotos);
@@ -1308,6 +1467,19 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                             showAlert({ title: "Aviso", message: "La visita se actualizó pero hubo un error al subir las fotos.", type: "warning" });
                         }
                     }
+                    try {
+                        const fresh = await getVisit2(Number(projectId), Number(producerId));
+                        if (fresh) {
+                            const newExisting: (Visit2Image | null)[] = [null, null, null];
+                            (fresh.images ?? []).slice(0, 3).forEach((img, i) => {
+                                newExisting[i] = img;
+                            });
+                            setExistingImages(newExisting);
+                        }
+                    } catch {
+                        /* ignore */
+                    }
+                    setPendingImageDeletions([]);
                     showAlert({ title: "Éxito", message: "Visita 2 actualizada exitosamente.", type: "success" });
                 } else {
                     let result: Visit2Response;
@@ -1318,8 +1490,15 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     }
                     setExistingVisitId(result?.id ?? null);
                     setIsEditMode(true);
+                    const newExisting: (Visit2Image | null)[] = [null, null, null];
+                    (result?.images ?? []).slice(0, 3).forEach((img, i) => {
+                        newExisting[i] = img;
+                    });
+                    setExistingImages(newExisting);
+                    setPendingImageDeletions([]);
                     showAlert({ title: "Éxito", message: "Visita 2 guardada exitosamente.", type: "success" });
                 }
+                setLocalFallbackUris(localPhotos.map((p) => p?.uri ?? null));
                 setLocalPhotos([null, null, null]);
             } else {
                 const visitUuid = `${userId}-${producerId}-${projectId}-visit2-offline`;
@@ -1343,6 +1522,11 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                     photosForQueue,
                     userId,
                     remoteForQueue,
+                    {
+                        photoSlots: persistedSlots,
+                        remoteImageSlots: existingImages,
+                        pendingImageDeletions,
+                    },
                 );
                 await markInterventionMethodApplied(
                     Number(producerId),
@@ -1381,6 +1565,7 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         generalObjective, specificObjectives, diagnosis, recommendations, observations,
         attendanceId, attendanceName, attendanceIdentification, registrationDate,
         producerId, projectId, commitments, localPhotos, isEditMode, existingVisitId,
+        existingImages, pendingImageDeletions,
         showAlert, authUser, isSection52Complete, clearDraft,
     ]);
 
@@ -1392,37 +1577,47 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             const Icon = section.icon;
 
             return (
-                <TouchableOpacity
-                    style={styles.sectionHeader}
-                    onPress={() => toggleSection(section.key)}
-                    activeOpacity={0.7}
-                >
-                    <View
-                        style={[
-                            styles.sectionBadge,
-                            { backgroundColor: isDone ? "rgba(26,122,58,0.12)" : `${section.color}15` },
-                        ]}
+                <View style={styles.sectionHeader}>
+                    <TouchableOpacity
+                        style={styles.sectionHeaderPressable}
+                        onPress={() => toggleSection(section.key)}
+                        activeOpacity={0.7}
                     >
-                        {isDone ? (
-                            <Check size={responsiveFont(14)} color="#1a7a3a" />
+                        <View
+                            style={[
+                                styles.sectionBadge,
+                                { backgroundColor: isDone ? "rgba(26,122,58,0.12)" : `${section.color}15` },
+                            ]}
+                        >
+                            {isDone ? (
+                                <Check size={responsiveFont(14)} color="#1a7a3a" />
+                            ) : (
+                                <Icon size={responsiveFont(14)} color={section.color} />
+                            )}
+                        </View>
+                        <View style={styles.sectionHeaderText}>
+                            <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
+                                {section.label}
+                            </ThemedText>
+                            <ThemedText style={styles.sectionSubtitle}>
+                                Sección {section.sectionNum}
+                            </ThemedText>
+                        </View>
+                        {isExpanded ? (
+                            <ChevronUp size={responsiveFont(18)} color="#999" />
                         ) : (
-                            <Icon size={responsiveFont(14)} color={section.color} />
+                            <ChevronDown size={responsiveFont(18)} color="#999" />
                         )}
-                    </View>
-                    <View style={styles.sectionHeaderText}>
-                        <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
-                            {section.label}
-                        </ThemedText>
-                        <ThemedText style={styles.sectionSubtitle}>
-                            Sección {section.sectionNum}
-                        </ThemedText>
-                    </View>
-                    {isExpanded ? (
-                        <ChevronUp size={responsiveFont(18)} color="#999" />
-                    ) : (
-                        <ChevronDown size={responsiveFont(18)} color="#999" />
-                    )}
-                </TouchableOpacity>
+                    </TouchableOpacity>
+                    {section.info ? (
+                        <InfoPopover
+                            title={section.shortLabel}
+                            content={section.info}
+                            iconSize={16}
+                            iconColor={section.color}
+                        />
+                    ) : null}
+                </View>
             );
         },
         [expandedSections, toggleSection],
@@ -1436,13 +1631,11 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             value: string,
             onChangeText: (t: string) => void,
             placeholder: string,
-            hint?: string,
             belowHint?: React.ReactNode,
         ) => {
             if (!expandedSections.has(sectionKey)) return null;
             return (
                 <View style={styles.sectionContent}>
-                    {hint ? <ThemedText style={styles.sectionHint}>{hint}</ThemedText> : null}
                     {belowHint}
                     <TextInput
                         style={styles.textArea}
@@ -1466,7 +1659,6 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             sectionKey: Extract<SectionKey, "objective" | "specific_objectives">,
             body: string,
             blockMode: "double" | "line",
-            hint: string,
             emptyMessage: string,
             belowHint?: React.ReactNode,
             catalogLoading?: boolean,
@@ -1475,7 +1667,6 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
             const lines = parseObjectiveDisplayBlocks(body, blockMode);
             return (
                 <View style={styles.sectionContent}>
-                    <ThemedText style={styles.sectionHint}>{hint}</ThemedText>
                     {belowHint}
                     {lines.length === 0 && catalogLoading ? (
                         <View style={styles.objectivesReadonlyPanel}>
@@ -1509,70 +1700,50 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
         [expandedSections],
     );
 
-    // ── Render: photo slot ────────────────────────────────────────────────
+    // ── Render: photo slots ───────────────────────────────────────────────
 
-    const renderPhotoSlot = useCallback(
-        (index: number) => {
-            const localPhoto = localPhotos[index];
-            const existingImg = existingImages[index];
-            const hasPhoto = localPhoto !== null || existingImg !== null;
-
-            if (hasPhoto) {
-                let uri = "";
-                if (localPhoto) {
-                    uri = localPhoto.uri;
-                } else if (existingImg) {
-                    uri = getVisit2ImageUrl(existingImg.id);
-                }
-
-                return (
-                    <View key={index} style={styles.photoSlot}>
-                        <ExpoImage
-                            source={{
-                                uri,
-                                ...(existingImg && token
-                                    ? { headers: { Authorization: `Bearer ${token}` } }
-                                    : {}),
-                            }}
-                            style={styles.photoImage}
-                            contentFit="cover"
-                            cachePolicy="memory-disk"
-                        />
-                        <TouchableOpacity
-                            style={styles.photoRemoveBtn}
-                            onPress={() => removePhoto(index)}
-                            disabled={deletingPhotoIndex === index}
-                        >
-                            {deletingPhotoIndex === index ? (
-                                <ActivityIndicator size="small" color="#fff" />
-                            ) : (
-                                <X size={responsiveFont(14)} color="#fff" />
-                            )}
-                        </TouchableOpacity>
-                        <View style={styles.photoLabel}>
-                            <ThemedText style={styles.photoLabelText} numberOfLines={1}>
-                                {localPhoto?.fileName ?? `Foto ${index + 1}`}
-                            </ThemedText>
-                        </View>
-                    </View>
-                );
-            }
-
-            return (
-                <TouchableOpacity
-                    key={index}
-                    style={styles.photoSlotEmpty}
-                    onPress={() => showPhotoOptions(index)}
-                    activeOpacity={0.7}
-                >
-                    <ImagePlus size={responsiveFont(24)} color="rgba(0,0,0,0.2)" />
-                    <ThemedText style={styles.photoSlotEmptyText}>
-                        Imagen {index + 1}
-                    </ThemedText>
-                </TouchableOpacity>
-            );
-        },
-        [localPhotos, existingImages, token, deletingPhotoIndex, removePhoto, showPhotoOptions],
+    const photoSlotModels = useMemo(
+        () =>
+            [0, 1, 2].map((index) => {
+                const localPhoto = localPhotos[index];
+                const existingImg = existingImages[index];
+                const hasPhoto = localPhoto !== null || existingImg !== null;
+                const remoteSource = existingImg
+                    ? remotePreviewSources[index] ?? null
+                    : null;
+                const fallbackUri = existingImg
+                    ? localFallbackUris[index] ?? null
+                    : null;
+                const displaySource =
+                    localPhoto?.uri ?? fallbackUri ?? remoteSource;
+                const usingRemote =
+                    !localPhoto?.uri && !fallbackUri && remoteSource != null;
+                return {
+                    displaySource,
+                    label:
+                        localPhoto?.fileName ??
+                        existingImg?.filename ??
+                        `Foto ${index + 1}`,
+                    hasPhoto,
+                    isDeleting: deletingPhotoIndex === index,
+                    isLoadingPreview:
+                        !!existingImg &&
+                        !localPhoto &&
+                        !displaySource &&
+                        remotePreviewsLoading,
+                    remoteKind: usingRemote ? ("visit2" as const) : undefined,
+                    remoteImageId: usingRemote ? remoteImageIds[index] : null,
+                };
+            }),
+        [
+            localPhotos,
+            existingImages,
+            remotePreviewSources,
+            remoteImageIds,
+            localFallbackUris,
+            remotePreviewsLoading,
+            deletingPhotoIndex,
+        ],
     );
 
     // ── Render: attendance content ────────────────────────────────────────
@@ -1698,13 +1869,6 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
 
         return (
             <View style={styles.sectionContent}>
-                <ThemedText style={styles.sectionHint}>
-                    Pulse «Agregar» para seleccionar las líneas cargadas en la Visita 1 y registrar % de cumplimiento y
-                    apropiación. No podrá guardar la Visita 2 hasta cubrir todas las recomendaciones y todos los compromisos
-                    definidos en esa visita (si una lista viene vacía, no aplica). La lista siguiente es solo lectura; para
-                    corregir valores use «Modificar valores».
-                </ThemedText>
-
                 <TouchableOpacity style={styles.recompOpenBtn} onPress={openRecompSheet} activeOpacity={0.75}>
                     {isSection52Complete ? (
                         <PencilLine size={responsiveFont(18)} color="#1a7a3a" />
@@ -1905,7 +2069,6 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                             "objective",
                             generalObjective,
                             "double",
-                            "Solo lectura. Objetivos tipo «General» definidos en el servidor para el evento Visita 2 y la línea productiva principal del usuario (`production_line_id`).",
                             "Sin objetivo general cargado para esta línea y visita.",
                             undefined,
                             objectivesApiLoading,
@@ -1922,7 +2085,6 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                             "specific_objectives",
                             specificObjectives,
                             "line",
-                            "Solo lectura. Objetivos tipo «Específico» del mismo catálogo (evento Visita 2, línea principal).",
                             "No hay objetivos específicos configurados para esta línea en el servidor.",
                             undefined,
                             objectivesApiLoading,
@@ -1940,7 +2102,6 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                             diagnosis,
                             setDiagnosis,
                             "Describa el diagnóstico de la visita...",
-                            "Describa detalladamente el diagnóstico técnico del sistema productivo, resaltando fortalezas y problemáticas.",
                         )}
                     </View>
 
@@ -1997,11 +2158,13 @@ export function Visit2Tab({ producerId, projectId }: Visit2TabProps) {
                         )}
                         {expandedSections.has("photos") && (
                             <View style={styles.sectionContent}>
-                                <ThemedText style={styles.sectionHint}>
-                                    Adjuntar hasta 3 fotografías con marca de agua (lugar, fecha, hora, georreferenciación, ASNM).
-                                </ThemedText>
                                 <View style={styles.photosGrid}>
-                                    {[0, 1, 2].map(renderPhotoSlot)}
+                                    <VisitPhotoSlots
+                                        slots={photoSlotModels}
+                                        onAdd={showPhotoOptions}
+                                        onRemove={removePhoto}
+                                        showAlert={showAlert}
+                                    />
                                 </View>
                             </View>
                         )}
@@ -2446,6 +2609,12 @@ const styles = StyleSheet.create({
         alignItems: "center",
         paddingHorizontal: widthScale(14),
         paddingVertical: verticalScale(12),
+        gap: widthScale(8),
+    },
+    sectionHeaderPressable: {
+        flex: 1,
+        flexDirection: "row",
+        alignItems: "center",
         gap: widthScale(10),
     },
     sectionBadge: {

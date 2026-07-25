@@ -1,9 +1,12 @@
 import { ClassificationTab } from "@/components/producer/classification-tab";
+import { VisitPhotoSlots } from "@/components/producer/visit-photo-slots";
 import { ThemedText } from "@/components/themed-text";
 import { AccentedText } from "@/components/ui/accented-text";
 import { useAlert } from "@/components/ui/custom-alert";
+import { InfoPopover } from "@/components/ui/info-popover";
 import { checkConnectivity } from "@/hooks/use-network";
 import { useProducerFormDraft } from "@/hooks/use-producer-form-draft";
+import { useVisitRemotePhotoUris } from "@/hooks/use-visit-remote-photo-uris";
 import {
   createEmptyVisit3Form,
   mapFormToCreatePayload,
@@ -63,7 +66,6 @@ import {
   updateMonitoringCommitment as apiUpdateMonitoringCommitment,
   updateVisit3 as apiUpdateVisit3,
   uploadVisit3Images as apiUploadVisit3Images,
-  getVisit3ImageUrl,
 } from "@/utils/visit3-service";
 import {
   BottomSheetBackdrop,
@@ -71,7 +73,6 @@ import {
   BottomSheetScrollView,
   type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
-import { Image as ExpoImage } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import {
   ImageOptimizationError,
@@ -86,7 +87,6 @@ import {
   ClipboardList,
   FileDown,
   FileText,
-  ImagePlus,
   Lock,
   MessageSquare,
   PencilLine,
@@ -148,18 +148,91 @@ interface SectionConfig {
   sectionNum: string;
   icon: typeof Target;
   color: string;
+  info?: string;
 }
 
 const SECTIONS: SectionConfig[] = [
-  { key: "attendance", label: "Datos del Acompañamiento", shortLabel: "Acompañ.", sectionNum: "1", icon: Users, color: "#d97706" },
-  { key: "objective", label: "Objetivo General del Acompañamiento", shortLabel: "Obj. General", sectionNum: "5", icon: Target, color: "#1a7a3a" },
-  { key: "specific_objectives", label: "Objetivos Específicos", shortLabel: "Obj. Específicos", sectionNum: "5.0", icon: Target, color: "#1a7a3a" },
-  { key: "commitment_followup", label: "Seguimiento a recomendaciones/compromisos", shortLabel: "Seguimiento", sectionNum: "5.1", icon: ClipboardList, color: "#0284c7" },
-  { key: "recommendations", label: "Recomendaciones técnicas para la comunidad productiva", shortLabel: "Recomend.", sectionNum: "5.2", icon: FileText, color: "#0284c7" },
-  { key: "observations", label: "Observaciones", shortLabel: "Observac.", sectionNum: "5.3", icon: MessageSquare, color: "#0284c7" },
-  { key: "photos", label: "Registro Fotográfico", shortLabel: "Fotos", sectionNum: "5.4", icon: Camera, color: "#059669" },
-  { key: "aspects", label: "Justificaciones de la Clasificación (5 aspectos)", shortLabel: "Aspectos", sectionNum: "6", icon: Sparkles, color: "#7c3aed" },
-  { key: "extensionist", label: "Datos del Extensionista", shortLabel: "Extensionista", sectionNum: "7", icon: UserCheck, color: "#334155" },
+  {
+    key: "attendance",
+    label: "Datos del Acompañamiento",
+    shortLabel: "Acompañ.",
+    sectionNum: "1",
+    icon: Users,
+    color: "#d97706",
+    info: "Registre la fecha, hora, aceptación del servicio y la persona que atendió el acompañamiento.",
+  },
+  {
+    key: "objective",
+    label: "Objetivo General del Acompañamiento",
+    shortLabel: "Obj. General",
+    sectionNum: "5",
+    icon: Target,
+    color: "#1a7a3a",
+    info: "Solo lectura. Objetivos «Generales» definidos por el servidor para el evento Visita 3 y la línea productiva principal.",
+  },
+  {
+    key: "specific_objectives",
+    label: "Objetivos Específicos",
+    shortLabel: "Obj. Específicos",
+    sectionNum: "5.0",
+    icon: Target,
+    color: "#1a7a3a",
+    info: "Solo lectura. Objetivos «Específicos» del catálogo (evento Visita 3, línea principal).",
+  },
+  {
+    key: "commitment_followup",
+    label: "Seguimiento a recomendaciones/compromisos",
+    shortLabel: "Seguimiento",
+    sectionNum: "5.1",
+    icon: ClipboardList,
+    color: "#0284c7",
+    info: "Complete el porcentaje y apropiación de cada recomendación o compromiso proveniente de la Visita 2.",
+  },
+  {
+    key: "recommendations",
+    label: "Recomendaciones técnicas para la comunidad productiva",
+    shortLabel: "Recomend.",
+    sectionNum: "5.2",
+    icon: FileText,
+    color: "#0284c7",
+    info: "Recomendaciones formuladas en esta visita, dirigidas a la comunidad productiva.",
+  },
+  {
+    key: "observations",
+    label: "Observaciones",
+    shortLabel: "Observac.",
+    sectionNum: "5.3",
+    icon: MessageSquare,
+    color: "#0284c7",
+    info: "Registre observaciones generales de la visita.",
+  },
+  {
+    key: "photos",
+    label: "Registro Fotográfico",
+    shortLabel: "Fotos",
+    sectionNum: "5.4",
+    icon: Camera,
+    color: "#059669",
+    info: `Seleccione hasta ${VISIT3_MAX_PHOTOS} fotografías de la visita. Tomar mínimo ${VISIT3_MAX_PHOTOS} fotos con su respectiva marca de agua (lugar, georreferenciación, ASNM, fecha, hora). ${VISIT3_PHOTO_LABELS.join(". ")}.`,
+  },
+  {
+    key: "aspects",
+    label: "Justificaciones de la Clasificación (5 aspectos)",
+    shortLabel: "Aspectos",
+    sectionNum: "6",
+    icon: Sparkles,
+    color: "#7c3aed",
+    info: "Justifique la calificación asignada en cada aspecto. Cada bloque agrupa los ítems evaluados en la clasificación.",
+  },
+  {
+    key: "extensionist",
+    label: "Datos del Extensionista",
+    shortLabel: "Extensionista",
+    sectionNum: "7",
+    icon: UserCheck,
+    color: "#334155",
+    info: "Información del profesional que realiza la visita.",
+  },
 ];
 
 interface Visit3FormDraft {
@@ -228,6 +301,15 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
   const [pendingCommitmentDeletions, setPendingCommitmentDeletions] = useState<
     number[]
   >([]);
+  const remotePreview = useVisitRemotePhotoUris("visit3", existingImages);
+  const remotePreviewSources = remotePreview.sources;
+  const remotePreviewsLoading = remotePreview.loading;
+  const remoteImageIds = remotePreview.imageIds;
+  const [localFallbackUris, setLocalFallbackUris] = useState<(string | null)[]>([
+    null,
+    null,
+    null,
+  ]);
 
   // Gate
   const [visit2Exists, setVisit2Exists] = useState<boolean | null>(null);
@@ -241,7 +323,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
   const [saving, setSaving] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(
-    new Set(["attendance"]),
+    () => new Set(),
   );
   const [showAttendanceDropdown, setShowAttendanceDropdown] = useState(false);
   const [objectivesApiLoading, setObjectivesApiLoading] = useState(false);
@@ -441,11 +523,29 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
               }
             }
             if (!cancelled) {
-              setLocalPhotos([
-                extras.photos?.[0] ?? null,
-                extras.photos?.[1] ?? null,
-                extras.photos?.[2] ?? null,
-              ]);
+              const photoSlots: (Visit3LocalPhoto | null)[] = Array.isArray(
+                extras.photoSlots,
+              )
+                ? [
+                    extras.photoSlots[0] ?? null,
+                    extras.photoSlots[1] ?? null,
+                    extras.photoSlots[2] ?? null,
+                  ]
+                : [
+                    extras.photos?.[0] ?? null,
+                    extras.photos?.[1] ?? null,
+                    extras.photos?.[2] ?? null,
+                  ];
+              const remoteSlots: ({ id: number; filename?: string } | null)[] =
+                Array.isArray(extras.remoteImageSlots)
+                  ? [
+                      extras.remoteImageSlots[0] ?? null,
+                      extras.remoteImageSlots[1] ?? null,
+                      extras.remoteImageSlots[2] ?? null,
+                    ]
+                  : [null, null, null];
+              setLocalPhotos(photoSlots);
+              setExistingImages(remoteSlots);
               setPendingImageDeletions(extras.pendingImageDeletions ?? []);
               setPendingCommitmentDeletions(
                 extras.pendingCommitmentDeletions ?? [],
@@ -518,7 +618,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
             ]);
           }
           if (Array.isArray(draft.expandedSections)) {
-            setExpandedSections(new Set(draft.expandedSections));
+            // expandedSections: siempre colapsadas al abrir; no restaurar del draft
           }
           if (Array.isArray(draft.pendingImageDeletions)) {
             setPendingImageDeletions(draft.pendingImageDeletions);
@@ -667,6 +767,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
 
   // ── Sheet handlers ─────────────────────────────────────────────────────
   const openSheet = useCallback(() => {
+    setExpandedSections(new Set());
     sheetRef.current?.present();
   }, []);
 
@@ -723,15 +824,21 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
           fileName: optimized.fileName,
           type: optimized.type,
         };
-        if (existingImages[index]) {
-          try {
-            await apiDeleteVisit3Image(existingImages[index]!.id);
-          } catch {
-            /* se reemplaza en UI; si falla el DELETE se reintenta al sincronizar */
-            setPendingImageDeletions((prev) => {
-              const id = existingImages[index]!.id;
-              return prev.includes(id) ? prev : [...prev, id];
-            });
+        const existing = existingImages[index];
+        if (existing) {
+          const online = await checkConnectivity();
+          if (online) {
+            try {
+              await apiDeleteVisit3Image(existing.id);
+            } catch {
+              setPendingImageDeletions((prev) =>
+                prev.includes(existing.id) ? prev : [...prev, existing.id],
+              );
+            }
+          } else {
+            setPendingImageDeletions((prev) =>
+              prev.includes(existing.id) ? prev : [...prev, existing.id],
+            );
           }
           clearExistingImageSlot(index);
         }
@@ -1023,6 +1130,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
           setExistingVisitId(created.id);
           setIsEditMode(true);
         }
+        setLocalFallbackUris(localPhotos.map((p) => p?.uri ?? null));
         setLocalPhotos([null, null, null]);
         showAlert({
           title: "Guardado",
@@ -1098,6 +1206,7 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
         }
         setPendingImageDeletions([]);
         setPendingCommitmentDeletions([]);
+        setLocalFallbackUris(localPhotos.map((p) => p?.uri ?? null));
         setLocalPhotos([null, null, null]);
         showAlert({
           title: "Actualizado",
@@ -1117,6 +1226,10 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
         );
         const extras: Visit3QueueExtras = {
           photos: photosForQueue,
+          photoSlots: persistedSlots,
+          remoteImageSlots: existingImages.map((img) =>
+            img ? { id: img.id, filename: img.filename ?? `img_${img.id}` } : null,
+          ),
           keepRemoteImages: existingImages
             .filter((i): i is { id: number } => i !== null)
             .map((i) => i.id),
@@ -1286,36 +1399,46 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
       const expanded = expandedSections.has(config.key);
       const Icon = config.icon;
       return (
-        <TouchableOpacity
-          style={styles.sectionHeader}
-          onPress={() => toggleSection(config.key)}
-          activeOpacity={0.7}
-        >
-          <View style={[styles.sectionBadge, { backgroundColor: config.color }]}>
-            <Icon size={responsiveFont(15)} color="#fff" />
-          </View>
-          <View style={styles.sectionHeaderText}>
-            <AccentedText
-              type="defaultSemiBold"
-              style={styles.sectionTitle}
-              lightColor="#222"
-              darkColor="#222"
-            >
-              {`${config.sectionNum}. ${config.label}`}
-            </AccentedText>
-            <ThemedText style={styles.sectionSubtitle}>
-              {complete ? "Completada" : "Pendiente"}
+        <View style={styles.sectionHeader}>
+          <TouchableOpacity
+            style={styles.sectionHeaderPressable}
+            onPress={() => toggleSection(config.key)}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.sectionBadge, { backgroundColor: config.color }]}>
+              <Icon size={responsiveFont(15)} color="#fff" />
+            </View>
+            <View style={styles.sectionHeaderText}>
+              <AccentedText
+                type="defaultSemiBold"
+                style={styles.sectionTitle}
+                lightColor="#222"
+                darkColor="#222"
+              >
+                {`${config.sectionNum}. ${config.label}`}
+              </AccentedText>
+              <ThemedText style={styles.sectionSubtitle}>
+                {complete ? "Completada" : "Pendiente"}
+              </ThemedText>
+            </View>
+            {complete ? (
+              <CheckCircle2 size={responsiveFont(18)} color="#1a7a3a" />
+            ) : (
+              <AlertTriangle size={responsiveFont(16)} color="#f59e0b" />
+            )}
+            <ThemedText style={styles.expandCaret}>
+              {expanded ? "▲" : "▼"}
             </ThemedText>
-          </View>
-          {complete ? (
-            <CheckCircle2 size={responsiveFont(18)} color="#1a7a3a" />
-          ) : (
-            <AlertTriangle size={responsiveFont(16)} color="#f59e0b" />
-          )}
-          <ThemedText style={styles.expandCaret}>
-            {expanded ? "▲" : "▼"}
-          </ThemedText>
-        </TouchableOpacity>
+          </TouchableOpacity>
+          {config.info ? (
+            <InfoPopover
+              title={config.shortLabel}
+              content={config.info}
+              iconSize={16}
+              iconColor={config.color}
+            />
+          ) : null}
+        </View>
       );
     },
     [expandedSections, toggleSection],
@@ -1326,14 +1449,12 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
       key: SectionKey,
       raw: string,
       mode: "double" | "line",
-      hint: string,
       emptyLabel: string,
     ) => {
       if (!expandedSections.has(key)) return null;
       const blocks = parseObjectiveDisplayBlocks(raw, mode);
       return (
         <View style={styles.sectionContent}>
-          <ThemedText style={styles.sectionHint}>{hint}</ThemedText>
           {objectivesApiLoading && (
             <View style={styles.objectivesLoadingRow}>
               <ActivityIndicator size="small" color="#1a7a3a" />
@@ -1375,12 +1496,10 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
       value: string,
       onChange: (v: string) => void,
       placeholder: string,
-      hint?: string,
     ) => {
       if (!expandedSections.has(key)) return null;
       return (
         <View style={styles.sectionContent}>
-          {hint && <ThemedText style={styles.sectionHint}>{hint}</ThemedText>}
           <TextInput
             style={styles.textArea}
             value={value}
@@ -1397,71 +1516,41 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
     [expandedSections],
   );
 
-  const renderPhotoSlot = useCallback(
-    (index: number) => {
-      const local = localPhotos[index];
-      const existing = existingImages[index];
-      const isDeleting = deletingPhotoIndex === index;
-      const hasPhoto = local !== null || existing !== null;
-
-      if (hasPhoto) {
-        const uri = local?.uri ?? (existing ? getVisit3ImageUrl(existing.id) : "");
-        return (
-          <View key={index} style={styles.photoSlot}>
-            <ExpoImage
-              source={{
-                uri,
-                ...(existing && token && !local
-                  ? { headers: { Authorization: `Bearer ${token}` } }
-                  : {}),
-              }}
-              style={styles.photoImage}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-              pointerEvents="none"
-            />
-            <TouchableOpacity
-              style={styles.photoRemoveBtn}
-              onPress={() => removePhoto(index)}
-              activeOpacity={0.7}
-              disabled={isDeleting}
-              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-            >
-              {isDeleting ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <X size={responsiveFont(14)} color="#fff" />
-              )}
-            </TouchableOpacity>
-            <View style={styles.photoLabel} pointerEvents="none">
-              <ThemedText style={styles.photoLabelText} numberOfLines={1}>
-                {local?.fileName ?? `Foto ${index + 1}`}
-              </ThemedText>
-            </View>
-          </View>
-        );
-      }
-      return (
-        <TouchableOpacity
-          key={index}
-          style={styles.photoSlotEmpty}
-          onPress={() => showPhotoOptions(index)}
-          activeOpacity={0.7}
-        >
-          <ImagePlus size={responsiveFont(24)} color="rgba(0,0,0,0.2)" />
-          <ThemedText style={styles.photoSlotEmptyText}>
-            Imagen {index + 1}
-          </ThemedText>
-        </TouchableOpacity>
-      );
-    },
+  const photoSlotModels = useMemo(
+    () =>
+      [0, 1, 2].map((index) => {
+        const local = localPhotos[index];
+        const existing = existingImages[index];
+        const hasPhoto = local !== null || existing !== null;
+        const remoteSource = existing
+          ? remotePreviewSources[index] ?? null
+          : null;
+        const fallbackUri = existing ? localFallbackUris[index] ?? null : null;
+        const displaySource = local?.uri ?? fallbackUri ?? remoteSource;
+        const usingRemote = !local?.uri && !fallbackUri && remoteSource != null;
+        return {
+          displaySource,
+          label:
+            local?.fileName ??
+            existing?.filename ??
+            VISIT3_PHOTO_LABELS[index] ??
+            `Foto ${index + 1}`,
+          hasPhoto,
+          isDeleting: deletingPhotoIndex === index,
+          isLoadingPreview:
+            !!existing && !local && !displaySource && remotePreviewsLoading,
+          remoteKind: usingRemote ? ("visit3" as const) : undefined,
+          remoteImageId: usingRemote ? remoteImageIds[index] : null,
+        };
+      }),
     [
       localPhotos,
       existingImages,
+      remotePreviewSources,
+      remoteImageIds,
+      localFallbackUris,
+      remotePreviewsLoading,
       deletingPhotoIndex,
-      token,
-      removePhoto,
-      showPhotoOptions,
     ],
   );
 
@@ -1870,7 +1959,6 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
               "objective",
               form.general_objective,
               "double",
-              "Solo lectura. Objetivos «Generales» definidos por el servidor para el evento Visita 3 (evento 6) y la línea productiva principal.",
               "Sin objetivo general cargado para esta línea.",
             )}
           </View>
@@ -1881,7 +1969,6 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
               "specific_objectives",
               form.specific_objectives,
               "line",
-              "Solo lectura. Objetivos «Específicos» del catálogo (evento Visita 3, línea principal).",
               "No hay objetivos específicos configurados para esta línea.",
             )}
           </View>
@@ -1891,10 +1978,6 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
             {renderSectionHeader(SECTIONS[3]!, sectionStatus.commitment_followup)}
             {expandedSections.has("commitment_followup") && (
               <View style={styles.sectionContent}>
-                <ThemedText style={styles.sectionHint}>
-                  Complete el porcentaje y apropiación de cada recomendación o
-                  compromiso proveniente de la Visita 2.
-                </ThemedText>
                 {form.commitments_tracking.length === 0 ? (
                   <ThemedText style={styles.commitmentsEmptyText}>
                     Sin recomendaciones/compromisos registrados en la Visita 2.
@@ -1973,7 +2056,6 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
               form.technical_recommendations,
               (v) => setField("technical_recommendations", v),
               "Plantee recomendaciones técnicas específicas...",
-              "Recomendaciones formuladas en esta visita, dirigidas a la comunidad productiva.",
             )}
           </View>
 
@@ -1993,16 +2075,13 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
             {renderSectionHeader(SECTIONS[6]!, sectionStatus.photos)}
             {expandedSections.has("photos") && (
               <View style={styles.sectionContent}>
-                <ThemedText style={styles.sectionHint}>
-                  Arrastre o seleccione hasta {VISIT3_MAX_PHOTOS} fotografías de la visita.
-                </ThemedText>
-                <ThemedText style={[styles.sectionHint, styles.photoHintItalic]}>
-                  Tomar mínimo {VISIT3_MAX_PHOTOS} fotos con su respectiva marca de agua
-                  (lugar, georreferenciación, ASNM, fecha, hora).{" "}
-                  {VISIT3_PHOTO_LABELS.join(". ")}.
-                </ThemedText>
                 <View style={styles.photosGrid}>
-                  {[0, 1, 2].map(renderPhotoSlot)}
+                  <VisitPhotoSlots
+                    slots={photoSlotModels}
+                    onAdd={showPhotoOptions}
+                    onRemove={removePhoto}
+                    showAlert={showAlert}
+                  />
                 </View>
               </View>
             )}
@@ -2013,10 +2092,6 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
             {renderSectionHeader(SECTIONS[7]!, sectionStatus.aspects)}
             {expandedSections.has("aspects") && (
               <View style={styles.sectionContent}>
-                <ThemedText style={styles.sectionHint}>
-                  Justifique la calificación asignada en cada aspecto. Cada
-                  bloque agrupa los ítems evaluados en la clasificación.
-                </ThemedText>
                 {VISIT3_ASPECTS.map((aspect) => (
                   <View key={aspect.id} style={styles.aspectCard}>
                     <ThemedText
@@ -2050,9 +2125,6 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
             {renderSectionHeader(SECTIONS[8]!, sectionStatus.extensionist)}
             {expandedSections.has("extensionist") && (
               <View style={styles.sectionContent}>
-                <ThemedText style={styles.sectionHint}>
-                  Información del profesional que realiza la visita.
-                </ThemedText>
                 <View style={styles.readonlyField}>
                   <ThemedText style={styles.readonlyFieldText}>
                     {authUser?.first_name && authUser?.last_name
@@ -2318,6 +2390,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: widthScale(14),
     paddingVertical: verticalScale(12),
+    gap: widthScale(8),
+  },
+  sectionHeaderPressable: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
     gap: widthScale(10),
   },
   sectionBadge: {

@@ -1,8 +1,11 @@
 import { ThemedText } from "@/components/themed-text";
+import { VisitPhotoSlots } from "@/components/producer/visit-photo-slots";
 import { AccentedText } from "@/components/ui/accented-text";
 import { useAlert } from "@/components/ui/custom-alert";
+import { InfoPopover } from "@/components/ui/info-popover";
 import { checkConnectivity } from "@/hooks/use-network";
 import { useProducerFormDraft } from "@/hooks/use-producer-form-draft";
+import { useVisitRemotePhotoUris } from "@/hooks/use-visit-remote-photo-uris";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
     VISIT_INTERVENTION_METHOD_ID,
@@ -36,6 +39,7 @@ import {
   ImageOptimizationError,
   optimizeImageToWebp,
 } from "@/utils/optimize-image";
+import { invalidateVisitImageCache } from "@/utils/visit-image-cache";
 import { persistLocalVisitPhotoSlots } from "@/utils/visit-offline-photos";
 import {
     BottomSheetBackdrop,
@@ -43,7 +47,6 @@ import {
     BottomSheetScrollView,
     type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
-import { Image as ExpoImage } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import {
     CalendarCheck,
@@ -52,7 +55,6 @@ import {
     ChevronDown,
     ChevronUp,
     ClipboardList,
-    ImagePlus,
     ListTodo,
     MapPin,
     MessageSquare,
@@ -145,17 +147,82 @@ interface SectionConfig {
   sectionNum: string;
   icon: typeof Target;
   color: string;
+  info?: string;
 }
 
 const SECTIONS: SectionConfig[] = [
-  { key: "location", label: "Ubicación Geográfica y ASNM", shortLabel: "Ubicación", sectionNum: "2", icon: MapPin, color: "#7c3aed" },
-  { key: "objective", label: "Objetivos Específicos del Acompañamiento", shortLabel: "Objetivos", sectionNum: "5.0", icon: Target, color: "#1a7a3a" },
-  { key: "diagnosis", label: "Diagnóstico visita", shortLabel: "Diagnóstico", sectionNum: "5.1", icon: Stethoscope, color: "#0284c7" },
-  { key: "recommendations", label: "Recomendaciones Generales", shortLabel: "Recomend.", sectionNum: "5.2.1", icon: ClipboardList, color: "#0284c7" },
-  { key: "commitments", label: "Compromisos", shortLabel: "Comprom.", sectionNum: "5.2.2", icon: ListTodo, color: "#0284c7" },
-  { key: "observations", label: "Observaciones visita", shortLabel: "Observac.", sectionNum: "5.4", icon: MessageSquare, color: "#0284c7" },
-  { key: "photos", label: "Registro Fotográfico", shortLabel: "Fotos", sectionNum: "5.5", icon: Camera, color: "#059669" },
-  { key: "attendance", label: "Datos del Acompañamiento", shortLabel: "Acompañ.", sectionNum: "6", icon: Users, color: "#d97706" },
+  {
+    key: "location",
+    label: "Ubicación Geográfica y ASNM",
+    shortLabel: "Ubicación",
+    sectionNum: "2",
+    icon: MapPin,
+    color: "#7c3aed",
+    info: "Ingrese las coordenadas geográficas y la altura sobre el nivel del mar (ASNM) del predio visitado.",
+  },
+  {
+    key: "objective",
+    label: "Objetivos Específicos del Acompañamiento",
+    shortLabel: "Objetivos",
+    sectionNum: "5.0",
+    icon: Target,
+    color: "#1a7a3a",
+    info: "Los objetivos específicos del acompañamiento se cargan automáticamente según la línea productiva principal del productor.",
+  },
+  {
+    key: "diagnosis",
+    label: "Diagnóstico visita",
+    shortLabel: "Diagnóstico",
+    sectionNum: "5.1",
+    icon: Stethoscope,
+    color: "#0284c7",
+    info: "Para generar el diagnóstico inicial técnico productivo del sistema, usted deberá realizar un recorrido total de la Unidad Productiva, que le permita identificar los problemas críticos relevantes y/o ventajas y oportunidades.",
+  },
+  {
+    key: "recommendations",
+    label: "Recomendaciones Generales",
+    shortLabel: "Recomend.",
+    sectionNum: "5.2.1",
+    icon: ClipboardList,
+    color: "#0284c7",
+    info: "Plantee recomendaciones técnicas de acuerdo al diagnóstico inicial encontrado en la unidad productiva. Deberán ser recomendaciones profesionales, relevantes y en procura de mejorar los aspectos de la extensión del usuario a intervenir y adaptadas a las condiciones del sistema productivo.",
+  },
+  {
+    key: "commitments",
+    label: "Compromisos",
+    shortLabel: "Comprom.",
+    sectionNum: "5.2.2",
+    icon: ListTodo,
+    color: "#0284c7",
+    info: "Redacte compromisos puntuales, de manera clara, acordes a los objetivos específicos del acompañamiento (si aplican), medibles y realizables dentro del tiempo del acompañamiento.",
+  },
+  {
+    key: "observations",
+    label: "Observaciones visita",
+    shortLabel: "Observac.",
+    sectionNum: "5.4",
+    icon: MessageSquare,
+    color: "#0284c7",
+    info: "Describa, si aplica, cualquier otra situación particular que considere relevante para la realización del acompañamiento, o para dejar trazabilidad de las evidencias del mismo.",
+  },
+  {
+    key: "photos",
+    label: "Registro Fotográfico",
+    shortLabel: "Fotos",
+    sectionNum: "5.5",
+    icon: Camera,
+    color: "#059669",
+    info: "Seleccione hasta 3 fotografías de la visita. Tomar mínimo 3 fotos con su respectiva marca de agua (lugar, georreferenciación, ASNM, fecha, hora). Foto 1: Panorámica del predio y el usuario. Foto 2: Donde se vea al usuario en su actividad productiva principal. Foto 3: Donde se vea al usuario junto con el extensionista.",
+  },
+  {
+    key: "attendance",
+    label: "Datos del Acompañamiento",
+    shortLabel: "Acompañ.",
+    sectionNum: "6",
+    icon: Users,
+    color: "#d97706",
+    info: "Registre la fecha, hora y la persona que atendió el acompañamiento.",
+  },
 ];
 
 interface Visit1FormDraft {
@@ -172,6 +239,8 @@ interface Visit1FormDraft {
   registrationDate: string;
   registrationTime: string;
   localPhotos: (LocalPhoto | null)[];
+  existingImages: (VisitImage | null)[];
+  pendingImageDeletions: number[];
   expandedSections: SectionKey[];
 }
 
@@ -308,10 +377,7 @@ async function uploadVisitImages(
 
 async function deleteVisitImage(imageId: number): Promise<void> {
   await apiFetch(`/visit-1/images/${imageId}`, { method: "DELETE" });
-}
-
-function getVisitImageUrl(imageId: number): string {
-  return `${BASE_URL}/visit-1/images/${imageId}`;
+  await invalidateVisitImageCache("visit1", imageId);
 }
 
 // ─── Date helpers ───────────────────────────────────────────────────────────
@@ -381,20 +447,22 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   // Photos: local picks + existing server images
   const [localPhotos, setLocalPhotos] = useState<(LocalPhoto | null)[]>([null, null, null]);
   const [existingImages, setExistingImages] = useState<(VisitImage | null)[]>([null, null, null]);
+  const [pendingImageDeletions, setPendingImageDeletions] = useState<number[]>([]);
+  const {
+    sources: remotePreviewSources,
+    loading: remotePreviewsLoading,
+    imageIds: remoteImageIds,
+  } = useVisitRemotePhotoUris("visit1", existingImages);
+  /** Tras sync se limpian localPhotos; se conserva URI local para preview si el remoto falla. */
+  const [localFallbackUris, setLocalFallbackUris] = useState<(string | null)[]>([
+    null,
+    null,
+    null,
+  ]);
 
-  // UI state
+  // UI state — colapsadas por defecto al abrir el bottom sheet
   const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(
-    () =>
-      new Set([
-        "location",
-        "objective",
-        "diagnosis",
-        "recommendations",
-        "commitments",
-        "observations",
-        "photos",
-        "attendance",
-      ]),
+    () => new Set(),
   );
   const [showAttendanceDropdown, setShowAttendanceDropdown] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -414,13 +482,13 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   const skipNextPersistRef = useRef(false);
 
   const scrollRef = useRef<ScrollView>(null);
-  const token = useAuthStore((s) => s.token);
   const authUser = useAuthStore((s) => s.user);
   const producerDetail = useProducerStore((s) => s.producerDetail);
 
   // ── Bottom sheet handlers ───────────────────────────────────────────
 
   const openSheet = useCallback(() => {
+    setExpandedSections(new Set());
     sheetRef.current?.present();
     setSheetOpen(true);
   }, []);
@@ -563,14 +631,12 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
             setRegistrationDate(date);
             setRegistrationTime(time);
           }
-          const newLocal: (LocalPhoto | null)[] = [null, null, null];
-          parsedPhotos.photos.slice(0, 3).forEach((p, i) => {
-            newLocal[i] = p;
-          });
-          setLocalPhotos(newLocal);
-          setExistingImages([null, null, null]);
+          setLocalPhotos(parsedPhotos.photoSlots);
+          setExistingImages(parsedPhotos.remoteImageSlots);
+          setPendingImageDeletions(parsedPhotos.pendingImageDeletions);
         } else {
           setObjectiveFromOfflineQueue(null);
+          setPendingImageDeletions([]);
           let data: Visit1Response | null = null;
           const online = await checkConnectivity();
           if (online) {
@@ -660,6 +726,7 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
             setMasl("");
             setLocalPhotos([null, null, null]);
             setExistingImages([null, null, null]);
+            setPendingImageDeletions([]);
           }
         }
 
@@ -685,9 +752,17 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
               draft.localPhotos[2] ?? null,
             ]);
           }
-          if (Array.isArray(draft.expandedSections)) {
-            setExpandedSections(new Set(draft.expandedSections));
+          if (Array.isArray(draft.existingImages)) {
+            setExistingImages([
+              draft.existingImages[0] ?? null,
+              draft.existingImages[1] ?? null,
+              draft.existingImages[2] ?? null,
+            ]);
           }
+          if (Array.isArray(draft.pendingImageDeletions)) {
+            setPendingImageDeletions(draft.pendingImageDeletions);
+          }
+          // expandedSections: siempre colapsadas al abrir; no restaurar del draft
         }
       } catch (err) {
         console.warn("No se pudo consultar visita existente:", err);
@@ -724,6 +799,8 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
       registrationDate,
       registrationTime,
       localPhotos,
+      existingImages,
+      pendingImageDeletions,
       expandedSections: Array.from(expandedSections),
     });
   }, [
@@ -742,6 +819,8 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
     registrationDate,
     registrationTime,
     localPhotos,
+    existingImages,
+    pendingImageDeletions,
     expandedSections,
     saveDraft,
   ]);
@@ -826,12 +905,34 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
         type: optimized.type,
       };
 
-      if (existingImages[index]) {
-        try { await deleteVisitImage(existingImages[index]!.id); } catch {}
-        setExistingImages((prev) => { const n = [...prev]; n[index] = null; return n; });
+      const existing = existingImages[index];
+      if (existing) {
+        const online = await checkConnectivity();
+        if (online) {
+          try {
+            await deleteVisitImage(existing.id);
+          } catch {
+            setPendingImageDeletions((prev) =>
+              prev.includes(existing.id) ? prev : [...prev, existing.id],
+            );
+          }
+        } else {
+          setPendingImageDeletions((prev) =>
+            prev.includes(existing.id) ? prev : [...prev, existing.id],
+          );
+        }
+        setExistingImages((prev) => {
+          const n = [...prev];
+          n[index] = null;
+          return n;
+        });
       }
 
-      setLocalPhotos((prev) => { const n = [...prev]; n[index] = photo; return n; });
+      setLocalPhotos((prev) => {
+        const n = [...prev];
+        n[index] = photo;
+        return n;
+      });
     } catch (e) {
       const message =
         e instanceof ImageOptimizationError
@@ -892,20 +993,36 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   }, [pickImage, takePhoto]);
 
   const removePhoto = useCallback(async (index: number) => {
-    if (existingImages[index]) {
+    const existing = existingImages[index];
+    if (existing) {
       setDeletingPhotoIndex(index);
-      try {
-        await deleteVisitImage(existingImages[index]!.id);
-        setExistingImages((prev) => { const n = [...prev]; n[index] = null; return n; });
-      } catch {
-        showAlert({ title: "Error", message: "No se pudo eliminar la imagen", type: "error" });
-        setDeletingPhotoIndex(null);
-        return;
+      const online = await checkConnectivity();
+      if (online) {
+        try {
+          await deleteVisitImage(existing.id);
+        } catch {
+          showAlert({ title: "Error", message: "No se pudo eliminar la imagen", type: "error" });
+          setDeletingPhotoIndex(null);
+          return;
+        }
+      } else {
+        setPendingImageDeletions((prev) =>
+          prev.includes(existing.id) ? prev : [...prev, existing.id],
+        );
       }
+      setExistingImages((prev) => {
+        const n = [...prev];
+        n[index] = null;
+        return n;
+      });
       setDeletingPhotoIndex(null);
     }
-    setLocalPhotos((prev) => { const n = [...prev]; n[index] = null; return n; });
-  }, [existingImages]);
+    setLocalPhotos((prev) => {
+      const n = [...prev];
+      n[index] = null;
+      return n;
+    });
+  }, [existingImages, showAlert]);
 
   // ── Save ──────────────────────────────────────────────────────────────
 
@@ -1018,6 +1135,13 @@ const handleSave = useCallback(async () => {
         if (isEditMode && existingVisitId) {
           await updateVisit1(existingVisitId, payload);
           setSavedVisitObjetive(payload.objetive);
+          for (const imgId of pendingImageDeletions) {
+            try {
+              await deleteVisitImage(imgId);
+            } catch {
+              /* se reintentará en próxima sync si queda en cola */
+            }
+          }
           if (newPhotos.length > 0) {
             try {
               await uploadVisitImages(existingVisitId, newPhotos);
@@ -1025,6 +1149,29 @@ const handleSave = useCallback(async () => {
               showAlert({ title: "Aviso", message: "La visita se actualizó pero hubo un error al subir las fotos.", type: "warning" });
             }
           }
+          // Refetch images so slots match server
+          try {
+            const fresh = await getVisit1(Number(projectId), Number(producerId));
+            if (fresh) {
+              const newExisting: (VisitImage | null)[] = [null, null, null];
+              (fresh.images ?? []).slice(0, 3).forEach((img, i) => {
+                newExisting[i] = img;
+              });
+              setExistingImages(newExisting);
+              if (userId > 0) {
+                await upsertVisitServerCache({
+                  userId,
+                  producerId: Number(producerId),
+                  projectId: Number(projectId),
+                  kind: "visit1",
+                  jsonPayload: JSON.stringify(fresh),
+                });
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+          setPendingImageDeletions([]);
           showAlert({ title: "Éxito", message: "Visita 1 actualizada exitosamente.", type: "success" });
         } else {
           let result: Visit1Response;
@@ -1036,8 +1183,15 @@ const handleSave = useCallback(async () => {
           setExistingVisitId(result?.id ?? null);
           setIsEditMode(true);
           if (result?.objetive != null) setSavedVisitObjetive(result.objetive);
+          const newExisting: (VisitImage | null)[] = [null, null, null];
+          (result?.images ?? []).slice(0, 3).forEach((img, i) => {
+            newExisting[i] = img;
+          });
+          setExistingImages(newExisting);
+          setPendingImageDeletions([]);
           showAlert({ title: "Éxito", message: "Visita 1 guardada exitosamente.", type: "success" });
         }
+        setLocalFallbackUris(localPhotos.map((p) => p?.uri ?? null));
         setLocalPhotos([null, null, null]);
       } else {
         const visitUuid = `${userId}-${producerId}-${projectId}-visit1-offline`;
@@ -1060,6 +1214,11 @@ const handleSave = useCallback(async () => {
           photosForQueue,
           userId,
           remoteForQueue,
+          {
+            photoSlots: persistedSlots,
+            remoteImageSlots: existingImages,
+            pendingImageDeletions,
+          },
         );
         await markInterventionMethodApplied(
           Number(producerId),
@@ -1114,6 +1273,8 @@ const handleSave = useCallback(async () => {
     localPhotos,
     isEditMode,
     existingVisitId,
+    existingImages,
+    pendingImageDeletions,
     showAlert,
     authUser,
     clearDraft,
@@ -1127,34 +1288,44 @@ const handleSave = useCallback(async () => {
       const Icon = section.icon;
 
       return (
-        <TouchableOpacity
-          style={styles.sectionHeader}
-          onPress={() => toggleSection(section.key)}
-          activeOpacity={0.7}
-        >
-          <View
-            style={[
-              styles.sectionBadge,
-              { backgroundColor: isDone ? "rgba(26,122,58,0.12)" : `${section.color}15` },
-            ]}
+        <View style={styles.sectionHeader}>
+          <TouchableOpacity
+            style={styles.sectionHeaderPressable}
+            onPress={() => toggleSection(section.key)}
+            activeOpacity={0.7}
           >
-            {isDone ? (
-              <Check size={responsiveFont(14)} color="#1a7a3a" />
+            <View
+              style={[
+                styles.sectionBadge,
+                { backgroundColor: isDone ? "rgba(26,122,58,0.12)" : `${section.color}15` },
+              ]}
+            >
+              {isDone ? (
+                <Check size={responsiveFont(14)} color="#1a7a3a" />
+              ) : (
+                <Icon size={responsiveFont(14)} color={section.color} />
+              )}
+            </View>
+            <View style={styles.sectionHeaderText}>
+              <AccentedText type="defaultSemiBold" style={styles.sectionTitle}>
+                {`${section.sectionNum}. ${section.label}`}
+              </AccentedText>
+            </View>
+            {isExpanded ? (
+              <ChevronUp size={responsiveFont(18)} color="#999" />
             ) : (
-              <Icon size={responsiveFont(14)} color={section.color} />
+              <ChevronDown size={responsiveFont(18)} color="#999" />
             )}
-          </View>
-          <View style={styles.sectionHeaderText}>
-            <AccentedText type="defaultSemiBold" style={styles.sectionTitle}>
-              {`${section.sectionNum}. ${section.label}`}
-            </AccentedText>
-          </View>
-          {isExpanded ? (
-            <ChevronUp size={responsiveFont(18)} color="#999" />
-          ) : (
-            <ChevronDown size={responsiveFont(18)} color="#999" />
-          )}
-        </TouchableOpacity>
+          </TouchableOpacity>
+          {section.info ? (
+            <InfoPopover
+              title={section.shortLabel}
+              content={section.info}
+              iconSize={16}
+              iconColor={section.color}
+            />
+          ) : null}
+        </View>
       );
     },
     [expandedSections, toggleSection],
@@ -1168,14 +1339,12 @@ const handleSave = useCallback(async () => {
       value: string,
       onChangeText: (t: string) => void,
       placeholder: string,
-      hint?: string,
       topContent?: React.ReactNode,
     ) => {
       if (!expandedSections.has(sectionKey)) return null;
       return (
         <View style={styles.sectionContent}>
           {topContent}
-          {hint && <ThemedText style={styles.sectionHint}>{hint}</ThemedText>}
           <TextInput
             style={styles.textArea}
             value={value}
@@ -1201,9 +1370,6 @@ const handleSave = useCallback(async () => {
     if (!expandedSections.has("location")) return null;
     return (
       <View style={styles.sectionContent}>
-        <ThemedText style={styles.sectionHint}>
-          Ingrese las coordenadas geográficas y la altura sobre el nivel del mar (ASNM) del predio visitado.
-        </ThemedText>
         <ThemedText style={styles.fieldLabel}>Latitud</ThemedText>
         <TextInput
           style={styles.textInput}
@@ -1254,9 +1420,6 @@ const handleSave = useCallback(async () => {
           <ThemedText style={styles.generalObjectiveLabel}>Objetivo General (fijo)</ThemedText>
           <ThemedText style={styles.generalObjectiveText}>{VISIT1_GENERAL_OBJECTIVE_FIXED}</ThemedText>
         </View>
-        <ThemedText style={styles.sectionHint}>
-          Los objetivos específicos del acompañamiento se cargan automáticamente según la línea productiva principal del productor.
-        </ThemedText>
         {specificObjectiveLines.length > 0 ? (
           <View style={styles.objectivesReadonlyPanel}>
             {specificObjectiveLines.map((obj, idx) => (
@@ -1293,70 +1456,42 @@ const handleSave = useCallback(async () => {
     isEditMode,
   ]);
 
-  // ── Render: photo slot ────────────────────────────────────────────────
+  // ── Render: photo slots ───────────────────────────────────────────────
 
-  const renderPhotoSlot = useCallback(
-    (index: number) => {
-      const localPhoto = localPhotos[index];
-      const existingImg = existingImages[index];
-      const hasPhoto = localPhoto !== null || existingImg !== null;
-
-      if (hasPhoto) {
-        let uri = "";
-        if (localPhoto) {
-          uri = localPhoto.uri;
-        } else if (existingImg) {
-          uri = getVisitImageUrl(existingImg.id);
-        }
-
-        return (
-          <View key={index} style={styles.photoSlot}>
-            <ExpoImage
-              source={{
-                uri,
-                ...(existingImg && token
-                  ? { headers: { Authorization: `Bearer ${token}` } }
-                  : {}),
-              }}
-              style={styles.photoImage}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-            />
-            <TouchableOpacity
-              style={styles.photoRemoveBtn}
-              onPress={() => removePhoto(index)}
-              disabled={deletingPhotoIndex === index}
-            >
-              {deletingPhotoIndex === index ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <X size={responsiveFont(14)} color="#fff" />
-              )}
-            </TouchableOpacity>
-            <View style={styles.photoLabel}>
-              <ThemedText style={styles.photoLabelText} numberOfLines={1}>
-                {localPhoto?.fileName ?? `Foto ${index + 1}`}
-              </ThemedText>
-            </View>
-          </View>
-        );
-      }
-
-      return (
-        <TouchableOpacity
-          key={index}
-          style={styles.photoSlotEmpty}
-          onPress={() => showPhotoOptions(index)}
-          activeOpacity={0.7}
-        >
-          <ImagePlus size={responsiveFont(24)} color="rgba(0,0,0,0.2)" />
-          <ThemedText style={styles.photoSlotEmptyText}>
-            Imagen {index + 1}
-          </ThemedText>
-        </TouchableOpacity>
-      );
-    },
-    [localPhotos, existingImages, token, deletingPhotoIndex, removePhoto, showPhotoOptions],
+  const photoSlotModels = useMemo(
+    () =>
+      [0, 1, 2].map((index) => {
+        const localPhoto = localPhotos[index];
+        const existingImg = existingImages[index];
+        const hasPhoto = localPhoto !== null || existingImg !== null;
+        const remoteSource = existingImg ? remotePreviewSources[index] ?? null : null;
+        const fallbackUri = existingImg ? localFallbackUris[index] ?? null : null;
+        const displaySource = localPhoto?.uri ?? fallbackUri ?? remoteSource;
+        const usingRemote =
+          !localPhoto?.uri && !fallbackUri && remoteSource != null;
+        return {
+          displaySource,
+          label: localPhoto?.fileName ?? existingImg?.filename ?? `Foto ${index + 1}`,
+          hasPhoto,
+          isDeleting: deletingPhotoIndex === index,
+          isLoadingPreview:
+            !!existingImg &&
+            !localPhoto &&
+            !displaySource &&
+            remotePreviewsLoading,
+          remoteKind: usingRemote ? ("visit1" as const) : undefined,
+          remoteImageId: usingRemote ? remoteImageIds[index] : null,
+        };
+      }),
+    [
+      localPhotos,
+      existingImages,
+      remotePreviewSources,
+      remoteImageIds,
+      localFallbackUris,
+      remotePreviewsLoading,
+      deletingPhotoIndex,
+    ],
   );
 
   // ── Render: attendance content ────────────────────────────────────────
@@ -1608,50 +1743,65 @@ const handleSave = useCallback(async () => {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[0]!, sectionStatus.location)}
+            {renderSectionHeader(
+              SECTIONS.find((s) => s.key === "location")!,
+              sectionStatus.location,
+            )}
             {renderLocationContent()}
           </View>
 
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[1]!, sectionStatus.objective)}
+            {renderSectionHeader(
+              SECTIONS.find((s) => s.key === "objective")!,
+              sectionStatus.objective,
+            )}
             {renderObjectiveContent()}
           </View>
 
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[2]!, sectionStatus.diagnosis)}
+            {renderSectionHeader(
+              SECTIONS.find((s) => s.key === "diagnosis")!,
+              sectionStatus.diagnosis,
+            )}
             {renderTextSection(
               "diagnosis",
               diagnosis,
               setDiagnosis,
               "Describa detalladamente el diagnóstico técnico inicial del sistema productivo, teniendo en cuenta cada uno de los objetivos específicos del acompañamiento definidos por la EPSEA Universidad de Córdoba. Resalte puntualmente las principales fortalezas y problemáticas de la línea principal a atender.",
-              "Para generar el diagnóstico inicial técnico productivo del sistema, usted deberá realizar un recorrido total de la Unidad Productiva, que le permita identificar los problemas críticos relevantes y/o ventajas y oportunidades.",
             )}
           </View>
 
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[3]!, sectionStatus.recommendations)}
+            {renderSectionHeader(
+              SECTIONS.find((s) => s.key === "recommendations")!,
+              sectionStatus.recommendations,
+            )}
             {renderTextSection(
               "recommendations",
               recommendations,
               setRecommendations,
               "Plantee estas recomendaciones técnicas de acuerdo al diagnóstico inicial encontrado en la unidad productiva. Redacte recomendaciones profesionales, relevantes y en procura de mejorar los aspectos de la extensión del usuario a intervenir y adaptadas a las condiciones del sistema productivo.",
-              "Plantee recomendaciones técnicas de acuerdo al diagnóstico inicial encontrado en la unidad productiva. Deberán ser recomendaciones profesionales, relevantes y en procura de mejorar los aspectos de la extensión del usuario a intervenir y adaptadas a las condiciones del sistema productivo.",
             )}
           </View>
 
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[4]!, sectionStatus.commitments)}
+            {renderSectionHeader(
+              SECTIONS.find((s) => s.key === "commitments")!,
+              sectionStatus.commitments,
+            )}
             {renderTextSection(
               "commitments",
               commitments,
               setCommitments,
               "Redacte compromisos puntuales, de manera clara, acordes a los objetivos específicos del acompañamiento (si aplican), medibles y realizables dentro del tiempo del acompañamiento.",
-              "Redacte compromisos puntuales, de manera clara, acordes a los objetivos específicos del acompañamiento (si aplican), medibles y realizables dentro del tiempo del acompañamiento.",
             )}
           </View>
 
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[5]!, sectionStatus.observations)}
+            {renderSectionHeader(
+              SECTIONS.find((s) => s.key === "observations")!,
+              sectionStatus.observations,
+            )}
             {renderTextSection(
               "observations",
               observations,
@@ -1661,26 +1811,27 @@ const handleSave = useCallback(async () => {
           </View>
 
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[6]!, sectionStatus.photos)}
+            {renderSectionHeader(
+              SECTIONS.find((s) => s.key === "photos")!,
+              sectionStatus.photos,
+            )}
             {expandedSections.has("photos") && (
               <View style={styles.sectionContent}>
-                <ThemedText style={styles.sectionHint}>
-                  Arrastre o seleccione hasta 3 fotografías de la visita.
-                </ThemedText>
-                <ThemedText style={[styles.sectionHint, styles.photoHintItalic]}>
-                  Tomar mínimo 3 fotos con su respectiva marca de agua (lugar, georreferenciación, ASNM, fecha, hora).
-                  Foto 1: Panorámica del predio y el usuario. Foto 2: Donde se vea al usuario en su actividad productiva principal.
-                  Foto 3: Donde se vea al usuario junto con el extensionista.
-                </ThemedText>
-                <View style={styles.photosGrid}>
-                  {[0, 1, 2].map(renderPhotoSlot)}
-                </View>
+                <VisitPhotoSlots
+                  slots={photoSlotModels}
+                  onAdd={showPhotoOptions}
+                  onRemove={removePhoto}
+                  showAlert={showAlert}
+                />
               </View>
             )}
           </View>
 
           <View style={styles.section}>
-            {renderSectionHeader(SECTIONS[7]!, sectionStatus.attendance)}
+            {renderSectionHeader(
+              SECTIONS.find((s) => s.key === "attendance")!,
+              sectionStatus.attendance,
+            )}
             {renderAttendanceContent()}
           </View>
 
@@ -1845,6 +1996,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: widthScale(14),
     paddingVertical: verticalScale(12),
+    gap: widthScale(8),
+  },
+  sectionHeaderPressable: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
     gap: widthScale(10),
   },
   sectionBadge: {

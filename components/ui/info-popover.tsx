@@ -43,11 +43,20 @@ export function InfoPopover({
   const tooltipTop = buttonLayout.y + buttonLayout.height + 8;
   const tooltipRight = 16; // Margen desde el borde derecho
 
+  const buttonSize = widthScale(Math.max(iconSize + 14, 28));
+
   return (
     <>
       <View ref={buttonRef} collapsable={false}>
         <TouchableOpacity
-          style={styles.infoButton}
+          style={[
+            styles.infoButton,
+            {
+              width: buttonSize,
+              height: buttonSize,
+              borderRadius: buttonSize / 2,
+            },
+          ]}
           onPress={handleOpen}
           activeOpacity={0.7}
         >
@@ -115,9 +124,6 @@ export function InfoPopover({
 
 const styles = StyleSheet.create({
   infoButton: {
-    width: widthScale(38),
-    height: widthScale(38),
-    borderRadius: widthScale(19),
     backgroundColor: "rgba(26, 122, 58, 0.08)",
     justifyContent: "center",
     alignItems: "center",
