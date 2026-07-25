@@ -142,8 +142,8 @@ export default function LoginScreen() {
         showAlert({
           title: "Sincronizar datos",
           message:
-            "¿Desea descargar sus proyectos y encuestas más recientes? La sincronización continuará en segundo plano (verá una notificación en Android). Puede usar otras apps y le avisaremos al terminar.",
-          type: "info",
+            "¿Desea descargar sus proyectos y encuestas más recientes?\n\nImportante: al iniciar la sincronización, espere al menos 10 segundos con la app abierta antes de cambiar a otra aplicación. Así se evita que Android bloquee la descarga en segundo plano.",
+          type: "warning",
           cancelable: false,
           buttons: [
             {

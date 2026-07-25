@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { AppState } from "react-native";
 import {
   downloadAllData,
   uploadPendingAnswers,
@@ -13,7 +14,10 @@ import { getPendingVisit2Count } from "@/utils/database/repositories/visit2-repo
 import { getPendingVisit3Count } from "@/utils/database/repositories/visit3-repository";
 import { getPendingAnswerUpdateCount } from "@/utils/database/repositories/answer-update-repository";
 import { runWithBackgroundSyncService } from "@/utils/sync/background-sync-runner";
-import { waitForAndroidForegroundSyncIdle } from "@/utils/sync/android-foreground-sync";
+import {
+  isForegroundServiceStartNotAllowedError,
+  waitForAndroidForegroundSyncIdle,
+} from "@/utils/sync/android-foreground-sync";
 import {
   abortActiveDownloadSession,
   beginDownloadSession,
@@ -26,6 +30,16 @@ import { useAuthStore } from "./useAuthStore";
 let syncRecoverInFlight = false;
 let lastSyncRecoverAt = 0;
 let resumeIncompleteInFlight = false;
+/** Set when stall is detected while backgrounded — resume when app is active again. */
+let deferredStallRecover = false;
+
+function humanizeSyncError(error: unknown): string {
+  if (isForegroundServiceStartNotAllowedError(error)) {
+    return "La sincronización se pausó en segundo plano. Vuelve a abrir EPSEA para reanudarla.";
+  }
+  if (error instanceof Error) return error.message;
+  return "Error de sincronización";
+}
 
 export interface FullSyncResult {
   uploaded: number;
@@ -164,7 +178,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       set({
         isDownloading: false,
         lastProgressAt: null,
-        error: error instanceof Error ? error.message : "Error de descarga",
+        error: humanizeSyncError(error),
       });
       throw error;
     }
@@ -187,14 +201,31 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     }
 
     const lastProgressAt = get().lastProgressAt;
-    if (lastProgressAt != null && now - lastProgressAt < 15_000) {
+    const forceDeferred =
+      deferredStallRecover && AppState.currentState === "active";
+    if (
+      !forceDeferred &&
+      lastProgressAt != null &&
+      now - lastProgressAt < 15_000
+    ) {
+      return false;
+    }
+
+    // Critical: do NOT abort + restart FGS while backgrounded (Android 12+ blocks it).
+    // Keep the existing service running; resume only when the user returns.
+    if (AppState.currentState !== "active") {
+      deferredStallRecover = true;
+      console.warn(
+        "[sync] Stall while backgrounded — deferring recover until app is active",
+      );
       return false;
     }
 
     lastSyncRecoverAt = now;
     syncRecoverInFlight = true;
+    deferredStallRecover = false;
 
-    // Invalidate the hung loop, then wait for its FGS to fully stop before starting ours.
+    // App is in foreground: safe to abort hung session and start a new FGS.
     const generation = abortActiveDownloadSession();
 
     set({
@@ -212,6 +243,12 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       try {
         await waitForAndroidForegroundSyncIdle(25_000);
 
+        // Re-check: user may have backgrounded again while waiting.
+        if (AppState.currentState !== "active") {
+          deferredStallRecover = true;
+          return;
+        }
+
         const outcome = await runDownloadUnderBackgroundService(
           set,
           get,
@@ -220,20 +257,24 @@ export const useSyncStore = create<SyncState>((set, get) => ({
         );
 
         if (outcome === "aborted") {
-          // Another recover superseded us; leave isDownloading for the new owner.
           return;
         }
 
         const lastDownload = await getMetadata("last_full_download");
         set({ isDownloading: false, lastDownload, lastProgressAt: null });
       } catch (error) {
+        if (isForegroundServiceStartNotAllowedError(error)) {
+          deferredStallRecover = true;
+          // Do not bump lastProgressAt — keep stalled so returning to the app retries.
+          set({
+            error: humanizeSyncError(error),
+          });
+          return;
+        }
         set({
           isDownloading: false,
           lastProgressAt: null,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Error al reanudar la descarga",
+          error: humanizeSyncError(error),
         });
       } finally {
         syncRecoverInFlight = false;
@@ -292,10 +333,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       set({
         isDownloading: false,
         lastProgressAt: null,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error al reanudar la descarga pendiente",
+        error: humanizeSyncError(error),
       });
       return false;
     } finally {
@@ -348,7 +386,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       set({
         isUploading: false,
         lastProgressAt: null,
-        error: error instanceof Error ? error.message : "Error de subida",
+        error: humanizeSyncError(error),
       });
       throw error;
     }
@@ -461,8 +499,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       set({ isUploading: false, isDownloading: false, lastProgressAt: null });
       if (!get().error) {
         set({
-          error:
-            error instanceof Error ? error.message : "Error de sincronización",
+          error: humanizeSyncError(error),
         });
       }
       throw error;

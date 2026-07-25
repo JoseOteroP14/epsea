@@ -20,6 +20,11 @@ function clearHeartbeat(): void {
   }
 }
 
+/**
+ * Stall recovery must run when the app is foregrounded again.
+ * Triggering recover while backgrounded aborts the existing FGS and tries to
+ * start a new one → ForegroundServiceStartNotAllowedException on Android 12+.
+ */
 function onAppStateChange(next: AppStateStatus): void {
   if (next !== "active" || !onStallRecover) return;
 
@@ -56,13 +61,8 @@ export async function startSyncKeepAlive(options: {
 
   heartbeatTimer = setInterval(() => {
     options.onHeartbeat(lastProgress);
-
-    if (AppState.currentState !== "active" && onStallRecover) {
-      const stalledFor = Date.now() - lastProgressAt;
-      if (lastProgressAt > 0 && stalledFor >= STALL_THRESHOLD_MS) {
-        onStallRecover();
-      }
-    }
+    // Intentionally do NOT call onStallRecover here while backgrounded.
+    // Android blocks starting a new foreground service from the background.
   }, HEARTBEAT_MS);
 }
 

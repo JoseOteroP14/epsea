@@ -69,12 +69,10 @@ export function SyncBackgroundCoordinator() {
         return;
       }
 
-      if (next === "active" && isBusyRef.current && isDownloadingRef.current) {
-        const at = lastProgressAtRef.current;
-        const stalledFor = at != null ? Date.now() - at : 0;
-        if (stalledFor >= 15_000) {
-          void recoverStalledRef.current();
-        }
+      if (next === "active" && isDownloadingRef.current) {
+        // Safe moment to restart FGS. recoverStalledDownload no-ops unless stalled
+        // or a background deferral was recorded (Android 12+ StartNotAllowed).
+        void recoverStalledRef.current();
       }
 
       // If we returned to the app idle but a checkpoint remains, resume.

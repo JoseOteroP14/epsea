@@ -1,5 +1,5 @@
 import type { SyncProgress } from "@/utils/sync/sync-service";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import { isNotifeeNativeAvailable, loadNotifeeModule } from "./notifee-loader";
 
 const CHANNEL_ID = "epsea-sync";
@@ -57,6 +57,21 @@ export async function waitForAndroidForegroundSyncIdle(
   await new Promise((r) => setTimeout(r, 250));
 }
 
+/** Android 12+: startForegroundService is blocked unless the app is in the foreground (or exempt). */
+export function isForegroundServiceStartNotAllowedError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    msg.includes("ForegroundServiceStartNotAllowedException") ||
+    msg.includes("startForegroundService() not allowed") ||
+    msg.includes("mAllowStartForeground false")
+  );
+}
+
+function canStartForegroundServiceFromAppState(): boolean {
+  // Only 'active' is a reliable exemption for starting a new dataSync FGS.
+  return AppState.currentState === "active";
+}
+
 async function ensureChannel(): Promise<void> {
   const notifeePkg = loadNotifeeModule();
   if (!notifeePkg) return;
@@ -99,6 +114,43 @@ async function showForegroundNotification(
   });
 }
 
+/** Progress update without attempting to (re)start the FGS. */
+async function showProgressNotificationOnly(
+  body: string,
+  percent: number,
+  indeterminate: boolean,
+): Promise<void> {
+  const notifeePkg = loadNotifeeModule();
+  if (!notifeePkg) return;
+
+  await notifeePkg.default.displayNotification({
+    id: NOTIFICATION_ID,
+    title: "EPSEA",
+    body,
+    android: {
+      channelId: CHANNEL_ID,
+      // Keep FGS type only while the service is already running.
+      ...(active
+        ? {
+            asForegroundService: true,
+            foregroundServiceTypes: [
+              notifeePkg.AndroidForegroundServiceType
+                .FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            ],
+          }
+        : {}),
+      ongoing: active,
+      onlyAlertOnce: true,
+      progress: {
+        max: 100,
+        current: percent,
+        indeterminate,
+      },
+      pressAction: { id: "default" },
+    },
+  });
+}
+
 async function stopForegroundNotification(): Promise<void> {
   const notifeePkg = loadNotifeeModule();
   if (!notifeePkg) return;
@@ -117,9 +169,9 @@ async function stopForegroundNotification(): Promise<void> {
 /**
  * Runs sync inside the Notifee foreground-service task so Android keeps the
  * process eligible for background network + JS while the user switches apps.
- * Falls back to running work directly in Expo Go (no native Notifee).
  *
- * Concurrent callers are queued (mutex) so recover never tears down an active FGS.
+ * If the app is already backgrounded, Android 12+ blocks startForegroundService —
+ * we fall back to plain JS work (and rely on checkpoint resume when the user returns).
  */
 export async function runAndroidForegroundSync(
   work: () => Promise<void>,
@@ -138,6 +190,16 @@ export async function runAndroidForegroundSync(
   await previous.catch(() => {});
 
   try {
+    // Already have an FGS: cannot nest; run work on the JS thread after idle wait upstream.
+    // Starting a second FGS from background throws ForegroundServiceStartNotAllowedException.
+    if (!canStartForegroundServiceFromAppState() && !active) {
+      console.warn(
+        "[sync] App not in foreground — skipping new FGS start (Android 12+ restriction)",
+      );
+      await work();
+      return;
+    }
+
     await ensureChannel();
 
     await new Promise<void>((resolve, reject) => {
@@ -154,8 +216,20 @@ export async function runAndroidForegroundSync(
       };
 
       void showForegroundNotification("Sincronizando datos…", 0, true).catch(
-        (error) => {
+        async (error) => {
           pendingForegroundWork = null;
+          if (isForegroundServiceStartNotAllowedError(error)) {
+            console.warn(
+              "[sync] FGS start denied by Android — continuing without foreground service",
+            );
+            try {
+              await work();
+              resolve();
+            } catch (workError) {
+              reject(workError);
+            }
+            return;
+          }
           reject(error);
         },
       );
@@ -168,9 +242,13 @@ export async function runAndroidForegroundSync(
 export async function updateAndroidForegroundSync(
   progress: SyncProgress,
 ): Promise<void> {
-  if (Platform.OS !== "android" || !active || !isNotifeeNativeAvailable()) {
+  if (Platform.OS !== "android" || !isNotifeeNativeAvailable()) {
     return;
   }
+
+  // Only update the ongoing FGS notification while the service is alive.
+  // Updating with asForegroundService while inactive can try to start a new FGS → crash.
+  if (!active) return;
 
   const percent =
     progress.total > 0
@@ -178,12 +256,16 @@ export async function updateAndroidForegroundSync(
       : progress.current;
 
   try {
-    await showForegroundNotification(
+    await showProgressNotificationOnly(
       progress.stage,
       percent,
       progress.total <= 0,
     );
-  } catch {
+  } catch (error) {
+    if (isForegroundServiceStartNotAllowedError(error)) {
+      // Ignore — OS blocked a spurious restart attempt.
+      return;
+    }
     // best-effort
   }
 }
@@ -191,6 +273,7 @@ export async function updateAndroidForegroundSync(
 /** @deprecated Use runAndroidForegroundSync; kept for compatibility. */
 export async function startAndroidForegroundSync(): Promise<void> {
   if (Platform.OS !== "android" || !isNotifeeNativeAvailable()) return;
+  if (!canStartForegroundServiceFromAppState()) return;
   await ensureChannel();
   active = true;
   await showForegroundNotification("Sincronizando datos…", 0, true);

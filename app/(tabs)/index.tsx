@@ -9,13 +9,14 @@ import { responsiveFont, verticalScale, widthScale } from '@/utils/responsive';
 import { useRouter } from "expo-router";
 import {
   AlertCircle,
+  AlertTriangle,
   Briefcase,
   CheckCircle2,
   CloudDownload,
   LogOut,
 } from "lucide-react-native";
 import React, { useEffect, useState } from "react";
-import { StyleSheet, TouchableOpacity, View } from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -162,9 +163,19 @@ function SyncProgressCard() {
             : ""}
         </ThemedText>
       )}
-      <ThemedText style={syncStyles.hintText}>
-        Puede cambiar de aplicación: en Android la descarga continúa con la notificación activa; al terminar le avisamos.
-      </ThemedText>
+      <View style={syncStyles.warningBox}>
+        <View style={syncStyles.warningHeader}>
+          <AlertTriangle size={responsiveFont(16)} color="#ca8a04" />
+          <Text style={syncStyles.warningTitle}>Advertencia</Text>
+        </View>
+        <Text style={syncStyles.warningBody}>
+          Espere al menos{" "}
+          <Text style={syncStyles.warningHighlight}>10 segundos</Text>
+          {" "}con la app abierta antes de{" "}
+          <Text style={syncStyles.warningHighlight}>cambiar de aplicación</Text>
+          . Así se evita que Android bloquee la sincronización en segundo plano.
+        </Text>
+      </View>
     </ThemedView>
   );
 }
@@ -207,12 +218,37 @@ const syncStyles = StyleSheet.create({
   },
   stageText: {
     fontSize: responsiveFont(12),
-    color: "rgba(0,0,0,0.45)",
+    color: "#11181C",
+    fontWeight: "600",
   },
-  hintText: {
-    fontSize: responsiveFont(11),
-    color: "rgba(0,0,0,0.4)",
-    fontStyle: "italic",
+  warningBox: {
+    marginTop: verticalScale(2),
+    padding: widthScale(10),
+    borderRadius: widthScale(10),
+    backgroundColor: "rgba(234, 179, 8, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(202, 138, 4, 0.45)",
+    gap: verticalScale(6),
+  },
+  warningHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: widthScale(6),
+  },
+  warningTitle: {
+    fontSize: responsiveFont(13),
+    fontWeight: "800",
+    color: "#11181C",
+  },
+  warningBody: {
+    fontSize: responsiveFont(12),
+    lineHeight: responsiveFont(17),
+    fontWeight: "700",
+    color: "#11181C",
+  },
+  warningHighlight: {
+    fontWeight: "800",
+    color: "#ca8a04",
   },
   subtitle: {
     fontSize: responsiveFont(12),

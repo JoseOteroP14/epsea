@@ -81,8 +81,8 @@ export default function SyncScreen() {
     showAlert({
       title: "Sincronización iniciada",
       message:
-        "Puede seguir usando la app o cambiar a otra aplicación. Le notificaremos cuando termine.",
-      type: "info",
+        "Espere al menos 10 segundos con la app abierta antes de cambiar a otra aplicación. Así se evita que Android bloquee la sincronización en segundo plano. Le avisaremos al terminar.",
+      type: "warning",
     });
   }, [isConnected, isBusy, startFullSyncDetached, showAlert]);
 
