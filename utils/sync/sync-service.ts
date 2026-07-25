@@ -13,7 +13,7 @@ import {
   VISIT3_REGISTRATION_INTERVENTION_METHOD_ID,
   VISIT_INTERVENTION_METHOD_ID,
 } from "@/store/useCharacterizationStore";
-import { apiFetch, NetworkError } from "@/utils/api";
+import { apiFetch, ApiHttpError, isExpectedMissingResourceError, NetworkError } from "@/utils/api";
 import { API_BASE_URL } from "@/utils/api-config";
 import {
   upsertQuestionDetail,
@@ -216,6 +216,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function isRateLimited(error: unknown): boolean {
+  if (error instanceof ApiHttpError && error.status === 429) return true;
   if (error instanceof Error) {
     return error.message.includes("429") || error.message.includes("rate");
   }
@@ -226,7 +227,7 @@ function getRetryDelay(attempts: number): number {
   return Math.min(1000 * Math.pow(2, attempts), 5 * 60 * 1000);
 }
 
-/** Reintenta fallos transitorios (red / 429) durante la precarga offline. */
+/** Reintenta fallos transitorios (red / 429 / 5xx) durante la precarga offline. */
 async function apiFetchWithRetry<T>(
   endpoint: string,
   options?: Parameters<typeof apiFetch>[1],
@@ -238,12 +239,26 @@ async function apiFetchWithRetry<T>(
       return await apiFetch<T>(endpoint, options);
     } catch (e) {
       lastError = e;
-      const retryable = e instanceof NetworkError || isRateLimited(e);
+      const retryable =
+        e instanceof NetworkError ||
+        isRateLimited(e) ||
+        (e instanceof ApiHttpError && e.status >= 500);
       if (!retryable || i === attempts - 1) throw e;
       await sleep(getRetryDelay(i));
     }
   }
   throw lastError;
+}
+
+/** Fallos que sí deben bloquear avanzar el checkpoint de ese productor. */
+function isHardSurveyDownloadFailure(error: unknown): boolean {
+  if (isExpectedMissingResourceError(error)) return false;
+  if (error instanceof NetworkError) return true;
+  if (error instanceof ApiHttpError) {
+    // 429/5xx tras reintentos: incompleto real. Otros 4xx: método no disponible → omitir.
+    return error.status === 429 || error.status >= 500;
+  }
+  return true;
 }
 
 function calcPhasePercent(phase: { start: number; weight: number }, current: number, total: number): number {
@@ -564,10 +579,14 @@ export async function refreshTouchedDataAfterLocalUpload(
         }
       }
     } catch (e) {
-      console.warn(
-        `Survey refresh failed p=${t.producerId} m=${t.methodId}:`,
-        e,
-      );
+      if (isExpectedMissingResourceError(e)) {
+        // Método aún no aplicado — normal.
+      } else {
+        console.warn(
+          `Survey refresh failed p=${t.producerId} m=${t.methodId}:`,
+          e,
+        );
+      }
     }
     step++;
   }
@@ -627,6 +646,7 @@ async function downloadProducerResults(
   const totalProducers = allProducerIds.length;
   const objectiveLineIds = new Set<number>();
   let hardSurveyFailures = 0;
+  const failedProducerIds: number[] = [];
 
   await saveDownloadResultsCheckpoint(startIndex, allProducerIds);
 
@@ -667,9 +687,15 @@ async function downloadProducerResults(
           }
         }
       } catch (e) {
-        // 404 = método sin aplicar; otros errores no deben finalizar la sync como "completa".
-        const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes("404") || msg.includes("Error 404")) {
+        // Igual que en la web: 404 / "no se encontró" = método aún no aplicado (estado válido).
+        if (isExpectedMissingResourceError(e)) {
+          continue;
+        }
+        if (!isHardSurveyDownloadFailure(e)) {
+          console.warn(
+            `Survey download skipped p=${producerId} proj=${projectId} m=${methodId}:`,
+            e,
+          );
           continue;
         }
         producerHadHardFailure = true;
@@ -687,15 +713,11 @@ async function downloadProducerResults(
     const lineId = readProductionLineId(rawProducer);
     if (lineId != null) objectiveLineIds.add(lineId);
 
-    // No avanzar checkpoint si este productor quedó incompleto: se reintentará al reanudar.
-    if (!producerHadHardFailure) {
-      await saveDownloadResultsCheckpoint(i + 1, allProducerIds);
+    if (producerHadHardFailure) {
+      // Seguir con otros productores; al final no se marca descarga completa.
+      failedProducerIds.push(producerId);
     } else {
-      // Mantener índice en este productor para reintento; no marcar fase como lista.
-      await saveDownloadResultsCheckpoint(i, allProducerIds);
-      throw new Error(
-        `Descarga incompleta: falló la precarga de encuestas del productor ${producerId}. Reintente la sincronización.`,
-      );
+      await saveDownloadResultsCheckpoint(i + 1, allProducerIds);
     }
 
     reportPhase(
@@ -721,9 +743,14 @@ async function downloadProducerResults(
     }
   }
 
-  if (hardSurveyFailures > 0) {
+  if (failedProducerIds.length > 0 || hardSurveyFailures > 0) {
+    const firstFailedIdx = allProducerIds.findIndex((p) =>
+      failedProducerIds.includes(p.producerId),
+    );
+    const resumeAt = firstFailedIdx >= 0 ? firstFailedIdx : startIndex;
+    await saveDownloadResultsCheckpoint(resumeAt, allProducerIds);
     throw new Error(
-      `Descarga incompleta: ${hardSurveyFailures} encuesta(s) no se pudieron precargar.`,
+      `Descarga incompleta: no se pudieron precargar encuestas de ${failedProducerIds.length || hardSurveyFailures} productor(es) (p. ej. ${failedProducerIds[0] ?? "?"}). Reintente la sincronización.`,
     );
   }
 
