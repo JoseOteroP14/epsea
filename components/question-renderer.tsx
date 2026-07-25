@@ -37,6 +37,13 @@ interface QuestionRendererProps {
   typeName: string;
   value: any;
   onChange: (questionId: number, value: any) => void;
+  /**
+   * Oculta name/description del body (el título ya está en el sheet).
+   * Si se pasa `bodyDescription`, solo se muestra ese texto de apoyo.
+   */
+  hideQuestionTitle?: boolean;
+  /** Texto de apoyo en el body (p. ej. justificación de clasificación). */
+  bodyDescription?: string | null;
 }
 
 const QUESTION_TYPE_ALIASES: Record<string, string> = {
@@ -773,6 +780,8 @@ export function QuestionRenderer({
   typeName,
   value,
   onChange,
+  hideQuestionTitle = false,
+  bodyDescription,
 }: QuestionRendererProps) {
   const { questionDetails, fetchQuestionDetail, loadingQuestionDetail } =
     useCharacterizationStore();
@@ -878,21 +887,39 @@ export function QuestionRenderer({
     }
   };
 
+  const supportText =
+    bodyDescription !== undefined
+      ? bodyDescription?.trim() || null
+      : hideQuestionTitle
+        ? null
+        : question.description?.trim() || null;
+  const showName = !hideQuestionTitle;
+  const showHeader = showName || !!supportText;
+
   return (
     <ThemedView style={styles.questionCard}>
-      <View style={styles.questionHeader}>
-        <View style={styles.questionTitleContainer}>
-          <ThemedText style={styles.questionName}>{question.name}</ThemedText>
-          {question.description && (
-            <ThemedText style={styles.questionDescription}>
-              {question.description}
-            </ThemedText>
-          )}
+      {showHeader ? (
+        <View style={styles.questionHeader}>
+          <View style={styles.questionTitleContainer}>
+            {showName ? (
+              <ThemedText style={styles.questionName}>{question.name}</ThemedText>
+            ) : null}
+            {supportText ? (
+              <ThemedText
+                style={[
+                  styles.questionDescription,
+                  !showName && styles.questionBodyOnly,
+                ]}
+              >
+                {supportText}
+              </ThemedText>
+            ) : null}
+          </View>
+          {!hideQuestionTitle && isQuestionRequired(question) ? (
+            <ThemedText style={styles.requiredBadge}>*</ThemedText>
+          ) : null}
         </View>
-        {isQuestionRequired(question) && (
-          <ThemedText style={styles.requiredBadge}>*</ThemedText>
-        )}
-      </View>
+      ) : null}
       {renderInput()}
     </ThemedView>
   );
@@ -922,6 +949,10 @@ const styles = StyleSheet.create({
     fontSize: responsiveFont(17),
     marginTop: verticalScale(8),
     lineHeight: responsiveFont(24),
+  },
+  questionBodyOnly: {
+    marginTop: 0,
+    color: "#555",
   },
   requiredBadge: {
     color: "#e74c3c",

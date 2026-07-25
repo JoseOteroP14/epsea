@@ -1,4 +1,5 @@
 import { ThemedText } from "@/components/themed-text";
+import { AccentedText } from "@/components/ui/accented-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
 import { checkConnectivity } from "@/hooks/use-network";
@@ -1320,9 +1321,9 @@ export function CharacterizationTab({
                 style={[styles.answerCard, item.isPending && styles.answerCardPending]}
               >
                 <View style={styles.answerHeader}>
-                  <ThemedText style={styles.answerQuestion}>
+                  <AccentedText style={styles.answerQuestion}>
                     {item.questionName}
-                  </ThemedText>
+                  </AccentedText>
                   <View style={styles.answerHeaderRight}>
                     {item.isPending && (
                       <View style={styles.pendingBadge}>
@@ -1371,6 +1372,10 @@ export function CharacterizationTab({
           onSave={handleEditSave}
           getTypeName={getCanonicalTypeName}
           loading={false}
+          hideWizardChrome={
+            (editQuestions.length > 0 ? editQuestions : [editingQuestion])
+              .length <= 1
+          }
         />
       )}
     </View>

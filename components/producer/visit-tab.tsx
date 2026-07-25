@@ -1,10 +1,10 @@
 import { ThemedText } from "@/components/themed-text";
+import { AccentedText } from "@/components/ui/accented-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { checkConnectivity } from "@/hooks/use-network";
 import { useProducerFormDraft } from "@/hooks/use-producer-form-draft";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
-    PROPERTY_INFO_INTERVENTION_METHOD_ID,
     VISIT_INTERVENTION_METHOD_ID,
     useCharacterizationStore,
 } from "@/store/useCharacterizationStore";
@@ -13,12 +13,10 @@ import { apiFetch } from "@/utils/api";
 import { API_BASE_URL } from "@/utils/api-config";
 import {
     getObjectivesForEventAndLine,
-    mergeObjectivesForVisit1Field,
     objectiveItemsToSpecificLines,
     readProductionLineId,
     VISIT_OBJECTIVE_EVENT_IDS,
 } from "@/utils/agro-objectives";
-import { getAnswers } from "@/utils/database/repositories/answer-repository";
 import {
     markInterventionMethodApplied,
 } from "@/utils/database/repositories/producer-intervention-repository";
@@ -32,11 +30,6 @@ import {
     parseVisit1QueuePhotosColumn,
     type Visit1Payload,
 } from "@/utils/database/repositories/visit1-repository";
-import {
-    convertPhotosToBase64,
-    generateAndPrintVisit1Pdf,
-    type Visit1PdfData,
-} from "@/utils/pdf/visit1-pdf";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import { getStoredToken } from "@/utils/secure-storage";
 import {
@@ -59,7 +52,6 @@ import {
     ChevronDown,
     ChevronUp,
     ClipboardList,
-    FileDown,
     ImagePlus,
     ListTodo,
     MapPin,
@@ -410,7 +402,6 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   const [isEditMode, setIsEditMode] = useState(false);
   const [existingVisitId, setExistingVisitId] = useState<number | null>(null);
   const [deletingPhotoIndex, setDeletingPhotoIndex] = useState<number | null>(null);
-  const [generatingPdf, setGeneratingPdf] = useState(false);
   const [methodAlreadyApplied, setMethodAlreadyApplied] = useState(false);
   const [objectivesApiLoading, setObjectivesApiLoading] = useState(false);
 
@@ -478,15 +469,6 @@ export function VisitTab({ producerId, projectId }: VisitTabProps) {
   const objetiveForPayload = useMemo(
     () => specificObjectiveLines.join("\n"),
     [specificObjectiveLines],
-  );
-
-  const objectivePdfText = useMemo(
-    () =>
-      mergeObjectivesForVisit1Field(
-        VISIT1_GENERAL_OBJECTIVE_FIXED,
-        objetiveForPayload,
-      ).trim(),
-    [objetiveForPayload],
   );
 
   const sectionStatus = useMemo(() => {
@@ -1137,236 +1119,6 @@ const handleSave = useCallback(async () => {
     clearDraft,
   ]);
 
-  // ── Generate PDF (pdfmake) ──────────────────────────────────────────────
-
-  const handleGeneratePdf = useCallback(async () => {
-    setGeneratingPdf(true);
-    try {
-      // Convert photos to base64
-      const photoBase64Uris = await convertPhotosToBase64(
-        localPhotos,
-        existingImages,
-        token,
-      );
-
-      // Build the full name from producer detail
-      const fullName = producerDetail
-        ? [
-            producerDetail.first_name,
-            producerDetail.middle_name,
-            producerDetail.first_surname,
-            producerDetail.last_surname,
-          ]
-            .filter(Boolean)
-            .join(" ")
-        : "";
-
-      const hora =
-        registrationTime.trim().length >= 5
-          ? registrationTime.trim().slice(0, 5)
-          : registrationTime.trim();
-
-      // ── Fetch property info for the PDF ──────────────────────────────
-      let nombreDelPredio = "";
-      let asnm = "";
-      let departamento = producerDetail?.municipality?.department_name ?? "";
-      let municipio = producerDetail?.municipality?.name ?? "";
-      let corregimientoVereda = "";
-
-      try {
-        const { fetchSurveyResults, fetchQuestions, fetchQuestionTypes, getCanonicalTypeName, getPropertyInfoComponent, fetchDepartments, fetchMunicipalities } =
-          useCharacterizationStore.getState();
-
-        // Ensure question types are loaded
-        await fetchQuestionTypes();
-
-        const propComponent = getPropertyInfoComponent();
-        const pid = Number(producerId);
-        const projId = Number(projectId);
-
-        if (propComponent) {
-          // Fetch questions for property info component
-          await fetchQuestions(propComponent.id);
-          const { questions: propQuestions } = useCharacterizationStore.getState();
-
-          // Fetch survey results from API
-          const results = await fetchSurveyResults(
-            projId,
-            pid,
-            PROPERTY_INFO_INTERVENTION_METHOD_ID,
-          );
-
-          // Build answer map: question_id -> answer_value
-          const answerMap: Record<number, string> = {};
-          for (const item of results) {
-            answerMap[item.question_id] = item.answer_value;
-          }
-
-          // Also check local answers (offline fallback — local takes precedence)
-          try {
-            const currentUserId = useAuthStore.getState().user?.user_id;
-            if (currentUserId) {
-              const localAnswers = await getAnswers(pid, projId, propComponent.id, currentUserId);
-              for (const a of localAnswers) {
-                if (a.value) {
-                  answerMap[a.question_id] = a.value;
-                }
-              }
-            }
-          } catch { /* ignore local fallback errors */ }
-
-          // Map questions to PDF fields by order and type
-          for (const q of propQuestions) {
-            if (q.component_id !== propComponent.id) continue;
-            const typeName = getCanonicalTypeName(q.question_type_id);
-            const rawVal = answerMap[q.id];
-            if (!rawVal) continue;
-
-            const desc = (q.description ?? q.name ?? "").toLowerCase();
-
-            if (typeName === "location") {
-              // Value format: "department_cod|municipality_code|municipality_name|department_name"
-              // or legacy: "department_cod|municipality_code"
-              if (rawVal.includes("|")) {
-                const parts = rawVal.split("|");
-                const muniName = parts[2] ?? "";
-                const deptName = parts[3] ?? "";
-                if (muniName && deptName) {
-                  municipio = muniName;
-                  departamento = deptName;
-                }
-              }
-            } else if (desc.includes("nombre") && desc.includes("predio")) {
-              nombreDelPredio = rawVal;
-            } else if (desc.includes("asnm") || desc.includes("altura") || desc.includes("nivel del mar")) {
-              asnm = rawVal;
-            } else if (desc.includes("corregimiento") || desc.includes("vereda")) {
-              corregimientoVereda = rawVal;
-            }
-          }
-
-          // Fallback: scan all answer values for location pattern
-          // (handles cases where question types aren't fully loaded)
-          if (!departamento || !municipio) {
-            for (const rawVal of Object.values(answerMap)) {
-              if (rawVal && rawVal.includes("|")) {
-                const parts = rawVal.split("|");
-                if (parts.length >= 4 && parts[2] && parts[3]) {
-                  municipio = parts[2];
-                  departamento = parts[3];
-                  break;
-                }
-              }
-            }
-          }
-
-          // Fallback: resolve names from DIVIPOLA codes via API
-          // when only codes are available (legacy format or API-only data)
-          if (!departamento || !municipio) {
-            // Extract codes from any pipe-separated location value
-            let deptCode = "";
-            let muniCode = "";
-            for (const rawVal of Object.values(answerMap)) {
-              if (rawVal && rawVal.includes("|")) {
-                const parts = rawVal.split("|");
-                if (parts[0] && parts[1]) {
-                  deptCode = parts[0];
-                  muniCode = parts[1];
-                  break;
-                }
-              }
-            }
-
-            // If no codes from answers, try producer detail municipality_code
-            if (!deptCode && producerDetail?.municipality_code) {
-              muniCode = producerDetail.municipality_code;
-              // department_code is the first 2 digits of DIVIPOLA municipality code
-              deptCode = producerDetail.municipality_code.substring(0, 2);
-            }
-
-            if (deptCode && muniCode) {
-              try {
-                const depts = await fetchDepartments();
-                const deptMatch = depts.find((d) => d.department_cod === deptCode);
-                if (deptMatch) {
-                  departamento = deptMatch.department;
-                  const munis = await fetchMunicipalities(deptCode);
-                  const muniMatch = munis.find((m) => m.municipality_code === muniCode);
-                  if (muniMatch) {
-                    municipio = muniMatch.municipality;
-                  }
-                }
-              } catch {
-                // Ignore API errors — keep whatever was already resolved
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.error("Failed to fetch property info for PDF:", e);
-      }
-
-      const pdfData: Visit1PdfData = {
-        // Section 1: Usuario
-        nombreCompletoUsuario: fullName,
-        tipoDocumento: producerDetail?.document_type?.name ?? "",
-        numeroIdentificacion: producerDetail?.identification ?? "",
-        numeroTelefonico: producerDetail?.phone ?? "",
-        // Section 2: Predio
-        nombreDelPredio,
-        asnm,
-        departamento,
-        municipio,
-        corregimientoVereda,
-        // Section 3: Sistema Productivo
-        lineaProductivaPrincipal: "",
-        lineaProductivaSecundaria: "",
-        areaTotalEnProduccion: "",
-        // Section 4: Clasificación
-        nivelClasificacion: "",
-        // Section 5: Enfoque Técnico
-        objetivoAcompanamiento: objectivePdfText,
-        diagnosticoVisita: diagnosis,
-        recomendacionesCompromisos: [
-          recommendations.trim(),
-          commitments.trim() ? `Compromisos:\n${commitments.trim()}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
-        observacionesVisita: observations,
-        photoBase64Uris,
-        // Section 6: Datos del Acompañamiento
-        fechaRegistroAcompanamiento: formatDisplayDate(registrationDate),
-        horaRegistroAcompanamiento: hora,
-        nombrePersonaAtiende: attendanceName,
-        attendanceId: Number(attendanceId) || 0,
-        // Section 7: Extensionista
-        nombreExtensionista: authUser?.username ?? "",
-        identificacionExtensionista: String(authUser?.user_id ?? ""),
-        perfilProfesional: "",
-      };
-
-      await generateAndPrintVisit1Pdf(pdfData);
-    } catch (e) {
-      if (e instanceof Error && e.message.includes("cancelled")) return;
-      showAlert({ title: "Error", message: "No se pudo generar el PDF.", type: "error" });
-    } finally {
-      setGeneratingPdf(false);
-    }
-  }, [
-    objectivePdfText,
-    diagnosis,
-    recommendations,
-    commitments,
-    observations,
-    attendanceId,
-    attendanceName,
-    registrationDate,
-    registrationTime,
-    localPhotos, existingImages, token, producerDetail, authUser,
-    producerId, projectId,
-  ]);
-
   // ── Render: section header ────────────────────────────────────────────
 
   const renderSectionHeader = useCallback(
@@ -1393,12 +1145,9 @@ const handleSave = useCallback(async () => {
             )}
           </View>
           <View style={styles.sectionHeaderText}>
-            <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
-              {section.label}
-            </ThemedText>
-            <ThemedText style={styles.sectionSubtitle}>
-              Sección {section.sectionNum}
-            </ThemedText>
+            <AccentedText type="defaultSemiBold" style={styles.sectionTitle}>
+              {`${section.sectionNum}. ${section.label}`}
+            </AccentedText>
           </View>
           {isExpanded ? (
             <ChevronUp size={responsiveFont(18)} color="#999" />
@@ -1814,24 +1563,6 @@ const handleSave = useCallback(async () => {
           </ThemedText>
         </TouchableOpacity>
 
-        {/* PDF button (only in edit mode) */}
-        {isEditMode && (
-          <TouchableOpacity
-            style={[styles.pdfButton, generatingPdf && styles.saveButtonDisabled]}
-            onPress={handleGeneratePdf}
-            activeOpacity={0.8}
-            disabled={generatingPdf}
-          >
-            {generatingPdf ? (
-              <ActivityIndicator size="small" color="#0284c7" />
-            ) : (
-              <FileDown size={responsiveFont(20)} color="#0284c7" />
-            )}
-            <ThemedText style={styles.pdfButtonText}>
-              {generatingPdf ? "Generando PDF..." : "Generar PDF de Visita"}
-            </ThemedText>
-          </TouchableOpacity>
-        )}
       </View>
 
       {/* Bottom Sheet with the full form */}
@@ -2451,22 +2182,4 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
 
-  // PDF button
-  pdfButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: widthScale(8),
-    backgroundColor: "#fff",
-    borderWidth: 2,
-    borderColor: "#0284c7",
-    borderRadius: widthScale(10),
-    paddingVertical: verticalScale(12),
-    marginTop: verticalScale(8),
-  },
-  pdfButtonText: {
-    fontSize: responsiveFont(15),
-    fontWeight: "700",
-    color: "#0284c7",
-  },
 });

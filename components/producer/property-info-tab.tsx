@@ -1,4 +1,5 @@
 import { ThemedText } from "@/components/themed-text";
+import { AccentedText } from "@/components/ui/accented-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
 import { checkConnectivity } from "@/hooks/use-network";
@@ -1059,9 +1060,9 @@ export function PropertyInfoTab({
                 ]}
               >
                 <View style={styles.answerHeader}>
-                  <ThemedText style={styles.answerQuestion}>
+                  <AccentedText style={styles.answerQuestion}>
                     {item.questionName}
-                  </ThemedText>
+                  </AccentedText>
                   <View style={styles.answerHeaderRight}>
                     {item.isPending && (
                       <View style={styles.pendingBadge}>
@@ -1131,6 +1132,7 @@ export function PropertyInfoTab({
           onSave={handleEditSave}
           getTypeName={getCanonicalTypeName}
           loading={false}
+          hideWizardChrome
         />
       )}
     </View>

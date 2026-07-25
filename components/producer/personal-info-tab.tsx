@@ -1,4 +1,5 @@
 import { ThemedText } from "@/components/themed-text";
+import { AccentedText } from "@/components/ui/accented-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
 import { checkConnectivity } from "@/hooks/use-network";
@@ -1332,9 +1333,9 @@ export function PersonalInfoTab({
                 ]}
               >
                 <View style={styles.answerHeader}>
-                  <ThemedText style={styles.answerQuestion}>
+                  <AccentedText style={styles.answerQuestion}>
                     {item.questionName}
-                  </ThemedText>
+                  </AccentedText>
                   <View style={styles.answerHeaderRight}>
                     {item.isPending && (
                       <View style={styles.pendingBadge}>
@@ -1420,9 +1421,9 @@ export function PersonalInfoTab({
                           ]}
                         >
                           <View style={styles.answerHeader}>
-                            <ThemedText style={styles.childAnswerQuestion}>
+                            <AccentedText style={styles.childAnswerQuestion}>
                               {child.questionName}
-                            </ThemedText>
+                            </AccentedText>
                             <View style={styles.answerHeaderRight}>
                               {child.isPending && (
                                 <View style={styles.pendingBadge}>
@@ -1503,6 +1504,7 @@ export function PersonalInfoTab({
           onSave={handleEditSave}
           getTypeName={getCanonicalTypeName}
           loading={false}
+          hideWizardChrome={editQuestions.length <= 1}
         />
       )}
     </View>

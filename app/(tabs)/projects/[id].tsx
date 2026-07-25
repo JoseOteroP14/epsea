@@ -1,5 +1,6 @@
 import StandardView from "@/components/standard-view";
 import { ThemedText } from "@/components/themed-text";
+import { AccentedLabelValue } from "@/components/ui/accented-text";
 import type { Producer } from "@/schemas/producer";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useProducerStore } from "@/store/useProducerStore";
@@ -316,9 +317,12 @@ export default function ProjectDetailScreen() {
             >
               {getFullName(item)}
             </ThemedText>
-            <ThemedText style={styles.rowId} numberOfLines={1}>
-              CC: {item.identification}
-            </ThemedText>
+            <AccentedLabelValue
+              style={styles.rowId}
+              numberOfLines={1}
+              label="CC"
+              value={item.identification}
+            />
           </View>
           <ChevronRight size={responsiveFont(18)} color="#11181C" />
         </TouchableOpacity>

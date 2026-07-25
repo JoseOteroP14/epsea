@@ -38,6 +38,16 @@ interface QuestionWizardProps {
   /** Restore step when reopening a draft sheet. */
   initialIndex?: number;
   onIndexChange?: (index: number) => void;
+  /** Título del sheet según la pregunta activa (evita duplicar en el body). */
+  getQuestionTitle?: (question: Question, index: number) => string;
+  /** Texto de apoyo en el body (p. ej. justificación de clasificación). */
+  getQuestionBodyText?: (question: Question, index: number) => string | null;
+  /** Oculta name/description del body; el título vive en el sheet. */
+  hideQuestionTitle?: boolean;
+  /** Oculta progress bar y carousel de números (edición individual). */
+  hideWizardChrome?: boolean;
+  /** Notifica el título activo para el header del sheet. */
+  onActiveTitleChange?: (title: string) => void;
 }
 
 export function QuestionWizard({
@@ -51,6 +61,11 @@ export function QuestionWizard({
   ScrollViewComponent = ScrollView,
   initialIndex = 0,
   onIndexChange,
+  getQuestionTitle,
+  getQuestionBodyText,
+  hideQuestionTitle = false,
+  hideWizardChrome = false,
+  onActiveTitleChange,
 }: QuestionWizardProps) {
   const [currentIndex, setCurrentIndex] = useState(() =>
     Math.max(0, initialIndex),
@@ -283,7 +298,26 @@ export function QuestionWizard({
     }
   }, [currentIndex, totalQuestions]);
 
+  React.useEffect(() => {
+    if (!currentQuestion || !onActiveTitleChange) return;
+    const nextTitle =
+      getQuestionTitle?.(currentQuestion, currentIndex) ??
+      title ??
+      currentQuestion.description ??
+      currentQuestion.name ??
+      "";
+    onActiveTitleChange(nextTitle);
+  }, [
+    currentQuestion,
+    currentIndex,
+    getQuestionTitle,
+    title,
+    onActiveTitleChange,
+  ]);
+
   if (!currentQuestion) return null;
+
+  const bodyText = getQuestionBodyText?.(currentQuestion, currentIndex) ?? null;
 
   return (
     <View style={styles.container}>
@@ -301,6 +335,10 @@ export function QuestionWizard({
           typeName={getTypeName(currentQuestion.question_type_id)}
           value={answers[currentQuestion.id]}
           onChange={handleAnswerChange}
+          hideQuestionTitle={hideQuestionTitle}
+          bodyDescription={
+            getQuestionBodyText ? bodyText : hideQuestionTitle ? null : undefined
+          }
         />
         {isQuestionRequired(currentQuestion) && (
           <ThemedText style={styles.requiredHint}>Campo obligatorio</ThemedText>
@@ -310,72 +348,80 @@ export function QuestionWizard({
       {/* Bottom controls — always visible */}
       <View style={styles.bottomControls}>
         {/* Numbered page indicators */}
-        <GHScrollView
-          ref={pagerRef}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.pagerContent}
-          style={styles.pagerScroll}
-          nestedScrollEnabled
-        >
-          {visibleQuestions.map((q, index) => {
-            const isCurrent = index === currentIndex;
-            const isAnswered =
-              answers[q.id] !== undefined &&
-              answers[q.id] !== null &&
-              answers[q.id] !== "";
+        {!hideWizardChrome ? (
+          <GHScrollView
+            ref={pagerRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.pagerContent}
+            style={styles.pagerScroll}
+            nestedScrollEnabled
+          >
+            {visibleQuestions.map((q, index) => {
+              const isCurrent = index === currentIndex;
+              const isAnswered =
+                answers[q.id] !== undefined &&
+                answers[q.id] !== null &&
+                answers[q.id] !== "";
 
-            return (
-              <TouchableOpacity
-                key={q.id}
-                style={[
-                  styles.pageBox,
-                  isCurrent && styles.pageBoxCurrent,
-                  !isCurrent && isAnswered && styles.pageBoxAnswered,
-                ]}
-                onPress={() => goTo(index)}
-                activeOpacity={0.7}
-              >
-                <ThemedText
+              return (
+                <TouchableOpacity
+                  key={q.id}
                   style={[
-                    styles.pageBoxText,
-                    isCurrent && styles.pageBoxTextCurrent,
-                    !isCurrent && isAnswered && styles.pageBoxTextAnswered,
+                    styles.pageBox,
+                    isCurrent && styles.pageBoxCurrent,
+                    !isCurrent && isAnswered && styles.pageBoxAnswered,
                   ]}
+                  onPress={() => goTo(index)}
+                  activeOpacity={0.7}
                 >
-                  {index + 1}
-                </ThemedText>
-              </TouchableOpacity>
-            );
-          })}
-        </GHScrollView>
+                  <ThemedText
+                    style={[
+                      styles.pageBoxText,
+                      isCurrent && styles.pageBoxTextCurrent,
+                      !isCurrent && isAnswered && styles.pageBoxTextAnswered,
+                    ]}
+                  >
+                    {index + 1}
+                  </ThemedText>
+                </TouchableOpacity>
+              );
+            })}
+          </GHScrollView>
+        ) : null}
 
         {/* Progress bar */}
-        <View style={styles.progressTrack}>
-          <Animated.View style={[styles.progressFill, progressStyle]} />
-        </View>
+        {!hideWizardChrome ? (
+          <View style={styles.progressTrack}>
+            <Animated.View style={[styles.progressFill, progressStyle]} />
+          </View>
+        ) : null}
 
         {/* Navigation row */}
         <View style={styles.navRow}>
-          <TouchableOpacity
-            style={[styles.navButton, isFirst && styles.navButtonDisabled]}
-            onPress={goPrev}
-            disabled={isFirst}
-            activeOpacity={0.7}
-          >
-            <ChevronLeft
-              size={responsiveFont(18)}
-              color={isFirst ? "#ccc" : "#1a7a3a"}
-            />
-            <ThemedText
-              style={[
-                styles.navButtonText,
-                isFirst && styles.navButtonTextDisabled,
-              ]}
+          {!hideWizardChrome ? (
+            <TouchableOpacity
+              style={[styles.navButton, isFirst && styles.navButtonDisabled]}
+              onPress={goPrev}
+              disabled={isFirst}
+              activeOpacity={0.7}
             >
-              Anterior
-            </ThemedText>
-          </TouchableOpacity>
+              <ChevronLeft
+                size={responsiveFont(18)}
+                color={isFirst ? "#ccc" : "#1a7a3a"}
+              />
+              <ThemedText
+                style={[
+                  styles.navButtonText,
+                  isFirst && styles.navButtonTextDisabled,
+                ]}
+              >
+                Anterior
+              </ThemedText>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.navEndSpacer} />
+          )}
 
           {onSave ? (
             <TouchableOpacity
@@ -406,31 +452,35 @@ export function QuestionWizard({
             </TouchableOpacity>
           )}
 
-          {isLast ? (
-            <View style={styles.navEndSpacer} />
-          ) : (
-            <TouchableOpacity
-              style={[
-                styles.navButton,
-                currentRequiredBlocksNext && styles.navButtonDisabled,
-              ]}
-              onPress={goNext}
-              disabled={currentRequiredBlocksNext}
-              activeOpacity={0.7}
-            >
-              <ThemedText
+          {!hideWizardChrome ? (
+            isLast ? (
+              <View style={styles.navEndSpacer} />
+            ) : (
+              <TouchableOpacity
                 style={[
-                  styles.navButtonText,
-                  currentRequiredBlocksNext && styles.navButtonTextDisabled,
+                  styles.navButton,
+                  currentRequiredBlocksNext && styles.navButtonDisabled,
                 ]}
+                onPress={goNext}
+                disabled={currentRequiredBlocksNext}
+                activeOpacity={0.7}
               >
-                Siguiente
-              </ThemedText>
-              <ChevronRight
-                size={responsiveFont(18)}
-                color={currentRequiredBlocksNext ? "#ccc" : "#1a7a3a"}
-              />
-            </TouchableOpacity>
+                <ThemedText
+                  style={[
+                    styles.navButtonText,
+                    currentRequiredBlocksNext && styles.navButtonTextDisabled,
+                  ]}
+                >
+                  Siguiente
+                </ThemedText>
+                <ChevronRight
+                  size={responsiveFont(18)}
+                  color={currentRequiredBlocksNext ? "#ccc" : "#1a7a3a"}
+                />
+              </TouchableOpacity>
+            )
+          ) : (
+            <View style={styles.navEndSpacer} />
           )}
         </View>
       </View>

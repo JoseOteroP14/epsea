@@ -1,5 +1,6 @@
 import { ClassificationTab } from "@/components/producer/classification-tab";
 import { ThemedText } from "@/components/themed-text";
+import { AccentedText } from "@/components/ui/accented-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { checkConnectivity } from "@/hooks/use-network";
 import { useProducerFormDraft } from "@/hooks/use-producer-form-draft";
@@ -1294,14 +1295,14 @@ export function Visit3Tab({ producerId, projectId }: Visit3TabProps) {
             <Icon size={responsiveFont(15)} color="#fff" />
           </View>
           <View style={styles.sectionHeaderText}>
-            <ThemedText
+            <AccentedText
               type="defaultSemiBold"
               style={styles.sectionTitle}
               lightColor="#222"
               darkColor="#222"
             >
-              {config.sectionNum}. {config.label}
-            </ThemedText>
+              {`${config.sectionNum}. ${config.label}`}
+            </AccentedText>
             <ThemedText style={styles.sectionSubtitle}>
               {complete ? "Completada" : "Pendiente"}
             </ThemedText>

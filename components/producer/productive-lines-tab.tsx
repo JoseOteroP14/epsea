@@ -1,4 +1,5 @@
 import { ThemedText } from "@/components/themed-text";
+import { AccentedText } from "@/components/ui/accented-text";
 import { PagerViewCompat } from "@/components/ui/pager-view-compat";
 import { useAlert } from "@/components/ui/custom-alert";
 import { NativeDatePicker } from "@/components/ui/native-date-picker";
@@ -323,7 +324,7 @@ function AgriculturalForm({
   return (
     <View style={styles.lineForm}>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>A. Línea productiva principal</ThemedText>
+        <AccentedText style={styles.questionLabel}>A. Línea productiva principal</AccentedText>
         <TouchableOpacity style={styles.listSelector} onPress={onSelectLine} activeOpacity={0.8}>
           <ThemedText style={form.line_name ? styles.listSelectorText : styles.listSelectorPlaceholder}>
             {form.line_name || "Seleccionar..."}
@@ -332,21 +333,21 @@ function AgriculturalForm({
         </TouchableOpacity>
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>
+        <AccentedText style={styles.questionLabel}>
           B. ¿Cuál es el área destinada a esta línea productiva en metros cuadrados?
-        </ThemedText>
+        </AccentedText>
         <TextInput style={styles.textInput} value={form.area} onChangeText={(v) => onChange("area", v)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>C. ¿Cuántas cosechas al año obtiene?</ThemedText>
+        <AccentedText style={styles.questionLabel}>C. ¿Cuántas cosechas al año obtiene?</AccentedText>
         <TextInput style={styles.textInput} value={form.harvests} onChangeText={(v) => onChange("harvests", v)} keyboardType="number-pad" placeholder="0" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>D. ¿Cuál es la producción promedio en kilogramos?</ThemedText>
+        <AccentedText style={styles.questionLabel}>D. ¿Cuál es la producción promedio en kilogramos?</AccentedText>
         <TextInput style={styles.textInput} value={form.production} onChangeText={(v) => onChange("production", v)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>E. Fecha de siembra del cultivo</ThemedText>
+        <AccentedText style={styles.questionLabel}>E. Fecha de siembra del cultivo</AccentedText>
         <NativeDatePicker value={form.date} onChange={(v) => onChange("date", v)} />
       </View>
     </View>
@@ -370,7 +371,7 @@ function LivestockForm({
   return (
     <View style={styles.lineForm}>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>A. Línea productiva principal</ThemedText>
+        <AccentedText style={styles.questionLabel}>A. Línea productiva principal</AccentedText>
         <TouchableOpacity style={styles.listSelector} onPress={onSelectLine} activeOpacity={0.8}>
           <ThemedText style={form.line_name ? styles.listSelectorText : styles.listSelectorPlaceholder}>
             {form.line_name || "Seleccionar..."}
@@ -379,17 +380,17 @@ function LivestockForm({
         </TouchableOpacity>
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>
+        <AccentedText style={styles.questionLabel}>
           B. ¿Cuál es el área destinada a esta línea productiva en metros cuadrados?
-        </ThemedText>
+        </AccentedText>
         <TextInput style={styles.textInput} value={form.area} onChangeText={(v) => onChange("area", v)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>C. ¿Cuántos ciclos productivos obtiene al año?</ThemedText>
+        <AccentedText style={styles.questionLabel}>C. ¿Cuántos ciclos productivos obtiene al año?</AccentedText>
         <TextInput style={styles.textInput} value={form.cycles} onChangeText={(v) => onChange("cycles", v)} keyboardType="number-pad" placeholder="0" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>D. Producción promedio</ThemedText>
+        <AccentedText style={styles.questionLabel}>D. Producción promedio</AccentedText>
         {!unitConfig ? (
           <View style={[styles.textInput, styles.fixedValueContainer]}>
             <ThemedText style={styles.fixedValuePlaceholder}>Seleccione primero una línea productiva</ThemedText>
@@ -408,11 +409,11 @@ function LivestockForm({
         )}
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>E. Cantidad producción promedio</ThemedText>
+        <AccentedText style={styles.questionLabel}>E. Cantidad producción promedio</AccentedText>
         <TextInput style={styles.textInput} value={form.production} onChangeText={(v) => onChange("production", v)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>F. Fecha de inicio de la producción</ThemedText>
+        <AccentedText style={styles.questionLabel}>F. Fecha de inicio de la producción</AccentedText>
         <NativeDatePicker value={form.date} onChange={(v) => onChange("date", v)} />
       </View>
     </View>
@@ -435,7 +436,7 @@ function ForestForm({
   return (
     <View style={styles.lineForm}>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>A. Especie forestal cultivada</ThemedText>
+        <AccentedText style={styles.questionLabel}>A. Especie forestal cultivada</AccentedText>
         <TouchableOpacity style={styles.listSelector} onPress={onSelectLine} activeOpacity={0.8}>
           <ThemedText style={form.line_name ? styles.listSelectorText : styles.listSelectorPlaceholder}>
             {form.line_name || "Seleccionar..."}
@@ -444,17 +445,17 @@ function ForestForm({
         </TouchableOpacity>
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>
+        <AccentedText style={styles.questionLabel}>
           B. ¿Cuál es el área destinada a esta línea productiva en metros cuadrados?
-        </ThemedText>
+        </AccentedText>
         <TextInput style={styles.textInput} value={form.area} onChangeText={(v) => onChange("area", v)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>C. Ciclo de cosecha o aprovechamiento (años)</ThemedText>
+        <AccentedText style={styles.questionLabel}>C. Ciclo de cosecha o aprovechamiento (años)</AccentedText>
         <TextInput style={styles.textInput} value={form.cycles} onChangeText={(v) => onChange("cycles", v)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>D. Producción estimada por ciclo</ThemedText>
+        <AccentedText style={styles.questionLabel}>D. Producción estimada por ciclo</AccentedText>
         {!form.line_name ? (
           <View style={[styles.textInput, styles.fixedValueContainer]}>
             <ThemedText style={styles.fixedValuePlaceholder}>Seleccione primero la especie (A)</ThemedText>
@@ -471,11 +472,11 @@ function ForestForm({
         )}
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>E. Cantidad producción estimada por ciclo</ThemedText>
+        <AccentedText style={styles.questionLabel}>E. Cantidad producción estimada por ciclo</AccentedText>
         <TextInput style={styles.textInput} value={form.production} onChangeText={(v) => onChange("production", v)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>F. Fecha de inicio de la producción</ThemedText>
+        <AccentedText style={styles.questionLabel}>F. Fecha de inicio de la producción</AccentedText>
         <NativeDatePicker value={form.date} onChange={(v) => onChange("date", v)} />
       </View>
     </View>
@@ -500,7 +501,7 @@ function FishingForm({
   return (
     <View style={styles.lineForm}>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>A. Tipo de pesca</ThemedText>
+        <AccentedText style={styles.questionLabel}>A. Tipo de pesca</AccentedText>
         <TouchableOpacity style={styles.listSelector} onPress={onSelectType} activeOpacity={0.8}>
           <ThemedText style={form.type_name ? styles.listSelectorText : styles.listSelectorPlaceholder}>
             {form.type_name || "Seleccionar..."}
@@ -509,7 +510,7 @@ function FishingForm({
         </TouchableOpacity>
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>B. Zona de pesca</ThemedText>
+        <AccentedText style={styles.questionLabel}>B. Zona de pesca</AccentedText>
         <TouchableOpacity style={styles.listSelector} onPress={onSelectArea} activeOpacity={0.8}>
           <ThemedText style={form.fishing_area_name ? styles.listSelectorText : styles.listSelectorPlaceholder}>
             {form.fishing_area_name || "Seleccionar..."}
@@ -518,7 +519,7 @@ function FishingForm({
         </TouchableOpacity>
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>C. Especies</ThemedText>
+        <AccentedText style={styles.questionLabel}>C. Especies</AccentedText>
         <TouchableOpacity style={styles.listSelector} onPress={onSelectSpecies} activeOpacity={0.8}>
           <ThemedText
             style={form.species.length > 0 ? styles.listSelectorText : styles.listSelectorPlaceholder}
@@ -530,11 +531,11 @@ function FishingForm({
         </TouchableOpacity>
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>D. Peso (kg) promedio de captura por jornada</ThemedText>
+        <AccentedText style={styles.questionLabel}>D. Peso (kg) promedio de captura por jornada</AccentedText>
         <TextInput style={styles.textInput} value={form.weight} onChangeText={(v) => onChange("weight", v)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>E. Fecha de inicio de la producción</ThemedText>
+        <AccentedText style={styles.questionLabel}>E. Fecha de inicio de la producción</AccentedText>
         <NativeDatePicker value={form.date} onChange={(v) => onChange("date", v)} />
       </View>
     </View>
@@ -559,7 +560,7 @@ function AquacultureForm({
   return (
     <View style={styles.lineForm}>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>A. Tipo de sistema</ThemedText>
+        <AccentedText style={styles.questionLabel}>A. Tipo de sistema</AccentedText>
         <TouchableOpacity style={styles.listSelector} onPress={onSelectType} activeOpacity={0.8}>
           <ThemedText style={form.type_name ? styles.listSelectorText : styles.listSelectorPlaceholder}>
             {form.type_name || "Seleccionar..."}
@@ -568,7 +569,7 @@ function AquacultureForm({
         </TouchableOpacity>
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>B. Especies</ThemedText>
+        <AccentedText style={styles.questionLabel}>B. Especies</AccentedText>
         <TouchableOpacity style={styles.listSelector} onPress={onSelectSpecies} activeOpacity={0.8}>
           <ThemedText
             style={form.species.length > 0 ? styles.listSelectorText : styles.listSelectorPlaceholder}
@@ -580,7 +581,7 @@ function AquacultureForm({
         </TouchableOpacity>
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>C. Unidad de sistema de cultivo</ThemedText>
+        <AccentedText style={styles.questionLabel}>C. Unidad de sistema de cultivo</AccentedText>
         <TouchableOpacity style={styles.listSelector} onPress={onSelectCroppingArea} activeOpacity={0.8}>
           <ThemedText style={form.area_crop_name ? styles.listSelectorText : styles.listSelectorPlaceholder}>
             {form.area_crop_name || "Seleccionar..."}
@@ -589,23 +590,23 @@ function AquacultureForm({
         </TouchableOpacity>
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>D. Área de sistema de cultivo</ThemedText>
+        <AccentedText style={styles.questionLabel}>D. Área de sistema de cultivo</AccentedText>
         <TextInput style={styles.textInput} value={form.area_value_crop} onChangeText={(v) => onChange("area_value_crop", v)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>E. Número de animales</ThemedText>
+        <AccentedText style={styles.questionLabel}>E. Número de animales</AccentedText>
         <TextInput style={styles.textInput} value={form.number_of_animals} onChangeText={(v) => onChange("number_of_animals", v)} keyboardType="number-pad" placeholder="0" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>F. ¿Cuántos ciclos productivos obtiene al año?</ThemedText>
+        <AccentedText style={styles.questionLabel}>F. ¿Cuántos ciclos productivos obtiene al año?</AccentedText>
         <TextInput style={styles.textInput} value={form.cycles} onChangeText={(v) => onChange("cycles", v)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>G. Producción promedio por ciclo (kg)</ThemedText>
+        <AccentedText style={styles.questionLabel}>G. Producción promedio por ciclo (kg)</AccentedText>
         <TextInput style={styles.textInput} value={form.production} onChangeText={(v) => onChange("production", v)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="rgba(17, 24, 28, 0.4)" />
       </View>
       <View style={styles.questionBlock}>
-        <ThemedText style={styles.questionLabel}>H. Fecha de siembra</ThemedText>
+        <AccentedText style={styles.questionLabel}>H. Fecha de siembra</AccentedText>
         <NativeDatePicker value={form.date} onChange={(v) => onChange("date", v)} />
       </View>
     </View>
@@ -2596,7 +2597,7 @@ const styles = StyleSheet.create({
   },
   existingCardGrid: { flexDirection: "row", flexWrap: "wrap", gap: verticalScale(8) },
   existingCardCell: { width: "48%", gap: verticalScale(2) },
-  existingCardLabel: { fontSize: responsiveFont(15), color: "#666" },
+  existingCardLabel: { fontSize: responsiveFont(15), color: "#1a7a3a", fontWeight: "600" },
   existingCardValue: { fontSize: responsiveFont(17), color: "#333", fontWeight: "600" },
   emptyState: { alignItems: "center", justifyContent: "center", paddingVertical: verticalScale(40), gap: verticalScale(10) },
   emptyStateText: { fontSize: responsiveFont(16), color: "#555", fontWeight: "600" },

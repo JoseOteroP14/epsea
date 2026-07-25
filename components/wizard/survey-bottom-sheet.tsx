@@ -1,5 +1,8 @@
 import { ThemedText } from "@/components/themed-text";
+import { AccentedText } from "@/components/ui/accented-text";
 import { QuestionWizard } from "@/components/wizard/question-wizard";
+import type { Question } from "@/schemas/characterization";
+import { getSurveyQuestionTitle } from "@/utils/survey/question-display";
 import { responsiveFont, verticalScale, widthScale } from "@/utils/responsive";
 import {
   BottomSheetBackdrop,
@@ -7,17 +10,17 @@ import {
   BottomSheetScrollView,
   type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   StyleSheet,
   View,
 } from "react-native";
-import type { Question } from "@/schemas/characterization";
 
 interface SurveyBottomSheetProps {
   visible: boolean;
   onClose: () => void;
+  /** Título de respaldo (loading / sin pregunta activa). */
   title: string;
   questions: Question[];
   answers: Record<number, any>;
@@ -29,6 +32,17 @@ interface SurveyBottomSheetProps {
   wizardSessionKey?: string | number;
   initialIndex?: number;
   onIndexChange?: (index: number) => void;
+  /** Título del sheet según la pregunta activa. */
+  getQuestionTitle?: (question: Question, index: number) => string;
+  /** Texto de apoyo en el body (justificación de clasificación, etc.). */
+  getQuestionBodyText?: (question: Question, index: number) => string | null;
+  /**
+   * Oculta el enunciado en el body (queda solo en el título del sheet).
+   * Default true.
+   */
+  hideQuestionTitle?: boolean;
+  /** Oculta progress bar y carousel (edición de una sola respuesta). */
+  hideWizardChrome?: boolean;
 }
 
 export function SurveyBottomSheet({
@@ -44,17 +58,34 @@ export function SurveyBottomSheet({
   wizardSessionKey = 0,
   initialIndex = 0,
   onIndexChange,
+  getQuestionTitle,
+  getQuestionBodyText,
+  hideQuestionTitle = true,
+  hideWizardChrome = false,
 }: SurveyBottomSheetProps) {
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const snapPoints = useMemo(() => ["92%"], []);
+  const [activeTitle, setActiveTitle] = useState(title);
+
+  const resolveTitle = useCallback(
+    (question: Question, index: number) =>
+      getQuestionTitle?.(question, index) ?? getSurveyQuestionTitle(question, index),
+    [getQuestionTitle],
+  );
 
   useEffect(() => {
     if (visible) {
       bottomSheetRef.current?.present();
+      const first = questions[initialIndex] ?? questions[0];
+      if (first) {
+        setActiveTitle(resolveTitle(first, initialIndex));
+      } else {
+        setActiveTitle(title);
+      }
     } else {
       bottomSheetRef.current?.dismiss();
     }
-  }, [visible]);
+  }, [visible, title, questions, initialIndex, resolveTitle]);
 
   const handleSheetChanges = useCallback(
     (index: number) => {
@@ -97,15 +128,15 @@ export function SurveyBottomSheet({
         {/* Header */}
         <View style={styles.sheetHeader}>
           <View style={styles.headerTitleArea}>
-            <ThemedText
+            <AccentedText
               type="defaultSemiBold"
               style={styles.sheetTitle}
               lightColor="#333"
               darkColor="#333"
-              numberOfLines={2}
+              numberOfLines={3}
             >
-              {title}
-            </ThemedText>
+              {activeTitle || title}
+            </AccentedText>
           </View>
         </View>
 
@@ -137,6 +168,11 @@ export function SurveyBottomSheet({
               ScrollViewComponent={BottomSheetScrollView}
               initialIndex={initialIndex}
               onIndexChange={onIndexChange}
+              getQuestionTitle={resolveTitle}
+              getQuestionBodyText={getQuestionBodyText}
+              hideQuestionTitle={hideQuestionTitle}
+              hideWizardChrome={hideWizardChrome}
+              onActiveTitleChange={setActiveTitle}
             />
           )}
         </View>
@@ -152,7 +188,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: widthScale(24),
   },
   handleIndicator: {
-    backgroundcolor: "#11181C",
+    backgroundColor: "#11181C",
     width: widthScale(40),
   },
   sheetContainer: {

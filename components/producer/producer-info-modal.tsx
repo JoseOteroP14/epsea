@@ -298,6 +298,7 @@ const styles = StyleSheet.create({
     fontSize: responsiveFont(17),
     marginBottom: verticalScale(1),
     fontWeight: "700",
+    color: "#1a7a3a",
   },
   infoValue: {
     fontSize: responsiveFont(17),

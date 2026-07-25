@@ -1,4 +1,5 @@
 import { ThemedText } from "@/components/themed-text";
+import { AccentedText } from "@/components/ui/accented-text";
 import { useAlert } from "@/components/ui/custom-alert";
 import { SurveyBottomSheet } from "@/components/wizard/survey-bottom-sheet";
 import { checkConnectivity } from "@/hooks/use-network";
@@ -27,6 +28,9 @@ import {
 import { markInterventionMethodApplied } from "@/utils/database/repositories/producer-intervention-repository";
 import { enqueue } from "@/utils/database/repositories/sync-repository";
 import { findOptionMatchingStoredValue } from "@/utils/survey/option-display";
+import {
+  splitClassificationQuestionCopy,
+} from "@/utils/survey/question-display";
 import {
   offlinePendingValuesAreEquivalent,
   serializeClassificationOfflineUpsert,
@@ -93,21 +97,7 @@ function extractQuestionTitle(
   description: string | null | undefined,
   index: number,
 ): string {
-  if (!description) return `${index + 1}. Pregunta`;
-
-  const separator = "este componente";
-  const lowerName = description.toLowerCase();
-  const separatorIndex = lowerName.indexOf(separator);
-
-  if (separatorIndex > 0) {
-    let title = description.substring(0, separatorIndex).trim();
-    if (title.endsWith(".")) {
-      title = title.slice(0, -1);
-    }
-    return `${index + 1}. ${title}`;
-  }
-
-  return `${index + 1}. ${description}`;
+  return splitClassificationQuestionCopy(description, index).title;
 }
 
 function resolveDisplayValue(
@@ -541,6 +531,28 @@ export function ClassificationTab({
     }
     return computeGeometricMean(numericValues);
   }, [localQuestions, answers, questionDetails, getCanonicalTypeName]);
+
+  const getClassificationSheetTitle = useCallback(
+    (question: Question, wizardIndex: number) => {
+      const idx = localQuestions.findIndex((q) => q.id === question.id);
+      return splitClassificationQuestionCopy(
+        question.description,
+        idx >= 0 ? idx : wizardIndex,
+      ).title;
+    },
+    [localQuestions],
+  );
+
+  const getClassificationSheetBody = useCallback(
+    (question: Question, wizardIndex: number) => {
+      const idx = localQuestions.findIndex((q) => q.id === question.id);
+      return splitClassificationQuestionCopy(
+        question.description,
+        idx >= 0 ? idx : wizardIndex,
+      ).body;
+    },
+    [localQuestions],
+  );
 
   // Build display answers
   useEffect(() => {
@@ -1135,9 +1147,9 @@ export function ClassificationTab({
                 ]}
               >
                 <View style={styles.answerHeader}>
-                  <ThemedText style={styles.answerQuestion}>
+                  <AccentedText style={styles.answerQuestion}>
                     {item.questionName}
-                  </ThemedText>
+                  </AccentedText>
                   <View style={styles.answerHeaderRight}>
                     {item.isPending && (
                       <View style={styles.pendingBadge}>
@@ -1209,6 +1221,8 @@ export function ClassificationTab({
           wizardSessionKey={wizardSessionKey}
           initialIndex={draftWizardIndex}
           onIndexChange={handleWizardIndexChange}
+          getQuestionTitle={getClassificationSheetTitle}
+          getQuestionBodyText={getClassificationSheetBody}
         />
       )}
 
@@ -1227,6 +1241,9 @@ export function ClassificationTab({
           onSave={handleEditSave}
           getTypeName={getCanonicalTypeName}
           loading={false}
+          getQuestionTitle={getClassificationSheetTitle}
+          getQuestionBodyText={getClassificationSheetBody}
+          hideWizardChrome
         />
       )}
     </View>
