@@ -135,7 +135,7 @@ Play Console → **Presencia en Play Store → Ficha principal de Play Store**.
 | Nombre | EPSEA |
 | Descripción corta | `docs/store-listing/descriptions.md` |
 | Descripción completa | mismo archivo |
-| Icono 512×512 | Exportar desde `assets/images/Epsea.png` o `store-assets/icon-512.png` |
+| Icono 512×512 | `store-assets/icon-512.png` |
 | Feature graphic 1024×500 | Crear y guardar en `store-assets/feature-graphic.png` |
 | Capturas teléfono (mín. 2) | `store-assets/screenshots/phone/` — ver `store-assets/README.md` |
 | Categoría | Productividad |

@@ -256,7 +256,7 @@ export default function LoginScreen() {
         ]}
       >
         <Image
-          source={require("@/assets/images/Epsea.png")}
+          source={require("@/assets/images/logomobile.png")}
           style={styles.logoCenterEpsea}
           resizeMode="contain"
         />

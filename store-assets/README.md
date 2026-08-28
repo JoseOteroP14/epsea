@@ -7,7 +7,7 @@ Coloca aquí los gráficos que **no** genera EAS automáticamente.
 ```
 store-assets/
 ├── feature-graphic.png      # 1024 × 500 px (obligatorio)
-├── icon-512.png             # 512 × 512 px (opcional; ya existe assets/images/Epsea.png)
+├── icon-512.png             # 512 × 512 px (copia de assets/images/logomobile.png)
 └── screenshots/
     └── phone/
         ├── 01-login.png
@@ -21,7 +21,7 @@ store-assets/
 | Asset | Tamaño | Formato | Notas |
 |-------|--------|---------|-------|
 | Feature graphic | 1024 × 500 | PNG o JPG | Banner de la ficha en Play Store |
-| Icono de tienda | 512 × 512 | PNG 32-bit | Sin transparencia; puedes exportar desde `assets/images/Epsea.png` |
+| Icono de tienda | 512 × 512 | PNG 32-bit | `store-assets/icon-512.png` (= `assets/images/logomobile.png`) |
 | Capturas teléfono | Mín. 320 px lado corto | PNG o JPG | Mínimo **2**, recomendado **4–8** |
 | Capturas tablet 7" | 1024 × 600 min | PNG o JPG | Solo si declaras soporte tablet |
 | Capturas tablet 10" | 1280 × 800 min | PNG o JPG | Solo si declaras soporte tablet |

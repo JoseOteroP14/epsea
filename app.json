@@ -4,7 +4,7 @@
     "slug": "epsea",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/Epsea.png",
+    "icon": "./assets/images/logomobile.png",
     "scheme": "epsea",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -24,7 +24,7 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/images/Epsea.png",
+        "foregroundImage": "./assets/images/logomobile.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
@@ -45,7 +45,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/Epsea.png",
+          "image": "./assets/images/logomobile.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
