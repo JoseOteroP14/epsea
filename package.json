@@ -14,6 +14,10 @@
     "lint": "expo lint",
     "type-check": "tsc --noEmit",
     "build:android:production": "bunx eas-cli build --platform android --profile production",
+    "build:ios:preview": "bunx eas-cli build --platform ios --profile preview",
+    "build:ios:production": "bunx eas-cli build --platform ios --profile production",
+    "submit:ios:production": "bunx eas-cli submit --platform ios --profile production --latest",
+    "submit:android:production": "bunx eas-cli submit --platform android --profile production --latest",
     "postinstall": "node ./scripts/patch-metro-config.js && node ./scripts/fix-node-modules-bin.js"
   },
   "dependencies": {
@@ -34,7 +38,6 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.12",
     "expo-network": "^8.0.8",
-    "expo-notifications": "~0.32.17",
     "expo-print": "~15.0.8",
     "expo-router": "~6.0.24",
     "expo-secure-store": "^15.0.8",

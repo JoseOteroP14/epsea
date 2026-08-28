@@ -10,7 +10,16 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.miagroalimentaria.epsea"
+      "bundleIdentifier": "com.miagroalimentaria.epsea",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "CFBundleDisplayName": "EPSEA",
+        "NSCameraUsageDescription": "EPSEA usa la cámara para tomar fotos durante las visitas a productores.",
+        "NSPhotoLibraryUsageDescription": "EPSEA accede a su galería para adjuntar fotos en las visitas a productores.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -63,10 +72,10 @@
         }
       ],
       [
-        "expo-notifications",
+        "expo-image-picker",
         {
-          "icon": "./assets/images/Epsea.png",
-          "color": "#1a7a3a"
+          "photosPermission": "EPSEA accede a su galería para adjuntar fotos en las visitas a productores.",
+          "cameraPermission": "EPSEA usa la cámara para tomar fotos durante las visitas a productores."
         }
       ],
       [
