@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.andresortizjdk.epsea"
+      "bundleIdentifier": "com.miagroalimentaria.epsea"
     },
     "android": {
       "adaptiveIcon": {

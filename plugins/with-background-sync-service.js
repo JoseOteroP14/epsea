@@ -10,7 +10,7 @@ function withIosBackgroundSync(config) {
     const bundleId =
       cfg.ios?.bundleIdentifier ??
       cfg.modResults.CFBundleIdentifier ??
-      "com.andresortizjdk.epsea";
+      "com.miagroalimentaria.epsea";
     const identifiers = new Set(
       cfg.modResults.BGTaskSchedulerPermittedIdentifiers ?? [],
     );
