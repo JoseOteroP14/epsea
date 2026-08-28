@@ -21,7 +21,11 @@
       "edgeToEdgeEnabled": true,
       "softwareKeyboardLayoutMode": "resize",
       "predictiveBackGestureEnabled": false,
-      "package": "com.joselito14.epsea"
+      "package": "com.joselito14.epsea",
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
     },
     "web": {
       "output": "static",
@@ -47,14 +51,14 @@
         "expo-build-properties",
         {
           "ios": {
-            "newArchEnabled": true,
             "deploymentTarget": "15.1"
           },
           "android": {
-            "newArchEnabled": true,
             "compileSdkVersion": 35,
             "targetSdkVersion": 35,
-            "minSdkVersion": 24
+            "minSdkVersion": 24,
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
           }
         }
       ],
@@ -66,7 +70,8 @@
         }
       ],
       "./plugins/with-background-sync-service.js",
-      "./plugins/with-android-windows-paths.js"
+      "./plugins/with-android-windows-paths.js",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true

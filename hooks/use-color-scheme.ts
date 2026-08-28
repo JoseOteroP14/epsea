@@ -1,5 +1,5 @@
-import { useColorScheme as useColorSchemeRN } from 'react-native';
+import type { ColorSchemeName } from 'react-native';
 
-export function useColorScheme() {
+export function useColorScheme(): NonNullable<ColorSchemeName> {
   return 'light';
 }
