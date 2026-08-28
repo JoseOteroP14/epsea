@@ -1,4 +1,5 @@
 import { useAlert } from "@/components/ui/custom-alert";
+import { APP_INFO } from "@/constants/app-info";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useSyncStore } from "@/store/useSyncStore";
 import { apiFetch } from "@/utils/api";
@@ -9,6 +10,7 @@ import {
   SCREEN_WIDTH,
 } from "@/utils/responsive";
 import { LinearGradient } from "expo-linear-gradient";
+import * as WebBrowser from "expo-web-browser";
 import {
   ArrowRight,
   Eye,
@@ -74,6 +76,10 @@ export default function LoginScreen() {
   const epseaLogoHeight = isCompact ? 116 : 160;
   const unicorLogoHeight = isCompact ? 38 : 50;
   const formMarginTop = isPhone ? height * 0.42 : height * 0.48;
+
+  const handleOpenPrivacyPolicy = async () => {
+    await WebBrowser.openBrowserAsync(APP_INFO.privacyPolicyUrl);
+  };
 
   const handleLogin = async () => {
     if (!username || !password) {
@@ -447,6 +453,15 @@ export default function LoginScreen() {
                     </View>
                   )}
                 </Pressable>
+
+                <Pressable
+                  style={styles.privacyLink}
+                  onPress={() => void handleOpenPrivacyPolicy()}
+                  accessibilityRole="link"
+                  accessibilityLabel="Política de privacidad"
+                >
+                  <Text style={styles.privacyLinkText}>Política de privacidad</Text>
+                </Pressable>
               </View>
             </View>
       </KeyboardAwareScrollView>
@@ -622,5 +637,16 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontWeight: "700",
     fontSize: responsiveFont(16),
+  },
+  privacyLink: {
+    marginTop: 18,
+    alignSelf: "center",
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  privacyLinkText: {
+    color: "rgba(255, 255, 255, 0.62)",
+    fontSize: responsiveFont(12.5),
+    textDecorationLine: "underline",
   },
 });

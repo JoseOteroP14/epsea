@@ -13,6 +13,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "type-check": "tsc --noEmit",
+    "validate:release": "node ./scripts/validate-release-config.js",
     "build:android:production": "bunx eas-cli build --platform android --profile production",
     "build:ios:preview": "bunx eas-cli build --platform ios --profile preview",
     "build:ios:production": "bunx eas-cli build --platform ios --profile production",
