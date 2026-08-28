@@ -167,6 +167,113 @@ const SURVEY_CATALOG_COMPONENT_IDS = [
   CHARACTERIZATION_COMPONENT_ID,
 ] as const;
 
+/** Métodos precargados en descarga completa (método 11 = registro V3, sin filas de encuesta). */
+const FULL_DOWNLOAD_INTERVENTION_METHOD_IDS = [1, 2, 3, 5, 6, 7, 8, 9] as const;
+
+type SurveyMethodFetchOutcome =
+  | {
+      kind: "success";
+      methodId: number;
+      flatResults: ReturnType<
+        typeof flattenInterventionMethodSurveyPayloadToRows
+      >;
+    }
+  | { kind: "empty" }
+  | { kind: "missing" }
+  | { kind: "skipped"; error: unknown }
+  | { kind: "hard"; methodId: number; error: unknown };
+
+async function fetchSurveyMethodForProducer(
+  projectId: number,
+  producerId: number,
+  methodId: number,
+  generation: number | undefined,
+): Promise<SurveyMethodFetchOutcome> {
+  assertDownloadGeneration(generation);
+  try {
+    const response = await apiFetchWithRetry<unknown>(
+      `/surveys/${projectId}/producer/${producerId}/intervention_method/${methodId}`,
+      { method: "GET" },
+    );
+    const rawData = extractInterventionMethodSurveyArray(response);
+    if (rawData.length === 0) return { kind: "empty" };
+
+    const flatResults = flattenInterventionMethodSurveyPayloadToRows(
+      rawData,
+      methodId,
+      producerId,
+      projectId,
+    );
+    if (flatResults.length === 0) {
+      console.warn(
+        `Survey download flatten empty p=${producerId} m=${methodId} raw=${rawData.length}`,
+      );
+      return { kind: "empty" };
+    }
+    return { kind: "success", methodId, flatResults };
+  } catch (error) {
+    if (isExpectedMissingResourceError(error)) {
+      return { kind: "missing" };
+    }
+    if (!isHardSurveyDownloadFailure(error)) {
+      console.warn(
+        `Survey download skipped p=${producerId} proj=${projectId} m=${methodId}:`,
+        error,
+      );
+      return { kind: "skipped", error };
+    }
+    return { kind: "hard", methodId, error };
+  }
+}
+
+/**
+ * Descarga encuestas de un productor: HTTP en paralelo (como la web),
+ * persistencia SQLite secuencial para evitar contención en campo.
+ */
+async function downloadSurveysForProducer(
+  userId: number,
+  projectId: number,
+  producerId: number,
+  generation: number | undefined,
+): Promise<{ producerHadHardFailure: boolean; hardSurveyFailures: number }> {
+  const outcomes = await Promise.all(
+    FULL_DOWNLOAD_INTERVENTION_METHOD_IDS.map((methodId) =>
+      fetchSurveyMethodForProducer(
+        projectId,
+        producerId,
+        methodId,
+        generation,
+      ),
+    ),
+  );
+
+  let producerHadHardFailure = false;
+  let hardSurveyFailures = 0;
+
+  for (const outcome of outcomes) {
+    if (outcome.kind === "success") {
+      await upsertSurveyResults(outcome.flatResults);
+      await markInterventionMethodApplied(
+        producerId,
+        projectId,
+        outcome.methodId,
+        userId,
+      );
+      continue;
+    }
+    if (outcome.kind === "hard") {
+      producerHadHardFailure = true;
+      hardSurveyFailures += 1;
+      console.warn(
+        `Survey download failed p=${producerId} proj=${projectId} m=${outcome.methodId}:`,
+        outcome.error,
+      );
+    }
+  }
+
+  return { producerHadHardFailure, hardSurveyFailures };
+}
+
 /**
  * Persiste opciones/ítems de listas desde el payload with-options para lectura offline.
  */
@@ -192,23 +299,25 @@ async function persistQuestionDetailsFromCatalog(
  * (`GET /questions/with-options/{componentId}/`).
  */
 async function downloadSurveyQuestionsCatalog(): Promise<void> {
-  for (const componentId of SURVEY_CATALOG_COMPONENT_IDS) {
-    try {
-      const res = await apiFetch<{ data?: unknown; status?: number }>(
-        `/questions/with-options/${componentId}/`,
-      );
-      const raw = res?.data;
-      const list = Array.isArray(raw) ? raw : [];
-      if (list.length === 0) continue;
-      await upsertQuestions(list as Question[]);
-      await persistQuestionDetailsFromCatalog(list as Question[]);
-    } catch (e) {
-      console.error(
-        `Failed to download questions catalog for component ${componentId}:`,
-        e,
-      );
-    }
-  }
+  await Promise.all(
+    SURVEY_CATALOG_COMPONENT_IDS.map(async (componentId) => {
+      try {
+        const res = await apiFetch<{ data?: unknown; status?: number }>(
+          `/questions/with-options/${componentId}/`,
+        );
+        const raw = res?.data;
+        const list = Array.isArray(raw) ? raw : [];
+        if (list.length === 0) return;
+        await upsertQuestions(list as Question[]);
+        await persistQuestionDetailsFromCatalog(list as Question[]);
+      } catch (e) {
+        console.error(
+          `Failed to download questions catalog for component ${componentId}:`,
+          e,
+        );
+      }
+    }),
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -549,42 +658,57 @@ export async function refreshTouchedDataAfterLocalUpload(
     onProgress?.({ stage, current: pct, total: 100 });
   };
 
-  for (const t of uniqueSurveys) {
-    report(`Actualizando respuestas (productor ${t.producerId})…`);
-    try {
-      const response = await apiFetchWithRetry<unknown>(
-        `/surveys/${t.projectId}/producer/${t.producerId}/intervention_method/${t.methodId}`,
-        { method: "GET" },
-      );
-      const rawData = extractInterventionMethodSurveyArray(response);
-      if (rawData.length > 0) {
-        const flatResults = flattenInterventionMethodSurveyPayloadToRows(
-          rawData,
-          t.methodId,
-          t.producerId,
-          t.projectId,
+  if (uniqueSurveys.length > 0) {
+    report("Actualizando respuestas en servidor…");
+  }
+
+  const surveyOutcomes = await Promise.all(
+    uniqueSurveys.map(async (t) => {
+      try {
+        const response = await apiFetchWithRetry<unknown>(
+          `/surveys/${t.projectId}/producer/${t.producerId}/intervention_method/${t.methodId}`,
+          { method: "GET" },
         );
-        if (flatResults.length > 0) {
-          await upsertSurveyResults(flatResults);
-          await markInterventionMethodApplied(
-            t.producerId,
-            t.projectId,
-            t.methodId,
-            userId,
-          );
-        } else {
-          console.warn(
-            `Survey refresh flatten empty p=${t.producerId} m=${t.methodId} raw=${rawData.length}`,
-          );
-        }
+        return { touch: t, response, error: null as unknown };
+      } catch (error) {
+        return { touch: t, response: null, error };
       }
-    } catch (e) {
-      if (isExpectedMissingResourceError(e)) {
+    }),
+  );
+
+  for (const { touch: t, response, error } of surveyOutcomes) {
+    if (error != null) {
+      if (isExpectedMissingResourceError(error)) {
         // Método aún no aplicado — normal.
       } else {
         console.warn(
           `Survey refresh failed p=${t.producerId} m=${t.methodId}:`,
-          e,
+          error,
+        );
+      }
+      step++;
+      continue;
+    }
+
+    const rawData = extractInterventionMethodSurveyArray(response);
+    if (rawData.length > 0) {
+      const flatResults = flattenInterventionMethodSurveyPayloadToRows(
+        rawData,
+        t.methodId,
+        t.producerId,
+        t.projectId,
+      );
+      if (flatResults.length > 0) {
+        await upsertSurveyResults(flatResults);
+        await markInterventionMethodApplied(
+          t.producerId,
+          t.projectId,
+          t.methodId,
+          userId,
+        );
+      } else {
+        console.warn(
+          `Survey refresh flatten empty p=${t.producerId} m=${t.methodId} raw=${rawData.length}`,
         );
       }
     }
@@ -606,13 +730,15 @@ export async function refreshTouchedDataAfterLocalUpload(
     step++;
   }
 
-  for (const lineId of objectiveLineIds) {
-    try {
-      await refreshVisitObjectivesCacheForLine(lineId);
-    } catch {
-      // ignore
-    }
-  }
+  await Promise.all(
+    Array.from(objectiveLineIds).map(async (lineId) => {
+      try {
+        await refreshVisitObjectivesCacheForLine(lineId);
+      } catch {
+        // ignore
+      }
+    }),
+  );
 
   onProgress?.({
     stage: "Actualización selectiva completada",
@@ -642,7 +768,6 @@ async function downloadProducerResults(
 ): Promise<void> {
   // Incluye 9 = clasificación de Visita 3. El registro Visita 3 (método 11)
   // no genera respuestas de encuesta, así que no se lista aquí.
-  const INTERVENTION_METHOD_IDS = [1, 2, 3, 5, 6, 7, 8, 9];
   const totalProducers = allProducerIds.length;
   const objectiveLineIds = new Set<number>();
   let hardSurveyFailures = 0;
@@ -654,58 +779,14 @@ async function downloadProducerResults(
     assertDownloadGeneration(generation);
 
     const { producerId, projectId } = allProducerIds[i]!;
-    let producerHadHardFailure = false;
-
-    for (const methodId of INTERVENTION_METHOD_IDS) {
-      assertDownloadGeneration(generation);
-      try {
-        const response = await apiFetchWithRetry<unknown>(
-          `/surveys/${projectId}/producer/${producerId}/intervention_method/${methodId}`,
-          { method: "GET" },
-        );
-        const rawData = extractInterventionMethodSurveyArray(response);
-
-        if (rawData.length > 0) {
-          const flatResults = flattenInterventionMethodSurveyPayloadToRows(
-            rawData,
-            methodId,
-            producerId,
-            projectId,
-          );
-          if (flatResults.length > 0) {
-            await upsertSurveyResults(flatResults);
-            await markInterventionMethodApplied(
-              producerId,
-              projectId,
-              methodId,
-              userId,
-            );
-          } else {
-            console.warn(
-              `Survey download flatten empty p=${producerId} m=${methodId} raw=${rawData.length}`,
-            );
-          }
-        }
-      } catch (e) {
-        // Igual que en la web: 404 / "no se encontró" = método aún no aplicado (estado válido).
-        if (isExpectedMissingResourceError(e)) {
-          continue;
-        }
-        if (!isHardSurveyDownloadFailure(e)) {
-          console.warn(
-            `Survey download skipped p=${producerId} proj=${projectId} m=${methodId}:`,
-            e,
-          );
-          continue;
-        }
-        producerHadHardFailure = true;
-        hardSurveyFailures += 1;
-        console.warn(
-          `Survey download failed p=${producerId} proj=${projectId} m=${methodId}:`,
-          e,
-        );
-      }
-    }
+    const { producerHadHardFailure, hardSurveyFailures: producerHardFailures } =
+      await downloadSurveysForProducer(
+        userId,
+        projectId,
+        producerId,
+        generation,
+      );
+    hardSurveyFailures += producerHardFailures;
 
     await downloadExtensionistCachesForProducer(userId, projectId, producerId);
 
@@ -737,10 +818,12 @@ async function downloadProducerResults(
       totalProducers,
       totalProducers,
     );
-    for (const lineId of objectiveLineIds) {
-      assertDownloadGeneration(generation);
-      await refreshVisitObjectivesCacheForLine(lineId);
-    }
+    await Promise.all(
+      Array.from(objectiveLineIds).map(async (lineId) => {
+        assertDownloadGeneration(generation);
+        await refreshVisitObjectivesCacheForLine(lineId);
+      }),
+    );
   }
 
   if (failedProducerIds.length > 0 || hardSurveyFailures > 0) {
@@ -829,22 +912,26 @@ export async function downloadAllData(
   }
   reportPhase("Descargando proyectos", DOWNLOAD_PHASES.projects, 1, 1);
 
-  // 2. Producers for each project
+  // 2. Producers for each project (HTTP en paralelo por proyecto; SQLite por proyecto)
   let producerCount = 0;
   const allProducerIds: Array<{ producerId: number; projectId: number }> = [];
   if (projects.length === 0) {
     reportPhase("Usuarios descargados", DOWNLOAD_PHASES.producers, 1, 1);
   } else {
-    for (let i = 0; i < projects.length; i++) {
+    const fetchProducersForProject = async (
+      project: Project,
+    ): Promise<Array<{ producerId: number; projectId: number }>> => {
       assertDownloadGeneration(generation);
-      const project = projects[i];
 
-      // Fetch all pages
       let page = 1;
       let hasMore = true;
       let totalPages = 1;
       const fetchedProducerIds: number[] = [];
+      const projectProducerIds: Array<{ producerId: number; projectId: number }> =
+        [];
+
       while (hasMore) {
+        assertDownloadGeneration(generation);
         const response = await apiFetch<any>(
           `/producer-assigned-to-extensionist/${project.id}/producers`,
           { method: "GET", params: { page, limit: 100 } },
@@ -871,33 +958,34 @@ export async function downloadAllData(
 
         if (producers.length > 0) {
           await upsertProducers(producers, project.id);
-          producerCount += producers.length;
           for (const p of producers) {
             const id = p.producer_id ?? p.id;
-            if (id != null) fetchedProducerIds.push(Number(id));
-            allProducerIds.push({ producerId: Number(id), projectId: project.id });
+            if (id != null) {
+              const producerId = Number(id);
+              fetchedProducerIds.push(producerId);
+              projectProducerIds.push({
+                producerId,
+                projectId: project.id,
+              });
+            }
           }
         }
 
-        const pageProgress = Math.min(page, totalPages) / Math.max(totalPages, 1);
-        reportPhase(
-          `Productores ${i + 1} de ${projects.length}`,
-          DOWNLOAD_PHASES.producers,
-          i + pageProgress,
-          projects.length,
-        );
-
         page++;
       }
-      // Remove producers no longer assigned to this project
+
       await deleteProducersNotIn(project.id, fetchedProducerIds);
       await deleteExtensionistCachesNotInProject(project.id, fetchedProducerIds);
-      reportPhase(
-        `Productores ${i + 1} de ${projects.length}`,
-        DOWNLOAD_PHASES.producers,
-        i + 1,
-        projects.length,
-      );
+      return projectProducerIds;
+    };
+
+    reportPhase("Descargando productores", DOWNLOAD_PHASES.producers, 0, 1);
+    const perProjectQueues = await Promise.all(
+      projects.map((project) => fetchProducersForProject(project)),
+    );
+    for (const queue of perProjectQueues) {
+      producerCount += queue.length;
+      allProducerIds.push(...queue);
     }
     reportPhase("Usuarios descargados", DOWNLOAD_PHASES.producers, 1, 1);
   }
