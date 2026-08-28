@@ -37,10 +37,8 @@ if (!apiUrl) {
 const privacyUrl = productionEnv.EXPO_PUBLIC_PRIVACY_POLICY_URL;
 if (!privacyUrl) {
   issues.push("eas.json production: falta EXPO_PUBLIC_PRIVACY_POLICY_URL");
-} else if (privacyUrl.includes("unicordoba.edu.co/epsea/politica-de-privacidad")) {
-  warnings.push(
-    "Política de privacidad usa URL placeholder. Publica docs/legal/privacy-policy.html y actualiza la URL.",
-  );
+} else if (!privacyUrl.startsWith("https://")) {
+  issues.push("EXPO_PUBLIC_PRIVACY_POLICY_URL debe ser una URL https:// válida.");
 }
 
 const supportEmail = productionEnv.EXPO_PUBLIC_SUPPORT_EMAIL;

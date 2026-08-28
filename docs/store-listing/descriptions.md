@@ -55,7 +55,7 @@ extensionismo, agro, productores, visitas técnicas, EPSEA, UniCórdoba, encuest
 |-------|-------|
 | Email de soporte | epsea@unicordoba.edu.co |
 | Sitio web | https://www.unicordoba.edu.co |
-| Política de privacidad | URL publicada (ver docs/legal/privacy-policy.html) |
+| Política de privacidad | https://www.miagroalimentaria.com/#/politica |
 
 ## Notas de la versión (ejemplo v1.0.0)
 

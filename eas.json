@@ -31,7 +31,7 @@
         "EXPO_PUBLIC_API_URL": "https://epsea.ineansastem.com/agro/api/v1",
         "EXPO_PUBLIC_SUPPORT_EMAIL": "epsea@unicordoba.edu.co",
         "EXPO_PUBLIC_WEBSITE_URL": "https://www.unicordoba.edu.co",
-        "EXPO_PUBLIC_PRIVACY_POLICY_URL": "https://www.unicordoba.edu.co/epsea/politica-de-privacidad"
+        "EXPO_PUBLIC_PRIVACY_POLICY_URL": "https://www.miagroalimentaria.com/#/politica"
       },
       "android": {
         "buildType": "app-bundle"

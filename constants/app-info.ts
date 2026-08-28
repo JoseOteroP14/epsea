@@ -11,7 +11,7 @@ export const APP_INFO = {
     "https://www.unicordoba.edu.co",
   privacyPolicyUrl:
     process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL ??
-    "https://www.unicordoba.edu.co/epsea/politica-de-privacidad",
+    "https://www.miagroalimentaria.com/#/politica",
 } as const;
 
 export function hasConfiguredPrivacyPolicyUrl(): boolean {

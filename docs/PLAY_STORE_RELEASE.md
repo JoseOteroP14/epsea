@@ -89,27 +89,21 @@ Si publicas con la URL de prueba, los extensionistas en producción hablarían c
 
 ---
 
-### Paso 3 — Publicar política de privacidad (URL obligatoria)
+### Paso 3 — Política de privacidad (URL obligatoria)
 
-Google **exige** una URL pública accesible sin login.
+URL oficial configurada en el repo:
+
+```
+https://www.miagroalimentaria.com/#/politica
+```
 
 **Acción tuya:**
 
-1. Abre `docs/legal/privacy-policy.html`.
-2. Reemplaza:
-   - `REEMPLAZAR_FECHA` → fecha real (ej. 28 de agosto de 2026).
-   - Sección 5 → proveedores reales de hosting (ej. ineansastem.com si aplica).
-3. Pide al área web / TI de UniCórdoba que publique el HTML en una ruta estable, por ejemplo:
-   ```
-   https://www.unicordoba.edu.co/epsea/politica-de-privacidad
-   ```
-4. Verifica en el navegador que la URL carga (sin 404).
-5. Si la URL final es distinta, actualiza:
-   - `eas.json` → `EXPO_PUBLIC_PRIVACY_POLICY_URL`
-   - `constants/app-info.ts` (valor por defecto)
-6. Vuelve a compilar el AAB si cambiaste variables embebidas en build.
+1. Abre esa URL en el navegador (sin login) y confirma que carga el texto de la política.
+2. En Play Console → ficha de la tienda, pega exactamente esa URL en **Política de privacidad**.
+3. Si generas un **nuevo AAB** después de este cambio en `eas.json`, el enlace del login en la app también apuntará ahí.
 
-**Tiempo estimado:** depende del área web (1–5 días hábiles).
+**Tiempo estimado:** 5 minutos (solo verificar que la página responde).
 
 ---
 
@@ -234,7 +228,7 @@ La app **requiere login**. Google rechaza apps bloqueadas sin credenciales de pr
 
 ```
 □ 1. Confirmar URL API producción con backend
-□ 2. Publicar política de privacidad en web
+□ 2. Verificar https://www.miagroalimentaria.com/#/politica en navegador
 □ 3. Actualizar URLs/emails en eas.json si cambian
 □ 4. bun run validate:release
 □ 5. bun run build:android:production
