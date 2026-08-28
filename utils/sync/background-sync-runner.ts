@@ -1,11 +1,11 @@
 import type { SyncProgress } from "@/utils/sync/sync-service";
 import { Platform } from "react-native";
+import { isNotifyKitNativeAvailable } from "./notify-kit-loader";
 import {
-  isAndroidForegroundSyncActive,
-  runAndroidForegroundSync,
-  updateAndroidForegroundSync,
-} from "./android-foreground-sync";
-import { isNotifeeNativeAvailable } from "./notifee-loader";
+  isSyncForegroundServiceActive,
+  runSyncForegroundService,
+  updateSyncForegroundNotification,
+} from "./sync-foreground-service";
 import {
   startSyncKeepAlive,
   stopSyncKeepAlive,
@@ -13,11 +13,11 @@ import {
 } from "./sync-background-keepalive";
 
 export function isBackgroundSyncServiceRunning(): boolean {
-  return isAndroidForegroundSyncActive();
+  return isSyncForegroundServiceActive();
 }
 
 export function isBackgroundSyncServiceAvailable(): boolean {
-  return isNotifeeNativeAvailable();
+  return isNotifyKitNativeAvailable();
 }
 
 export async function runWithBackgroundSyncService(
@@ -31,15 +31,13 @@ export async function runWithBackgroundSyncService(
 
   const report = (progress: SyncProgress) => {
     touchSyncKeepAlive(progress);
-    if (Platform.OS === "android") {
-      void updateAndroidForegroundSync(progress);
-    }
+    void updateSyncForegroundNotification(progress);
   };
 
   await startSyncKeepAlive({
     onHeartbeat: (progress) => {
       if (progress) {
-        void updateAndroidForegroundSync(progress);
+        void updateSyncForegroundNotification(progress);
       }
     },
     onStallRecover: () => {
@@ -48,14 +46,9 @@ export async function runWithBackgroundSyncService(
   });
 
   try {
-    if (Platform.OS === "android") {
-      await runAndroidForegroundSync(async () => {
-        await work(report);
-      });
-      return;
-    }
-
-    await work(report);
+    await runSyncForegroundService(async () => {
+      await work(report);
+    });
   } finally {
     stopSyncKeepAlive();
   }

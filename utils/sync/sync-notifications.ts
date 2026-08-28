@@ -1,17 +1,9 @@
 import { isRunningInExpoGo } from "expo";
 import { AppState, Platform } from "react-native";
+import { isNotifyKitNativeAvailable, loadNotifyKitModule } from "./notify-kit-loader";
 
 const SYNC_CHANNEL_ID = "epsea-sync";
-
-let inProgressNotificationId: string | null = null;
-type NotificationsModule = typeof import("expo-notifications");
-let notificationsPromise: Promise<NotificationsModule> | null = null;
-
-async function getNotifications(): Promise<NotificationsModule | null> {
-  if (isRunningInExpoGo()) return null;
-  notificationsPromise ??= import("expo-notifications");
-  return notificationsPromise;
-}
+const SYNC_NOTIFICATION_ID = "epsea-sync";
 
 export function isAppInBackground(): boolean {
   const state = AppState.currentState;
@@ -19,94 +11,91 @@ export function isAppInBackground(): boolean {
 }
 
 export async function configureSyncNotifications(): Promise<void> {
-  const Notifications = await getNotifications();
-  if (!Notifications) return;
+  if (isRunningInExpoGo() || !isNotifyKitNativeAvailable()) return;
 
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-    }),
+  const notifeePkg = loadNotifyKitModule();
+  if (!notifeePkg) return;
+
+  await notifeePkg.default.setNotificationConfig({
+    ios: { handleRemoteNotifications: false },
   });
 
   if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync(SYNC_CHANNEL_ID, {
+    await notifeePkg.default.createChannel({
+      id: SYNC_CHANNEL_ID,
       name: "Sincronización",
-      importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 250, 250, 250],
+      importance: notifeePkg.AndroidImportance.HIGH,
     });
   }
 }
 
 export async function ensureSyncNotificationPermissions(): Promise<boolean> {
-  const Notifications = await getNotifications();
-  if (!Notifications) return false;
+  if (isRunningInExpoGo() || !isNotifyKitNativeAvailable()) return false;
 
-  const { status: existing } = await Notifications.getPermissionsAsync();
-  if (existing === "granted") return true;
+  const notifeePkg = loadNotifyKitModule();
+  if (!notifeePkg) return false;
 
-  const { status } = await Notifications.requestPermissionsAsync();
-  return status === "granted";
+  const settings = await notifeePkg.default.requestPermission();
+  return (
+    settings.authorizationStatus >= notifeePkg.AuthorizationStatus.AUTHORIZED
+  );
 }
 
 export async function showSyncInProgressNotification(): Promise<void> {
-  const Notifications = await getNotifications();
-  if (!Notifications) return;
+  if (isRunningInExpoGo() || !isNotifyKitNativeAvailable()) return;
 
   const allowed = await ensureSyncNotificationPermissions();
   if (!allowed) return;
 
-  if (inProgressNotificationId) return;
+  const notifeePkg = loadNotifyKitModule();
+  if (!notifeePkg) return;
 
-  inProgressNotificationId = await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "EPSEA",
-      body: "Sincronizando datos… Puede usar otras aplicaciones.",
-      ...(Platform.OS === "android"
-        ? { channelId: SYNC_CHANNEL_ID, sticky: true }
-        : {}),
+  await notifeePkg.default.displayNotification({
+    id: SYNC_NOTIFICATION_ID,
+    title: "EPSEA",
+    body: "Sincronizando datos… Puede usar otras aplicaciones.",
+    android: {
+      channelId: SYNC_CHANNEL_ID,
+      ongoing: true,
+      onlyAlertOnce: true,
     },
-    trigger: null,
   });
 }
 
 export async function clearSyncInProgressNotification(): Promise<void> {
-  if (!inProgressNotificationId) return;
-  const Notifications = await getNotifications();
-  if (!Notifications) {
-    inProgressNotificationId = null;
-    return;
-  }
+  if (!isNotifyKitNativeAvailable()) return;
+
+  const notifeePkg = loadNotifyKitModule();
+  if (!notifeePkg) return;
 
   try {
-    await Notifications.dismissNotificationAsync(inProgressNotificationId);
+    await notifeePkg.default.cancelNotification(SYNC_NOTIFICATION_ID);
   } catch {
     // Notification may already be dismissed
   }
-  inProgressNotificationId = null;
 }
 
 async function scheduleSyncResultNotification(
   title: string,
   body: string,
 ): Promise<void> {
-  const Notifications = await getNotifications();
-  if (!Notifications) return;
+  if (isRunningInExpoGo() || !isNotifyKitNativeAvailable()) return;
 
   const allowed = await ensureSyncNotificationPermissions();
   if (!allowed) return;
 
+  const notifeePkg = loadNotifyKitModule();
+  if (!notifeePkg) return;
+
   await clearSyncInProgressNotification();
 
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title,
-      body,
-      ...(Platform.OS === "android" ? { channelId: SYNC_CHANNEL_ID } : {}),
+  await notifeePkg.default.displayNotification({
+    id: `epsea-sync-result-${Date.now()}`,
+    title,
+    body,
+    android: {
+      channelId: SYNC_CHANNEL_ID,
     },
-    trigger: null,
   });
 }
 

@@ -1,54 +1,4 @@
-const {
-  withAndroidManifest,
-  withInfoPlist,
-  withProjectBuildGradle,
-} = require("expo/config-plugins");
-
-const NOTIFEE_MAVEN_REPO =
-  'maven { url "$rootDir/../node_modules/@notifee/react-native/android/libs" }';
-
-// Notifee foreground service (see @notifee/react-native Android manifest merge).
-const SERVICE_CLASS = "app.notifee.core.ForegroundService";
-
-function ensurePermission(manifest, name) {
-  if (!manifest["uses-permission"]) {
-    manifest["uses-permission"] = [];
-  }
-  const list = manifest["uses-permission"];
-  if (!list.some((entry) => entry.$["android:name"] === name)) {
-    list.push({ $: { "android:name": name } });
-  }
-}
-
-function withAndroidBackgroundSync(config) {
-  return withAndroidManifest(config, (cfg) => {
-    const manifest = cfg.modResults.manifest;
-
-    ensurePermission(manifest, "android.permission.FOREGROUND_SERVICE");
-    ensurePermission(manifest, "android.permission.FOREGROUND_SERVICE_DATA_SYNC");
-    ensurePermission(manifest, "android.permission.WAKE_LOCK");
-
-    const application = manifest.application?.[0];
-    if (application) {
-      if (!application.service) {
-        application.service = [];
-      }
-      const exists = application.service.some(
-        (entry) => entry.$["android:name"] === SERVICE_CLASS,
-      );
-      if (!exists) {
-        application.service.push({
-          $: {
-            "android:name": SERVICE_CLASS,
-            "android:foregroundServiceType": "dataSync",
-          },
-        });
-      }
-    }
-
-    return cfg;
-  });
-}
+const { withInfoPlist } = require("expo/config-plugins");
 
 function withIosBackgroundSync(config) {
   return withInfoPlist(config, (cfg) => {
@@ -71,22 +21,7 @@ function withIosBackgroundSync(config) {
   });
 }
 
-function withNotifeeMavenRepo(config) {
-  return withProjectBuildGradle(config, (cfg) => {
-    if (!cfg.modResults.contents.includes("@notifee/react-native/android/libs")) {
-      cfg.modResults.contents = cfg.modResults.contents.replace(
-        /maven\s*\{\s*url\s*['"]https:\/\/www\.jitpack\.io['"]\s*\}/,
-        (match) => `${match}\n    ${NOTIFEE_MAVEN_REPO}`,
-      );
-    }
-    return cfg;
-  });
-}
-
 /** @type {import('expo/config-plugins').ConfigPlugin} */
 module.exports = function withBackgroundSyncService(config) {
-  config = withAndroidBackgroundSync(config);
-  config = withNotifeeMavenRepo(config);
-  config = withIosBackgroundSync(config);
-  return config;
+  return withIosBackgroundSync(config);
 };

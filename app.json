@@ -69,6 +69,16 @@
           "color": "#1a7a3a"
         }
       ],
+      [
+        "react-native-notify-kit",
+        {
+          "android": {
+            "foregroundService": {
+              "types": ["dataSync"]
+            }
+          }
+        }
+      ],
       "./plugins/with-background-sync-service.js",
       "./plugins/with-android-windows-paths.js",
       "expo-font"

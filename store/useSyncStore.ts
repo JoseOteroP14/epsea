@@ -16,8 +16,8 @@ import { getPendingAnswerUpdateCount } from "@/utils/database/repositories/answe
 import { runWithBackgroundSyncService } from "@/utils/sync/background-sync-runner";
 import {
   isForegroundServiceStartNotAllowedError,
-  waitForAndroidForegroundSyncIdle,
-} from "@/utils/sync/android-foreground-sync";
+  waitForSyncForegroundServiceIdle,
+} from "@/utils/sync/sync-foreground-service";
 import {
   abortActiveDownloadSession,
   beginDownloadSession,
@@ -241,7 +241,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
 
     void (async () => {
       try {
-        await waitForAndroidForegroundSyncIdle(25_000);
+        await waitForSyncForegroundServiceIdle(25_000);
 
         // Re-check: user may have backgrounded again while waiting.
         if (AppState.currentState !== "active") {

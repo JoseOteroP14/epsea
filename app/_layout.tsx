@@ -19,12 +19,16 @@ import "react-native-reanimated";
 import { DatabaseProvider } from "@/components/database-provider";
 import { OfflineAlertCoordinator } from "@/components/offline-alert-coordinator";
 import { SyncBackgroundCoordinator } from "@/components/sync-background-coordinator";
-import { registerAndroidForegroundSyncService } from "@/utils/sync/android-foreground-sync";
-
-registerAndroidForegroundSyncService();
+import {
+  configureNotifyKitAtBoot,
+  registerSyncForegroundService,
+} from "@/utils/sync/sync-foreground-service";
 import { AlertProvider } from "@/components/ui/custom-alert";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuthStore } from "@/store/useAuthStore";
+
+configureNotifyKitAtBoot();
+registerSyncForegroundService();
 
 export const unstable_settings = {
   anchor: "(tabs)",
