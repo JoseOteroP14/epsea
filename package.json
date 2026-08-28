@@ -13,7 +13,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "type-check": "tsc --noEmit",
-    "build:android:production": "bunx eas build --platform android --profile production",
+    "build:android:production": "bunx eas-cli build --platform android --profile production",
     "postinstall": "node ./scripts/patch-metro-config.js && node ./scripts/fix-node-modules-bin.js"
   },
   "dependencies": {
