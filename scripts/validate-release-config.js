@@ -19,7 +19,7 @@ if (!androidPackage) {
   issues.push("app.json: falta expo.android.package");
 }
 
-if (androidPackage !== "com.epsea.unicordoba") {
+if (androidPackage !== "com.unicordoba.epsea") {
   warnings.push(
     `Package Android actual: ${androidPackage}. Play Console debe usar el mismo valor.`,
   );

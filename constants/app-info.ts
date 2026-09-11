@@ -3,7 +3,7 @@ export const APP_INFO = {
   name: "EPSEA",
   organization: "Universidad de Córdoba",
   program: "Escuela de Producción y Sostenibilidad Agroalimentaria (EPSEA)",
-  androidPackage: "com.epsea.unicordoba",
+  androidPackage: "com.unicordoba.epsea",
   supportEmail:
     process.env.EXPO_PUBLIC_SUPPORT_EMAIL ?? "epsea@unicordoba.edu.co",
   websiteUrl:
